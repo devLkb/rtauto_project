@@ -29,10 +29,14 @@ import socket
 import struct
 import sys
 import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from config.rtauto_config import UNITY_IP, PORT_DG5F_SIM
 
 from dg5f_angles import CHANNEL_NAMES, LEFT_MIRROR_CHANNELS
 
-UNITY_IP, UNITY_PORT = "127.0.0.1", 5006
+UNITY_PORT = PORT_DG5F_SIM
 
 #         엄지: cmc opp  mcp ip | 검지: abd mcp pip dip | 중지 | 약지 | 새끼: cmc lat mcp pip
 # (오른손 관절공간 기준 — left는 mirror_left가 변환. 새끼 slot17=5_2 측면은 항상 0)

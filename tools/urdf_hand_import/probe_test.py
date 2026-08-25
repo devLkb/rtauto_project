@@ -144,6 +144,10 @@ def main():
     ap.add_argument("--frac-b", type=float, default=0.15)
     ap.add_argument("--keep-play", action="store_true", help="테스트 후 Play 유지 (추가 관찰용)")
     args = ap.parse_args()
+    if args.project is None:
+        ap.error("--project 가 필요합니다 (또는 레포 루트 .env에 RTAUTO_UNITY_PROJECT 설정)")
+    if args.cli is None:
+        ap.error("--cli 가 필요합니다 (또는 레포 루트 .env에 RTAUTO_UNITY_CLI 설정)")
 
     out_name = f"probe_{args.name}.csv"
     csv_path = args.project / "Logs" / out_name

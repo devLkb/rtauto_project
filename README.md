@@ -51,12 +51,20 @@ Tesollo DG5F 손은 MediaPipe 텔레옵으로 조작하는 디지털 트윈 프�
   가상환경을 분리해야 한다는 것이었으나, **`mediapipe==0.10.11`로 낮추면 `protobuf==3.20.3`에서
   동작**해 ML-Agents와 같은 venv에 공존 가능하다.
 - 현재 검증된 핵심 버전: `mediapipe==0.10.11`, `protobuf==3.20.3`, `numpy==1.23.5`,
-  `opencv-contrib-python==4.8.1.78`, `torch==2.1.1+cpu`, `mlagents/mlagents_envs==1.2.0.dev0`.
+  `opencv-contrib-python==4.8.1.78`, `mlagents/mlagents_envs==1.2.0.dev0`.
+- **torch**: 전용 학습 서버(VDI)가 없어져 이제 본학습도 이 로컬 GPU에서 돌리므로
+  `torch==2.1.1+cpu`가 아니라 **드라이버 CUDA 버전에 맞는 CUDA 빌드**를 설치한다
+  (`nvidia-smi`로 CUDA 버전 확인 후 고르기 — 예: CUDA 12.3 드라이버 → `cu121` 휠).
 
 ```bash
 # 비전(텔레옵) + ML-Agents 공용 venv (리포 현재 검증 경로)
 python3.10 -m venv vision/.vision
 source vision/.vision/bin/activate      # Windows: vision\.vision\Scripts\activate
+
+# torch는 CUDA 빌드를 먼저 설치(버전은 vision/requirements-vision-mlagents.constraints.txt와
+# 반드시 맞출 것 — 다르면 아래 설치에서 재다운로드/버전충돌 발생)
+pip install torch==2.1.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+
 pip install -r requirements-mlagents.txt
 pip install -r requirements-vision.txt
 
@@ -72,10 +80,14 @@ pip install -r vision/requirements-vision-mlagents.resolved.txt
 - https://github.com/akiojin/unity-cli 설치 후 Unity 프로젝트에 커넥터 패키지 추가.
 - 없어도 텔레옵 자체는 동작 (Play는 에디터에서 직접).
 
-### 4. 경로 상수 (새 PC에서 1회 수정)
-스크립트들의 기본 경로가 개발 PC 기준이라 아래 중 하나로 맞출 것:
-- `tools/urdf_hand_import/import_hand.py` 상단 `DEFAULT_PROJECT`(Unity 프로젝트 경로),
-  `DEFAULT_CLI`(unity-cli 경로) 수정 — probe_test/phys_compare/setup_drive가 이걸 씀
+### 4. 로컬 설정 (새 PC에서 1회)
+머신마다 다른 경로/IP/포트는 코드에 하드코딩하지 않고 레포 루트 `.env`(git 비추적, `.env.example`
+복사) 하나로 관리한다 — 값과 우선순위는 `config/rtauto_config.py` 참고.
+- `RTAUTO_UNITY_PROJECT`, `RTAUTO_UNITY_CLI` — `tools/urdf_hand_import/import_hand.py`
+  (및 이를 재사용하는 probe_test/phys_compare/setup_drive)의 Unity 프로젝트·unity-cli 경로.
+  안 채우면 `--project`/`--cli`를 직접 넘겨야 하며, 둘 다 없으면 명확한 에러로 멈춘다.
+- `RTAUTO_UNITY_IP`, `RTAUTO_PORT_*` — Unity ↔ Python vision 스크립트 UDP 통신. 이 PC에서
+  Unity가 로컬로 돈다면 기본값 그대로 둬도 된다.
 - `vision/dg5f/analyze_teleop.py`는 환경변수 `DG5F_UNITY_LOGS`, `DG5F_URDF_DIR` 또는
   `--logs-dir/--urdf-dir` 인자로 대체 가능
 

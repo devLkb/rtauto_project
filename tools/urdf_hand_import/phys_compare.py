@@ -143,6 +143,10 @@ def main():
     ap.add_argument("--project", type=Path, default=import_hand.DEFAULT_PROJECT)
     ap.add_argument("--cli", type=Path, default=import_hand.DEFAULT_CLI)
     args = ap.parse_args()
+    if args.project is None:
+        ap.error("--project 가 필요합니다 (또는 레포 루트 .env에 RTAUTO_UNITY_PROJECT 설정)")
+    if args.cli is None:
+        ap.error("--cli 가 필요합니다 (또는 레포 루트 .env에 RTAUTO_UNITY_CLI 설정)")
     name = args.name or ET.parse(args.urdf).getroot().get("name")
     ok = verify(args.urdf.resolve(), name, args.project, args.cli)
     raise SystemExit(0 if ok else 1)

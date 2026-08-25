@@ -21,8 +21,13 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-DEFAULT_PROJECT = Path(r"C:\Users\dltmd\UnityProjects\cli_test\KDT_robot_AI")
-DEFAULT_CLI = Path(r"C:\Users\dltmd\AppData\Local\unity-cli\unity-cli.exe")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from config.rtauto_config import UNITY_PROJECT, UNITY_CLI
+
+# 머신마다 다른 경로라 기본값을 박아두지 않는다 — .env(RTAUTO_UNITY_PROJECT/RTAUTO_UNITY_CLI)로
+# 설정하거나 --project/--cli 로 직접 넘길 것. 둘 다 없으면 main()에서 명확히 에러를 낸다.
+DEFAULT_PROJECT = Path(UNITY_PROJECT) if UNITY_PROJECT else None
+DEFAULT_CLI = Path(UNITY_CLI) if UNITY_CLI else None
 EXEC_TIMEOUT = 600  # vHACD 포함 임포트 최대 대기(초)
 
 # ⚠️ unity-cli exec 스니펫 제약(실측): using 지시문 불가(전부 풀네임),
@@ -184,6 +189,10 @@ def main():
 
     if args.name and len(args.urdf) > 1:
         ap.error("--name 은 URDF 1개일 때만 사용")
+    if args.project is None:
+        ap.error("--project 가 필요합니다 (또는 레포 루트 .env에 RTAUTO_UNITY_PROJECT 설정)")
+    if args.cli is None:
+        ap.error("--cli 가 필요합니다 (또는 레포 루트 .env에 RTAUTO_UNITY_CLI 설정)")
 
     results = {}
     for u in args.urdf:

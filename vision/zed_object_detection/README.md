@@ -45,8 +45,9 @@ python zed_sender.py
 - Unity 쪽 수신 스크립트: `unity/Assets/Scripts/CameraTargetReceiver.cs` (이 저장소의 `unity/Assets/Scripts/`에 있음).
   이전에 있던 `ObjectCoordinateReceiver.cs`(로그만 찍는 미완성 스텁)는 삭제됐다 — CameraTargetReceiver가
   그 역할(좌표를 실제로 오브젝트에 반영)까지 포함해서 대체한다.
-- 포트 **5007** 사용 — 5005(SVH 핸드), 5006(`Dg5fReceiver`, 손가락 관절 각도)과 겹치지 않게 고정한 값이니
-  다른 용도로 바꾸지 말 것.
+- 포트 **5007** 사용 — 5005(SVH 핸드), 5006(`Dg5fReceiver`, 손가락 관절 각도), 5008(DG5F 실물 SDK 브리지)과
+  겹치지 않게 고정한 값이니 다른 용도로 바꾸지 말 것. 값의 유일한 출처는 `config/rtauto_config.py`
+  (`PORT_ZED_TARGET`) — 바꿔야 하면 거기서 바꾸고 여기 숫자는 그대로 참고용으로만 둔다.
 - 전송 포맷: `struct.pack('<3f', x, y, z)` — float32 little-endian 3개(감지된 물체 중 신뢰도가 가장
   높은 것 하나만). 예전엔 JSON으로 여러 물체를 보냈으나, `CameraTargetReceiver`가 애초에 단일 좌표
   바이너리 패킷만 받도록 짜여 있어서 그쪽에 맞춰 변경했다.

@@ -6,7 +6,7 @@
 ## 1. 환경 확인
 
 ```bash
-cd /home/lkb/workspace/KDT_1_AX_rtauto
+cd <repo-root>   # 과거 전용 학습서버(/home/lkb/...) 경로였음 — 서버 폐지, 지금은 로컬 1대뿐이라 저장소 루트로 이동
 source vision/.vision/bin/activate
 pip check
 mlagents-learn --help >/dev/null

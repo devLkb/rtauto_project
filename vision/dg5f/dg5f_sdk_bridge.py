@@ -4,8 +4,9 @@ DGSDK.dll(ctypes)로 실물 그리퍼에 중계한다.
 
 구조 (Unity 트윈과 실물을 같은 스트림으로 동시 구동):
   vision_node_dg5f.py [left|right] --bridge
-     ├→ Unity Dg5fReceiver (127.0.0.1:5006, 트윈)
-     └→ 이 브리지 (127.0.0.1:5007) → DGSDK.dll → 실물 (Modbus TCP :502, DEVELOPER 모드)
+     ├→ Unity Dg5fReceiver (config/rtauto_config.PORT_DG5F_SIM, 기본 5006, 트윈)
+     └→ 이 브리지 (config/rtauto_config.PORT_DG5F_BRIDGE, 기본 5008) → DGSDK.dll → 실물 (Modbus TCP :502, DEVELOPER 모드)
+     (구 포트 5007은 ZED 좌표 송신(zed_sender.py)과 충돌해 5008로 변경 — config/rtauto_config.py 참조)
 
 SDK 근거 (태슬로sdk/DGSDKSample_ver_2_0_1, 2026-07-20 확인):
   - MAX_JOINT_COUNT=20 (5손가락×4관절), 각도 단위 degrees — 우리 20채널과 1:1
@@ -33,6 +34,10 @@ import socket
 import struct
 import sys
 import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from config.rtauto_config import PORT_DG5F_BRIDGE, DG5F_DLL as CONFIG_DG5F_DLL
 
 # ---------------- 우리 패킷 계약 (dg5f_angles와 동일) ----------------
 N_JOINTS = 20
@@ -58,8 +63,10 @@ JOINT_OFFSET_DEG = [0.0] * 20            # 영점 차이는 여기로 (sdk = sig
 JOINT_CLAMP = [(-130.0, 130.0)] * 20
 
 # ---------------- SDK ctypes 바인딩 (DGDataTypes.h 레이아웃 그대로) ----------------
-DEFAULT_DLL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
-                           "태슬로sdk", "DGSDKSample_ver_2_0_1", "DGSDK", "DGSDK.dll")
+# RTAUTO_DG5F_DLL(.env)로 오버라이드 가능 — 없으면 스크립트 기준 상대경로 기본값 사용.
+DEFAULT_DLL = CONFIG_DG5F_DLL or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..",
+    "태슬로sdk", "DGSDKSample_ver_2_0_1", "DGSDK", "DGSDK.dll")
 DG_RESULT_NONE = 0
 CONTROL_MODE_DEVELOPER = 1
 COMMUNICATION_MODE_ETHERNET = 0
@@ -177,8 +184,8 @@ def main():
     ap.add_argument("--port", type=int, default=502, help="그리퍼 Modbus TCP 포트 (기본 502)")
     ap.add_argument("--model", default="5f_left", choices=sorted(MODELS),
                     help="실물 모델 (기본 5f_left)")
-    ap.add_argument("--listen", type=int, default=5007,
-                    help="UDP 수신 포트 (vision_node --bridge와 동일해야 함, 기본 5007)")
+    ap.add_argument("--listen", type=int, default=PORT_DG5F_BRIDGE,
+                    help=f"UDP 수신 포트 (vision_node --bridge와 동일해야 함, 기본 {PORT_DG5F_BRIDGE})")
     ap.add_argument("--dll", default=DEFAULT_DLL, help="DGSDK.dll 경로")
     ap.add_argument("--hz", type=float, default=50.0, help="실물 송신 상한 Hz (기본 50)")
     ap.add_argument("--max-step", type=float, default=2.0,

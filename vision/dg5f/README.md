@@ -23,7 +23,7 @@ Unity 쪽(`unity/Assets/Scripts/`): `Dg5fReceiver.cs`(UDP 수신) + `Dg5fHandDri
 
 ## 프로토콜 (Python ↔ Unity 계약)
 
-- UDP `127.0.0.1:5006` (⚠️ SVH는 5005 — 공존 가능). 포트 `UNITY_PORT`, `--bridge` 시 실물 SDK로도 동시 송신(`BRIDGE_PORT` 5007).
+- UDP `127.0.0.1:5006` (⚠️ SVH는 5005 — 공존 가능). 포트 `UNITY_PORT`, `--bridge` 시 실물 SDK로도 동시 송신(`BRIDGE_PORT` 5008 — 값은 `config/rtauto_config.py`가 유일한 출처, 구 5007은 ZED 좌표 송신과 충돌해 변경).
 - **v6 패킷: `'<72f'` (72 float32, little-endian)**
   - `[0..19]` DG5F 관절각 20개 **[deg]** — 순서 = `CHANNEL_NAMES`(아래)
   - `[20..22]` 엄지끝 정규화 좌표 xyz / `[23]` 핀치 플래그 / `[24]` 엄지-검지 끝거리 비율

@@ -35,7 +35,7 @@ namespace KDT.GraspTraining.Editor
         public const string SourceAreaName = "DG5F_GraspTrainingArea_00";
         public const string DemoScenePath = "Assets/Scenes/Pipeline_Demo.unity";
         const string HandRootName = "ll_dg_palm";
-        const int CameraReceiverPort = 5007;
+        const int CameraReceiverPort = 5007;  // CameraTargetReceiver.cs 기본값과 동일하게 유지 — 유일한 출처는 config/rtauto_config.py(PORT_ZED_TARGET)
         const string CubeMaterialPath = "Assets/MLAgents/Grasp/GraspCube.mat";
         const string CylinderMaterialPath = "Assets/MLAgents/Grasp/GraspCylinder.mat";
         const string OverviewCameraName = "OverviewCamera";

@@ -24,15 +24,19 @@ import csv
 import os
 import socket
 import struct
+import sys
 import time
+from pathlib import Path
 
 import cv2
 import numpy as np
 import pyzed.sl as sl
 from ultralytics import YOLO
 
-UNITY_IP = "127.0.0.1"                                    #여기에 아이피 주소 확인 ( 유니티 돌아가는 PC IP)
-UNITY_PORT = 5007
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from config.rtauto_config import UNITY_IP, PORT_ZED_TARGET  # .env의 RTAUTO_UNITY_IP로 오버라이드
+
+UNITY_PORT = PORT_ZED_TARGET
 SEND_INTERVAL_SEC = 0.05  # 초당 약 20회 전송
 
 # unity/Logs/ — Dg5fJointLogger 등 Unity 쪽 CSV 로그와 같은 폴더. 타임스탬프는 t_unix(초, UTC)로

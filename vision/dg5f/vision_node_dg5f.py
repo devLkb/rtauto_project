@@ -24,10 +24,14 @@ import socket
 import struct
 import sys
 import time
+from pathlib import Path
 
 import cv2
 import mediapipe as mp
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from config.rtauto_config import UNITY_IP, PORT_DG5F_SIM, PORT_DG5F_BRIDGE
 
 from one_euro_filter import OneEuroFilter
 from dg5f_angles import (compute_raw, map_to_dg5f, compute_thumb_tip, landmarks_to_xyz,
@@ -39,9 +43,8 @@ from dg5f_paths import unique_log_path
 # ------------------------- 설정 -------------------------
 CAM_INDEX = 0                 # 프레임 크기는 카메라 기본값(640x480@30)을 그대로 쓴다 —
                               # 강제 설정 상수를 두지 않는 이유는 cap 생성부 주석 참조
-UNITY_IP = "127.0.0.1"
-UNITY_PORT = 5006             # ⚠️ SVH(5005)와 다른 포트 — 공존용
-BRIDGE_PORT = 5007            # --bridge 시 실물 SDK 브리지(dg5f_sdk_bridge.py)에도 같은 패킷 송신
+UNITY_PORT = PORT_DG5F_SIM     # ⚠️ SVH(5005)와 다른 포트 — 공존용. 값은 config/rtauto_config.py 참조
+BRIDGE_PORT = PORT_DG5F_BRIDGE  # --bridge 시 실물 SDK 브리지(dg5f_sdk_bridge.py)에도 같은 패킷 송신
 SEND_HZ_CAP = 120
 LOG_EVERY_SEC = 0.5
 # 경로 규칙은 dg5f_paths가 소유 — 초 단위 + 중복 시 접미사라 덮어쓰기 불가

@@ -632,7 +632,7 @@ Success도 −0.479%p(`p ≈ 0.0086`)/−1.029%p(`p ≈ 0.0014`) 내려갔다.
 ## 9. 실행
 
 ```bash
-cd /home/lkb/workspace/KDT_1_AX_rtauto
+cd <repo-root>   # 과거 전용 학습서버(/home/lkb/...) 경로였음 — 서버 폐지, 지금은 로컬 1대뿐이라 저장소 루트로 이동
 source vision/.vision/bin/activate
 ```
 

@@ -11,7 +11,8 @@
 //     Y-down/Z-forward)를 Unity(Y-up) 관례로 보정한다.
 //   inputIsCameraSpace=false        → 이미 robotBase 로컬 좌표로 계산되어 오는 값(기존 동작).
 // vision/dg5f의 UDP 수신 패턴(Dg5fReceiver.cs)과 동일한 구조.
-// 포트 5007 — SVH(5005)·DG5F 손(5006)과 공존.
+// 포트 5007 — SVH(5005)·DG5F 손(5006)·DG5F 실물 SDK 브리지(5008)와 공존.
+// 포트 번호의 유일한 출처는 config/rtauto_config.py(PORT_ZED_TARGET) — 바꾸려면 거기부터.
 
 using System;
 using System.Globalization;

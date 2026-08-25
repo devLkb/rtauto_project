@@ -95,8 +95,13 @@ CAM_INDEX = 0
 CAM_BACKEND = None          # None=OpenCV 기본(Windows=MSMF, 실측 640x480@30 그대로 나옴).
                             # ⚠️ cv2.CAP_DSHOW는 open이 1.2초로 빠르지만 이 웹캠에서
                             #    read()가 504ms(2fps)로 붕괴한다 — 바꾸려면 반드시 재측정.
-DEF_SIM_IP, DEF_SIM_PORT = "127.0.0.1", 5006      # Unity 트윈
-DEF_REAL_IP, DEF_REAL_PORT = "127.0.0.1", 5007    # 실물 SDK 브리지
+# exe로 패키징돼 배포되는 독립 실행형 도구라 config/rtauto_config.py(레포 상대 import)에는
+# 일부러 의존하지 않는다 — 대신 같은 환경변수 이름을 직접 읽어 값 하나로 통일한다.
+# (env var 없으면 아래 기본값. 시작 시 값일 뿐이며 GUI에서 언제든 바꿀 수 있다.)
+DEF_SIM_IP = os.environ.get("RTAUTO_UNITY_IP", "127.0.0.1")               # Unity 트윈
+DEF_SIM_PORT = int(os.environ.get("RTAUTO_PORT_DG5F_SIM", "5006"))
+DEF_REAL_IP = os.environ.get("RTAUTO_UNITY_IP", "127.0.0.1")              # 실물 SDK 브리지
+DEF_REAL_PORT = int(os.environ.get("RTAUTO_PORT_DG5F_BRIDGE", "5008"))    # 구 5007 — ZED와 포트 충돌해 변경(config/rtauto_config.py 참조)
 SEND_HZ_CAP = 60
 FILTER_FREQ, FILTER_MIN_CUTOFF, FILTER_BETA = 30.0, 0.6, 0.0005
 TIP_MIN_CUTOFF, TIP_BETA = 0.15, 0.5

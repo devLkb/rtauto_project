@@ -1,5 +1,5 @@
 # Python
-# Python == 3.10.12
+# Python == 3.10.12 (3.10.4로도 동작 확인 — mlagents는 3.10.x 전용, 패치버전은 무관)
 # 2026-07-14 vision/.vision에서 검증한 비전+ML-Agents 공용 venv 제약.
 # pip freeze 전체 스냅샷은 requirements-vision-mlagents.resolved.txt 참고.
 
@@ -11,7 +11,12 @@ grpcio==1.53.2
 # ML-Agents
 onnx==1.15.0
 tensorboard==2.14.1
-torch==2.1.1+cpu
+# torch==2.1.1+cpu 였음(2026-07-14) — 당시 본학습은 별도 CUDA VDI에서 돌렸고 이 로컬 venv는
+# 스모크테스트 전용이라 CPU로 충분했다(docs/DG5F_GRASP_READY_REACH_HANDOFF.md 참고).
+# 그 VDI가 없어져 본학습도 이 로컬 RTX 2080에서 해야 하므로 CUDA 빌드로 전환(2026-08-25).
+# 드라이버 CUDA 12.3(nvidia-smi) 기준 cu121 휠 사용: pip install torch==2.1.1+cu121
+#   --index-url https://download.pytorch.org/whl/cu121
+torch==2.1.1+cu121
 h5py==3.10.0
 Pillow==10.2.0
 PyYAML==6.0.1
