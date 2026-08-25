@@ -1,8 +1,0 @@
-{
-  "name": "KDT.ReachTraining",
-  "rootNamespace": "KDT.ReachTraining",
-  "references": [
-    "Unity.ML-Agents"
-  ],
-  "autoReferenced": true
-}

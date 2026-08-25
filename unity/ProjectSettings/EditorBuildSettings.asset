@@ -6,12 +6,6 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
-    path: Assets/MLAgents/Reach/DG5F_GraspPointReachTraining.unity
-    guid: b20e2ab26e44298d491041f014f42206
-  - enabled: 1
-    path: Assets/MLAgents/Grasp/DG5F_GraspTraining.unity
-    guid: 44f892eb6f18b89858da34e726b81929
-  - enabled: 1
     path: Assets/MLAgents/GraspLift/DG5F_GraspLiftTraining.unity
     guid: b8ebd854cafb9d9d783c876d0c5a123b
   m_configObjects:
