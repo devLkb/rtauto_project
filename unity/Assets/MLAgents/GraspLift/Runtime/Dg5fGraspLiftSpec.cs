@@ -46,12 +46,24 @@ namespace KDT.GraspLiftTraining
         public const float PanelDepth = 1.80f;
         public const float PanelThickness = 0.25f;
         public const float SupportTopHeight = 0f;
-        public const float MaximumObjectDistance = 0.85f;
+        // Equal to the arm's reach: was 0.85 m for UR5e (850 mm), now 0.90 m for
+        // the confirmed UR16e (900 mm reach). See docs/SIM2REAL_ROADMAP.md Phase 0
+        // for the hardware confirmation; PanelWidth/PanelDepth above are NOT
+        // reach-derived (kept fixed on purpose, see comment above) so they did not
+        // need to change.
+        public const float MaximumObjectDistance = 0.90f;
 
         // Grasping is much harder than reaching, so the object spawns in a
-        // narrower annulus than the reach task's 0.35..0.70 m.
-        public const float MinimumSpawnRadius = 0.35f;
-        public const float MaximumSpawnRadius = 0.55f;
+        // narrower annulus than the reach task's 0.35..0.70 m. Scaled from the
+        // UR5e-tuned 0.35..0.55 m by the UR16e/UR5e reach ratio (0.90/0.85 =
+        // 1.0588) so the annulus keeps the same fraction of arm reach — i.e. the
+        // task keeps the same relative difficulty rather than the same absolute
+        // distance on a longer arm. Verified reachable by forward kinematics
+        // against the built ur16e_dg5f_right.sim.mjcf.xml (wrist_3 horizontal
+        // radius spans ~0.07-0.91 m across the ArmSafeMinDeg/MaxDeg envelope, so
+        // this annulus sits well inside it).
+        public const float MinimumSpawnRadius = 0.37f;
+        public const float MaximumSpawnRadius = 0.58f;
 
         // --- block geometry -----------------------------------------------------
         // 0.035 m square cross section: GraspLiftHandGeometryProbe measured the
@@ -222,8 +234,10 @@ namespace KDT.GraspLiftTraining
         // Coarse term, calibrated to the whole workspace: it gets the hand into the
         // neighbourhood of the block.
         public const float ApproachPotentialMaximum = 1.0f;
-        // Fine term. The coarse potential is scaled by MaximumObjectDistance (0.85 m),
-        // so closing the last 9 cm -> 1 cm — precisely the range that decides whether a
+        // Fine term. The coarse potential is scaled by MaximumObjectDistance (0.85 m
+        // at measurement time, on UR5e; now 0.90 m for UR16e — the scaling argument
+        // below is unaffected by that change), so closing the last 9 cm -> 1 cm —
+        // precisely the range that decides whether a
         // grasp is geometrically possible — was worth only +0.09 and the gradient there
         // was essentially flat. Measured consequence: the policy parked 8.0 cm from the
         // grasp target (never closer than 5.9 cm) while the hand's grasp volume is only
@@ -470,6 +484,25 @@ namespace KDT.GraspLiftTraining
             "wrist_1_link", "wrist_2_link", "wrist_3_link"
         };
 
+        // Kept as-is for UR16e (2026-08-25): unlike MaximumObjectDistance/
+        // SpawnRadius above, these bounds are not a simple function of reach —
+        // they were hand-tuned against UR5e's link geometry to keep the arm out
+        // of implausible/self-colliding configurations, and the raw URDF joint
+        // limits are +-360 deg on every UR e-series model regardless of variant
+        // (checked ur16e_dg5f_right.urdf), so there is no hardware-limit change
+        // to fold in here.
+        //
+        // Forward-kinematics sweep against the verified ur16e_dg5f_right.sim.mjcf.xml
+        // (all 64 corners of this envelope) found one corner
+        // (shoulder_lift=-20 deg, elbow=140 deg) where the hand dips to
+        // z ~= -0.20 m, i.e. below the panel top (z=0) — the "arm raised near
+        // horizontal + elbow sharply bent" configuration folds the wrist/hand
+        // down past the base mount plane. No same-methodology UR5e baseline model
+        // exists to check whether this is a UR16e regression or a pre-existing
+        // gap the training run simply never explored, so the bounds were left
+        // unchanged rather than guessed at. Revisit with an actual training run
+        // or a same-check on a UR5e sim model before tightening shoulder_lift/
+        // elbow further.
         public static readonly float[] ArmSafeMinDeg =
         {
             -180f, -120f, 20f, -180f, -150f, -180f
