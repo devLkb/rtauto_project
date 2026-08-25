@@ -48,3 +48,24 @@ PORT_DG5F_BRIDGE = int(_env("RTAUTO_PORT_DG5F_BRIDGE", "5008"))  # vision_node -
 UNITY_PROJECT = _env("RTAUTO_UNITY_PROJECT", "")   # tools/urdf_hand_import용 Unity 프로젝트 루트
 UNITY_CLI = _env("RTAUTO_UNITY_CLI", "")           # unity-cli 실행파일 경로
 DG5F_DLL = _env("RTAUTO_DG5F_DLL", "")             # 비우면 dg5f_sdk_bridge.py가 상대경로 기본값 사용
+
+# Universal_Robots_ROS2_Description 체크아웃 루트 (urdf/, meshes/, config/가 바로 안에 있는 폴더).
+# urdf 빌드 스크립트(convert_ur.py / merge_dg5f.py)가 xacro 해석과 메시 복사에 쓴다.
+# 저장소에 포함하지 않는 외부 공개 레포이므로 머신마다 위치가 다르다 — 기본값 없음.
+UR_DESCRIPTION = _env("RTAUTO_UR_DESCRIPTION", "")
+
+# ---------------- 로봇 구성 (하드웨어 스펙, 2026-08-25 확정) ----------------
+# 스펙 변동 가능성이 통보돼 있어 코드에 박지 않고 여기서 바꾼다.
+UR_TYPE = _env("RTAUTO_UR_TYPE", "ur16e")          # 이전 자산은 ur5e 기준이었다
+DG5F_HAND = _env("RTAUTO_DG5F_HAND", "right")      # DG-5F-M-R = 오른손
+DG5F_SHORT = _env("RTAUTO_DG5F_SHORT", "0") == "1"  # short 변형 여부("M"이 short면 1)
+
+
+def dg5f_variant():
+    """urdf/dg5f/ 아래 URDF·메시 폴더 이름 (예: dg5f_right, dg5f_left_short)."""
+    return f"dg5f_{DG5F_HAND}" + ("_short" if DG5F_SHORT else "")
+
+
+def dg5f_link_prefix():
+    """DG5F URDF 링크 접두사 — 왼손 'll_', 오른손 'rl_' (URDF 실측)."""
+    return "ll_" if DG5F_HAND == "left" else "rl_"

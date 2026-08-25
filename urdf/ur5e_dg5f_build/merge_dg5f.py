@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""UR5e(flat) + Tesollo DG5F left -> 단일 ur5e_dg5f_left.urdf 결합.
+"""[대체됨 → urdf/build_arm_hand.py] UR5e(flat) + DG5F left -> ur5e_dg5f_left.urdf 결합.
+
+⚠️ 이 스크립트는 실행 불가 상태다: UR_MESHES가 존재하지 않는 개발자 PC 경로를
+   가리키고, ur5e·왼손이 하드코딩돼 있다. 하드웨어가 UR16e + 오른손(DG-5F-M-R)으로
+   확정되면서 기종·좌우를 파라미터로 받는 `urdf/build_arm_hand.py`로 대체했다.
+   이 파일은 UR5e+왼손 자산이 어떻게 만들어졌는지의 이력으로만 남긴다.
 
 ur5e_svh_build/merge.py 계승 (SVH 자리에 DG5F). 규칙:
 - UR tool0 --(fixed)--> ll_dg_mount 연결 (identity — DG5F 마운트가 플랜지 장착용)

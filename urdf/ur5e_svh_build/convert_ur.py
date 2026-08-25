@@ -1,4 +1,7 @@
-"""UR5e xacro -> flat URDF (ROS 없이 Windows에서).
+"""[대체됨 → urdf/build_arm_hand.py] UR5e xacro -> flat URDF (ROS 없이 Windows에서).
+
+⚠️ UR_SHARE/OUT이 존재하지 않는 개발자 PC 경로를 가리켜 실행 불가다. 같은 기법
+   (가짜 ament_index_python 주입)을 기종 파라미터화해 `build_arm_hand.py`가 계승했다.
 가짜 ament_index_python 모듈로 $(find ur_description)를 실제 폴더로 해석시킨다.
 """
 import sys
