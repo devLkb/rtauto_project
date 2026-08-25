@@ -107,12 +107,22 @@ def merge(ur_urdf: Path, dg_urdf: Path, ur_meshes: Path, dg_meshes: Path,
     n_dg = rewrite_mesh(dg_root, f"package://meshes/{variant}/", f"meshes/{variant}/")
     print(f"[mesh] 경로 패치: UR {n_ur}개, DG5F {n_dg}개")
 
+    # ⚠️ xacro가 만든 URDF가 --ur-type 하나만 참조한다고 가정하면 안 된다: UR16e처럼
+    # 자기 몸체보다 짧은 링크(예: base/shoulder/wrist)를 리치가 비슷한 다른 기종
+    # 메시로 공유하는 경우가 있어, 실제로 뭘 참조하는지 URDF에서 긁어서 그것만 복사한다
+    # (기종 폴백 없이 --ur-type 것만 복사하면 일부 링크 메시가 통째로 빠진다).
+    ur_subfolders = sorted({
+        m.get("filename").split("/")[2]
+        for m in ur_root.iter("mesh")
+        if (m.get("filename") or "").startswith("meshes/ur/")
+    })
+    print(f"[mesh] UR 메시 하위폴더(실참조): {ur_subfolders}")
+
     build_dir = out_path.parent
-    # ⚠️ UR 메시는 해당 기종만 (전체 복사 시 ur3~ur30 전 기종 72MB가 딸려온다)
-    copied = copy_meshes([
-        (ur_meshes / ur_type, f"meshes/ur/{ur_type}"),
-        (dg_meshes, f"meshes/{variant}"),
-    ], build_dir)
+    copied = copy_meshes(
+        [(ur_meshes / sub, f"meshes/ur/{sub}") for sub in ur_subfolders]
+        + [(dg_meshes, f"meshes/{variant}")],
+        build_dir)
     print(f"[mesh] 복사: 신규 {copied}개")
 
     robot_name = f"{ur_type}_{variant}"
