@@ -16,7 +16,7 @@ SDK 근거 (태슬로sdk/DGSDKSample_ver_2_0_1, 2026-07-20 확인):
 
 사용:
   python dg5f_sdk_bridge.py                          # 드라이런 — DLL 안 씀, 수신값만 출력(패킷 경로 검증)
-  python dg5f_sdk_bridge.py --ip 169.254.186.72      # 실물 연결 (기본 모델 5f_left)
+  python dg5f_sdk_bridge.py --ip 169.254.186.72      # 실물 연결 (기본 모델 5f_right — DG-5F-M-R 확정)
   python dg5f_sdk_bridge.py --ip <IP> --model 5f_right --unmirror
       --unmirror: vision_node를 left로 돌리면서(왼손 Unity 트윈) 실물이 오른손일 때 —
                   왼손 미러 채널 부호를 되돌려 오른손 규약으로 변환
@@ -182,8 +182,8 @@ def main():
     ap = argparse.ArgumentParser(description="DG-5F 실물 SDK 브리지")
     ap.add_argument("--ip", default=None, help="그리퍼 IP — 생략 시 드라이런(수신값 출력만)")
     ap.add_argument("--port", type=int, default=502, help="그리퍼 Modbus TCP 포트 (기본 502)")
-    ap.add_argument("--model", default="5f_left", choices=sorted(MODELS),
-                    help="실물 모델 (기본 5f_left)")
+    ap.add_argument("--model", default="5f_right", choices=sorted(MODELS),
+                    help="실물 모델 (기본 5f_right — 하드웨어 확정: DG-5F-M-R, M=표준/비-short)")
     ap.add_argument("--listen", type=int, default=PORT_DG5F_BRIDGE,
                     help=f"UDP 수신 포트 (vision_node --bridge와 동일해야 함, 기본 {PORT_DG5F_BRIDGE})")
     ap.add_argument("--dll", default=DEFAULT_DLL, help="DGSDK.dll 경로")

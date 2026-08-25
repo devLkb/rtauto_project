@@ -188,28 +188,29 @@ URDF"** 라고 적혀 있다 — 원본이 오른손 포즈였고 왼손용으�
 부수적으로 브리지의 `--unmirror` 플래그가 불필요해지고, 텔레옵 기본값이 원래
 오른손이라 그쪽도 정합된다.
 
-#### 아직 확인이 필요한 것
+#### "M"의 정체 — 확정됨 (2026-08-25)
 
-- **"M"이 SDK 모델 코드 중 무엇인지** — SDK는 `5f_right`(0x5F22) / `5f_s_right`(0x5F24)
-  / `5f_s15_right`(0x5F44)를 구분하고, 저장소 URDF에는 `dg5f_right`와
-  `dg5f_right_short`가 있다. **작업 가설: M = 표준(비-short) → `dg5f_right.urdf` +
-  `5f_right`(0x5F22).** 하드웨어 라벨이나 SDK 연결 시 읽히는 모델 코드로 확정할 것.
-  틀리면 손가락 길이가 달라 파지 기하 전체가 어긋난다.
-- **UR16e**: Polyscope 버전, 네트워크(IP), RTDE 활성화 여부.
+**M = 표준(비-short)** → `dg5f_right.urdf` + SDK 모델 코드 `5f_right`(0x5F22).
+사용자가 보낸 참조 URDF(Tesollo 공식 `tesollo_model` 레포의 `dg5f_right.urdf`)를
+저장소 기존 `urdf/dg5f/dg5f_right.urdf`와 diff한 결과 **완전히 동일** —
+기존 자산이 이미 공식본이었다. `dg5f_sdk_bridge.py --model` 기본값을
+`5f_right`로 갱신했다.
 
-#### 재빌드 경로 — 기계적이지만 지금 막혀 있다
+여전히 확인 필요한 것 — **UR16e**: Polyscope 버전, 네트워크(IP), RTDE 활성화 여부.
 
-`convert_ur.py`는 `mappings = {"ur_type": "ur5e", ...}` 구조라 **`ur16e`로 한 단어
-교체면 되고**, `merge_dg5f.py`도 WORKLOG §22에 "오른손 변형은 DG/DG_MESHES/이름만
-교체"로 이미 예고돼 있다. 그러나 두 스크립트 모두 **죽은 개발자 PC 경로가 박혀 있어
-현재 실행 불가**다:
+#### 재빌드 완료 — `ur16e_dg5f_right.urdf`
 
-- `convert_ur.py`: `UR_SHARE`/`OUT` → `C:/Users/dltmd/Desktop/KDT/...`
-- `merge_dg5f.py`: `UR_MESHES` → 같은 죽은 경로. `UR`/`DG`/`OUT`도 ur5e·left 고정
+두 빌드 스크립트(`convert_ur.py`/`merge_dg5f.py`)를 죽은 개발자 PC 경로 제거 +
+기종·좌우 파라미터화한 `urdf/build_arm_hand.py` 하나로 통합했고, 공식
+`UniversalRobots/Universal_Robots_ROS2_Description`(rolling 브랜치)로 실제 빌드까지
+완료했다. 결과: `urdf/ur16e_dg5f_right_build/ur16e_dg5f_right.urdf` — 링크 41 /
+조인트 40(revolute 26=팔6+손20), 손끝 5개 전부 도달, 중복 0. UR5e+왼손 빌드와
+동일한 건전성 지표를 통과했다. inertial 없는 UR 더미 링크 6개(WORKLOG §22와
+동일 패턴)는 Unity 임포트 또는 MJCF 변환 단계에서 보정이 필요하다.
 
-**선행 작업**: ①두 스크립트를 설정/인자 기반으로 전환(하드코딩 금지 원칙)
-②`Universal_Robots_ROS2_Description` 확보(공개 레포) ③`ur_type=ur16e`로 변환 →
-`dg5f_right`와 결합 → MJCF 변환.
+메시 검증: `ur16e` 전용 메시는 forearm/upperarm뿐이고 나머지는 `ur10e` 메시를
+공유하는 정상 구조(관절 origin이 UR16e 고유 DH 파라미터 d1=0.1807/a2=-0.4784/
+a3=-0.36와 일치함을 확인).
 
 ### 스펙 요구 목록 (미정 항목)
 
@@ -349,9 +350,7 @@ ROS2 액션으로 노출해 상태기계가 호출하는 구조. 이유는 결�
 
 | 리스크 | 영향 | 대응 |
 |---|---|---|
-| DG-5F-M의 "M" ↔ SDK 모델코드/손가락 길이 미확정 | 파지 기하 전체가 어긋남 | Phase 0 최우선 (라벨·SDK 조회) |
 | UR16e 워크스페이스 상수 미재도출 | 스폰 범위·안전봉투가 실기와 불일치 | Phase 0에서 리치 900 mm 기준 재계산 |
-| UR description 외부 의존 확보 실패 | 모델 재빌드 자체가 막힘 | 공개 레포 확보 후 경로를 설정화 |
 | eye-in-hand FK·장착변환 오차 전파 | 물체 자세 오차 누적 | 캘리브레이션 후 정지자세 실측 검증 |
 | 스펙 추가 변동 | 상수 재작업 반복 | 로봇·워크스페이스 상수를 런타임 파라미터로 유지 |
 | 관절 대응 미검증 | **하드웨어 손상** | Phase 1-2, 실물 구동 전 필수 |
