@@ -95,18 +95,18 @@ training/scripts/run_dg5f_grasp_point_reach_evaluation.sh
 - observations/actions: `57/7` (팔 6축 + 손 closure 1축)
 - 대상: Cube 0.055 × 0.10 × 0.055 m, 0.12 kg
 - config: `config/dg5f_grasp_lift.yaml`
-- trainer: `scripts/train_dg5f_grasp_lift.sh`
 - 전이 준비: `scripts/prepare_dg5f_grasp_lift_transfer.py`
 - Linux player: `builds/DG5FGraspLift/DG5FGraspLift.x86_64`
 
-```bash
-source vision/.vision/bin/activate
-RUN_ID=dg5f_grasp_lift_5m TIME_SCALE=20 TORCH_DEVICE=cpu \
-  training/scripts/train_dg5f_grasp_lift.sh start --transfer
-```
+> `scripts/train_dg5f_grasp_lift.sh`와 `scripts/evaluate_dg5f_grasp_lift_topdown.sh`는
+> `training/archives/scripts/`로 옮겼다 — 전용 GPU Linux 학습서버(`/root/venvs/ax310`,
+> `tmux`/`xvfb-run`/`setsid` 전제) 전용 스크립트였는데 그 서버가 폐지되고 지금은
+> 로컬 Windows 단독 머신(RTX 2080)뿐이라 애초에 실행이 안 된다. 이유는
+> `training/archives/scripts/README.md` 참고. `--transfer` 전이는 이제
+> `prepare_dg5f_grasp_lift_transfer.py`를 직접 호출해 준비해야 한다.
 
-위 스크립트는 Linux 빌드(`.x86_64`)+bash 전제라 Windows에서 그대로 못 돌린다. Windows에서
-빌드된 플레이어 없이 **Unity Editor에 직접 붙여서** 시작하는 방법(초보자 기준):
+Windows에서 빌드된 Linux 플레이어 없이 **Unity Editor에 직접 붙여서** 시작하는
+방법(초보자 기준):
 
 ```cmd
 vision\.vision\Scripts\activate
@@ -121,3 +121,50 @@ mlagents-learn training\config\dg5f_grasp_lift.yaml --run-id=<이름>
   (`cpu`로 두면 이 ml-agents dev 빌드의 전역 디바이스 버그로 죽음 — 근거는
   [`README.md`](../README.md) Python 절 참고).
 - 모니터링: `tensorboard --logdir training/results` 실행 후 `http://localhost:6006/`.
+
+## DG5F Pick + Place (`DG5FPicknPlace`)
+
+UR16e + DG-5F-M-R 오른손으로 **큐브를 바닥의 랜덤 위치에서 집어, FOUP 형태
+(몸체+상단 손잡이)의 고정 플랫폼 위 랜덤 지점에 정확히 내려놓는** behavior.
+접근·파지 단계는 GraspLift의 검증된 보상/판정 아키텍처를 큐브에 그대로
+포팅했고, 그 뒤 운반·배치 단계가 새로 추가됐다. FOUP 플랫폼은 이제 잡는
+대상이 아니라 **고정된 배치 목표물**이다. 설계 근거는
+[`docs/DG5F_PICKNPLACE.md`](../docs/DG5F_PICKNPLACE.md).
+
+- Behavior/spec: `DG5FPicknPlace` / `2.0.0`
+- observations/actions: `63/7` (팔 6축 + 손 closure 1축; place 관련 상태를
+  추가하며 GraspLift 계열의 57에서 늘어남)
+- 픽 대상: GraspLift 블록과 동일한 큐브(0.035×0.12×0.035 m) — 검증된 파지
+  아퍼처를 그대로 재사용
+- 배치 목표: FOUP 형태 고정 플랫폼(몸체 0.30×0.25×0.30 m + 장식용 손잡이),
+  매 에피소드 플랫폼 윗면의 랜덤 지점(마커)에 배치해야 함
+- config: `config/dg5f_picknplace.yaml`
+- Linux player: `builds/DG5FPicknPlace/DG5FPicknPlace.x86_64`
+
+**사전 준비** (한 번만): Unity 메뉴에서 순서대로 실행.
+
+1. **Tools > Robots > Create UR16e DG5F Right Prefab** — `UR16eDG5FRight_Preview.unity`의
+   로봇을 `Assets/Robots/Prefabs/ur16e_dg5f_right.prefab`로 저장 (씬 자체는 건드리지 않음).
+2. **Tools > ML-Agents > Build DG5F PicknPlace Training Scene** — 위 prefab으로부터
+   `Assets/MLAgents/picknplace/DG5F_PicknPlaceTraining.unity`를 절차적으로 생성
+   (20개 병렬 학습 영역). 이 씬은 빌드 산출물이므로 직접 편집하지 않고, 바뀔 때마다
+   이 메뉴를 다시 실행한다.
+
+Windows에서 Unity Editor에 직접 붙여서 시작하는 방법(위 GraspLift 절차와 동일 패턴):
+
+```cmd
+vision\.vision\Scripts\activate
+mlagents-learn training\config\dg5f_picknplace.yaml --run-id=<이름>
+```
+
+- 콘솔에 "Start training by pressing the Play button in the Unity Editor."가 뜨면
+  Unity에서 `DG5F_PicknPlaceTraining.unity`를 열고 ▶ Play.
+- **GPU 머신은 config의 `torch_settings.device`가 `cuda`인지 반드시 확인** (GraspLift와
+  동일한 이유 — [`README.md`](../README.md) Python 절 참고).
+- 모니터링: `tensorboard --logdir training/results` 실행 후 `http://localhost:6006/`.
+
+> `docs/SIM2REAL_ROADMAP.md`의 "파지는 RL, 이송·배치는 결정적 플래너" 분업은
+> **실제 FOUP 이송**(모바일 매니퓰레이터가 FOUP 자체를 옮기는 것)에 대한 결정이고
+> 지금도 유효하다. 이 behavior는 그것과 다른 목적 — **place 보상 셰이핑 자체를
+> 구조화하는 연습/기반 다지기**로, 작은 큐브를 고정 플랫폼 위 랜덤 지점에 놓는
+> 순수 RL 태스크다.

@@ -8,6 +8,9 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/MLAgents/GraspLift/DG5F_GraspLiftTraining.unity
     guid: b8ebd854cafb9d9d783c876d0c5a123b
+  - enabled: 1
+    path: Assets/MLAgents/picknplace/DG5F_PicknPlaceTraining.unity
+    guid: 9410f8e7d3618194a9817ef50d25e6bb
   m_configObjects:
     com.unity.dt.app-ui: {fileID: 11400000, guid: 1b1c20d82303e4b5781c3ef50ac1449f, type: 2}
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 289c1b55c9541489481df5cc06664110, type: 3}

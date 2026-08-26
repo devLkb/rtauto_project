@@ -1,0 +1,105 @@
+behaviors:
+  DG5FPicknPlace:
+    trainer_type: ppo
+    hyperparameters:
+      # 20 parallel training areas x ~300+ decisions per episode (35 s episodes
+      # at a 0.1 s decision period, longer than pick-only tasks since this one
+      # adds a transport-then-place phase after the grasp).
+      batch_size: 2048
+      buffer_size: 20480
+      learning_rate: 0.0003
+      learning_rate_schedule: linear
+      beta: 0.01
+      beta_schedule: constant
+      epsilon: 0.2
+      lambd: 0.95
+      num_epoch: 3
+    network_settings:
+      normalize: false
+      hidden_units: 256
+      num_layers: 3
+      vis_encode_type: simple
+    reward_signals:
+      extrinsic:
+        # The placement payoff arrives well after the grasp that earned it —
+        # same long-horizon reasoning as GraspLift/pick-only PicknPlace.
+        gamma: 0.995
+        strength: 1.0
+    keep_checkpoints: 20
+    checkpoint_interval: 200000
+    max_steps: 8000000
+    time_horizon: 256
+    summary_freq: 5000
+    threaded: false
+
+torch_settings:
+  # Must be cuda on a GPU machine — see dg5f_grasp_lift.yaml's identical comment
+  # (this ml-agents dev build cannot fall back to cpu once cuda has been set as
+  # the process-wide default device).
+  device: cuda
+
+environment_parameters:
+  # Pick-stage curriculum: spawn annulus, same widen-outward shape as
+  # GraspLift's grasp_stage (reused verbatim — same cube geometry).
+  pick_stage:
+    curriculum:
+      - name: pick_near
+        completion_criteria:
+          measure: progress
+          behavior: DG5FPicknPlace
+          threshold: 0.2
+          min_lesson_length: 1000
+          signal_smoothing: true
+        value:
+          sampler_type: constant
+          sampler_parameters:
+            value: 1.0
+      - name: pick_wider
+        completion_criteria:
+          measure: progress
+          behavior: DG5FPicknPlace
+          threshold: 0.45
+          min_lesson_length: 1000
+          signal_smoothing: true
+        value:
+          sampler_type: constant
+          sampler_parameters:
+            value: 2.0
+      - name: pick_full_annulus
+        value:
+          sampler_type: constant
+          sampler_parameters:
+            value: 3.0
+  # Place-stage curriculum: how far the marker is randomized over the platform
+  # top, and how tight the placement tolerance is. Gated later than pick_stage
+  # (higher thresholds) so the policy has a working pick before precision
+  # placement is asked of it.
+  place_stage:
+    curriculum:
+      - name: place_near_center
+        completion_criteria:
+          measure: progress
+          behavior: DG5FPicknPlace
+          threshold: 0.5
+          min_lesson_length: 1000
+          signal_smoothing: true
+        value:
+          sampler_type: constant
+          sampler_parameters:
+            value: 1.0
+      - name: place_wider
+        completion_criteria:
+          measure: progress
+          behavior: DG5FPicknPlace
+          threshold: 0.75
+          min_lesson_length: 1000
+          signal_smoothing: true
+        value:
+          sampler_type: constant
+          sampler_parameters:
+            value: 2.0
+      - name: place_full_precision
+        value:
+          sampler_type: constant
+          sampler_parameters:
+            value: 3.0

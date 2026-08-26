@@ -631,6 +631,14 @@ Success도 −0.479%p(`p ≈ 0.0086`)/−1.029%p(`p ≈ 0.0014`) 내려갔다.
 
 ## 9. 실행
 
+> 아래 절차는 위 결과를 실제로 만들어낸 전용 GPU Linux 학습서버 기준
+> 기록이다. 그 서버는 폐지됐고 지금은 로컬 Windows 단독 머신(RTX 2080)뿐이라
+> `train_dg5f_grasp_lift.sh`/`evaluate_dg5f_grasp_lift_topdown.sh`를 포함한
+> bash 자동화가 그대로 돌지 않는다(`training/archives/scripts/README.md`
+> 참고). Windows에서 지금 실제로 되는 절차는
+> [`training/README.md`](../training/README.md)의 "DG5F Grasp + Lift" 절
+> (Unity Editor에 붙여 `mlagents-learn` 직접 실행)이다.
+
 ```bash
 cd <repo-root>   # 과거 전용 학습서버(/home/lkb/...) 경로였음 — 서버 폐지, 지금은 로컬 1대뿐이라 저장소 루트로 이동
 source vision/.vision/bin/activate

@@ -1,0 +1,10 @@
+{
+  "name": "KDT.PicknPlaceTraining.Tests",
+  "rootNamespace": "KDT.PicknPlaceTraining.Tests",
+  "references": [
+    "KDT.PicknPlaceTraining"
+  ],
+  "optionalUnityReferences": ["TestAssemblies"],
+  "includePlatforms": ["Editor"],
+  "autoReferenced": false
+}

@@ -1,0 +1,10 @@
+{
+  "name": "KDT.PicknPlaceTraining",
+  "rootNamespace": "KDT.PicknPlaceTraining",
+  "references": [
+    "Unity.ML-Agents",
+    "KDT.RobotScripts",
+    "Cinemachine"
+  ],
+  "autoReferenced": true
+}

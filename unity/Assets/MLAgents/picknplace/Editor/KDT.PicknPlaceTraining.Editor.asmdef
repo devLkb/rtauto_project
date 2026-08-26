@@ -1,0 +1,14 @@
+{
+  "name": "KDT.PicknPlaceTraining.Editor",
+  "rootNamespace": "KDT.PicknPlaceTraining.Editor",
+  "references": [
+    "KDT.PicknPlaceTraining",
+    "Unity.ML-Agents",
+    "Unity.InferenceEngine",
+    "KDT.MLAgents.Editor",
+    "KDT.RobotScripts",
+    "Cinemachine"
+  ],
+  "includePlatforms": ["Editor"],
+  "autoReferenced": true
+}

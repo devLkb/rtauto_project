@@ -336,6 +336,20 @@ ROS-TCP-Connector/Endpoint로 ROS2와 직접 통신하며, 매니퓰레이션 �
 그립이 표준 → 접촉 대향각 90° 조건과 케이지 판정도 함께), `ToppleLimitDegrees`
 (현재 45°, 웨이퍼는 훨씬 엄격할 것), YOLOv8 재학습.
 
+> **선행 placeholder 착수 (2026-08-26, 같은 날 두 번 방향 조정).** 스펙 도착
+> 전이지만 `Assets/MLAgents/picknplace`(`DG5FPicknPlace` behavior)로 구조를
+> 먼저 세워뒀다. 1차 시도는 FOUP 손잡이를 직접 잡는 방식이었으나, 실제
+> 착수해보니 place 보상 셰이핑 자체를 연습해두는 편이 이 시점에 더 유용하다고
+> 판단해 **같은 날 방향을 바꿨다**: 지금 구현은 큐브(GraspLift 블록과 동일
+> 지오메트리, 검증된 파지 아퍼처 재사용)를 바닥 랜덤 위치에서 집어, FOUP 형태
+> 고정 플랫폼(박스 몸체 + 장식용 손잡이) 윗면의 랜덤 지점에 내려놓는 진짜
+> pick-and-place다. 이 behavior 안에서는 place가 RL로 구현돼 있다 — 위
+> "파지는 RL, 이송·배치는 결정적 플래너" 분업은 **모바일 매니퓰레이터가 실제
+> FOUP 자체를 옮기는 것**에 대한 결정이라 여전히 유효하며, 이 큐브
+> pick-and-place는 그 결정과 별개로 place 보상 구조를 미리 검증해두는
+> 기반 작업이다. 큐브/플랫폼 치수는 여전히 잠정값. 설계 근거·상수 전체 목록은
+> [`docs/DG5F_PICKNPLACE.md`](DG5F_PICKNPLACE.md) 참고.
+
 ## 9. Phase 5 — 자율주행 (Nav2) + ROS2 통합 (구 §7 Gazebo 검증 흡수)
 
 이 Phase가 **Unity ↔ ROS2 통합의 유일한 경로**다(§7 참고, 2026-08-26 Gazebo 검증

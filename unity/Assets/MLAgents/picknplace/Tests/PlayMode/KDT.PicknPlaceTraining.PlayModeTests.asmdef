@@ -1,0 +1,12 @@
+{
+  "name": "KDT.PicknPlaceTraining.PlayModeTests",
+  "rootNamespace": "KDT.PicknPlaceTraining.PlayModeTests",
+  "references": [
+    "KDT.PicknPlaceTraining",
+    "Unity.ML-Agents",
+    "Unity.InferenceEngine"
+  ],
+  "optionalUnityReferences": ["TestAssemblies"],
+  "includePlatforms": [],
+  "autoReferenced": false
+}
