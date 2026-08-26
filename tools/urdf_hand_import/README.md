@@ -81,5 +81,5 @@ DG5F 4변형 검증 결과(2026-07-13): probe 20관절 전부 정착오차 0.00�
 
 ## 관련 (이 폴더 밖)
 
-- `KDT/ur5e_svh_build/` — UR5e 팔 xacro 변환 + 핸드 URDF **결합** (SVH 전용, DG5F 결합 시 개조 필요)
+- `urdf/build_arm_hand.py` — UR 팔 xacro 변환 + DG5F 손 URDF **결합** (기종·좌우 파라미터화)
 - `KDT/docs/WORKLOG.md` §15·§18 — SVH/DG5F 임포트·IK 작업 기록

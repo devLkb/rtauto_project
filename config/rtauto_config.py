@@ -50,9 +50,14 @@ UNITY_CLI = _env("RTAUTO_UNITY_CLI", "")           # unity-cli 실행파일 경�
 DG5F_DLL = _env("RTAUTO_DG5F_DLL", "")             # 비우면 dg5f_sdk_bridge.py가 상대경로 기본값 사용
 
 # Universal_Robots_ROS2_Description 체크아웃 루트 (urdf/, meshes/, config/가 바로 안에 있는 폴더).
-# urdf 빌드 스크립트(convert_ur.py / merge_dg5f.py)가 xacro 해석과 메시 복사에 쓴다.
+# urdf 빌드 스크립트(urdf/build_arm_hand.py)가 xacro 해석과 메시 복사에 쓴다.
 # 저장소에 포함하지 않는 외부 공개 레포이므로 머신마다 위치가 다르다 — 기본값 없음.
 UR_DESCRIPTION = _env("RTAUTO_UR_DESCRIPTION", "")
+
+# vision/dg5f/analyze_teleop.py·analyze_thumbik.py가 읽는 Unity 조인트 로그·URDF 폴더.
+# 머신마다 다른 경로라 기본값 없음 — 없으면 각 스크립트가 --logs-dir/--urdf-dir 요구로 명확히 에러.
+DG5F_UNITY_LOGS = _env("DG5F_UNITY_LOGS", "")
+DG5F_URDF_DIR = _env("DG5F_URDF_DIR", "")
 
 # ---------------- 로봇 구성 (하드웨어 스펙, 2026-08-25 확정) ----------------
 # 스펙 변동 가능성이 통보돼 있어 코드에 박지 않고 여기서 바꾼다.

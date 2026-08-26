@@ -14,9 +14,9 @@
 > 로봇 검지가 49° 굽는 증상이 나왔다(07-28 실측). `direct` 모드였다면 대부분 안 쓰인다.
 
 ```bash
-cd C:\Users\dltmd\Desktop\KDT\dg5f
-# mediapipe가 설치된 vision venv 파이썬으로 실행할 것
-C:\Users\dltmd\Desktop\rt\KDT_1_AX_rtauto\vision\.vision\Scripts\python.exe calibrate_dg5f.py
+cd vision/dg5f
+# mediapipe가 설치된 공용 venv(vision/.vision) 활성화 후 실행할 것 — 레포 루트 README 참고
+python calibrate_dg5f.py
 # 종료: 웹캠 창에서 q → dg5f_calibration.json 자동 저장
 ```
 

@@ -21,19 +21,22 @@ import math
 import os
 import sys
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from config.rtauto_config import DG5F_UNITY_LOGS, DG5F_URDF_DIR
 
 from dg5f_angles import CHANNEL_NAMES, DG5F_CHANNELS
 
 # 비전 로그(vision_dg5f_*.csv)는 스크립트 위치 기준 logs/ 하위
 VISION_LOGS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
-# 새 환경에서는 여기만 수정하거나 --logs-dir/--urdf-dir 인자 사용
-UNITY_LOGS = os.environ.get(
-    "DG5F_UNITY_LOGS", r"C:\Users\dltmd\UnityProjects\cli_test\KDT_robot_AI\Logs")
-URDF_DIR = os.environ.get(
-    "DG5F_URDF_DIR", r"C:\Users\dltmd\Desktop\KDT\tesollo_model-main\tesollo_model-main\dg5f")
+# 머신마다 다른 경로라 기본값을 박아두지 않는다 — .env(DG5F_UNITY_LOGS/DG5F_URDF_DIR)로
+# 설정하거나 --logs-dir/--urdf-dir 로 직접 넘길 것. 둘 다 없으면 main()에서 명확히 에러를 낸다.
+UNITY_LOGS = DG5F_UNITY_LOGS
+URDF_DIR = DG5F_URDF_DIR
 JOINT_KEYS = [f"{f}_{j}" for f in range(1, 6) for j in range(1, 5)]  # 채널 순서와 동일
 
 CORR_PASS, CORR_WARN = 0.90, 0.70
@@ -97,6 +100,11 @@ def main():
         UNITY_LOGS = args.logs_dir
     if args.urdf_dir:
         URDF_DIR = args.urdf_dir
+    if not URDF_DIR:
+        ap.error("--urdf-dir 가 필요합니다 (또는 레포 루트 .env에 DG5F_URDF_DIR 설정)")
+    needs_unity_logs = args.unity_only == "latest" or args.unity == "latest"
+    if needs_unity_logs and not UNITY_LOGS:
+        ap.error("--logs-dir 가 필요합니다 (또는 레포 루트 .env에 DG5F_UNITY_LOGS 설정)")
 
     lim = urdf_limits(args.hand)
     gated = {c[0] for c in DG5F_CHANNELS if c[5]}

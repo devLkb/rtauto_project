@@ -21,7 +21,7 @@ Tesollo DG5F 손은 MediaPipe 텔레옵으로 조작하는 디지털 트윈 프�
 | `vision/dg5f/` | **DG5F 텔레옵 파이프라인**: 보정→웹캠 트래킹→UDP 송신 + 검증/분석 도구 |
 | `tools/urdf_hand_import/` | URDF→Unity 임포트/물리검증/구동준비/프로브 범용 스크립트 |
 | `urdf/dg5f/` | Tesollo DG5F URDF+메시 원본 4변형 (검증 스크립트의 대조 기준) |
-| `urdf/ur5e_svh_build/` | UR5e xacro 변환 + 핸드 결합 스크립트 (SVH용, DG5F 결합 시 개조) |
+| `urdf/build_arm_hand.py` | UR 팔+DG5F 손 결합 URDF 빌더 (기종·좌우 파라미터화) |
 | `docs/` | Agent 계약, ML-Agents 설계·학습 가이드, 전체 작업 이력 |
 | `training/` | DG5FGraspPointReach PPO 설정, 학습·평가 도구 |
 
@@ -33,7 +33,7 @@ Tesollo DG5F 손은 MediaPipe 텔레옵으로 조작하는 디지털 트윈 프�
 - 렌더 파이프라인: Built-in (URP 아님 — 머티리얼 마젠타면 확인)
 - 씬: `Assets/Scenes/DG5F_Import.unity` (메인 — DG5F 왼손 인스턴스 배치됨)
   ※ SVH 관련 코드·씬(SampleScene, unity_pkg)은 DG5F 전환에 따라 제거됨(2026-07-13).
-  UR5e 팔 결합 시 `urdf/ur5e_svh_build/`의 변환 스크립트와 `Assets/Scripts/ArmTargetIK.cs`
+  UR 팔 결합 시 `urdf/build_arm_hand.py`(기종·좌우 파라미터화)와 `Assets/Scripts/ArmTargetIK.cs`
   (팔 IK, WORKLOG §15·§18)를 재사용해 새로 구성.
 - 프리팹: `Assets/Robots/Prefabs/dg5f_*.prefab` 4변형 — 구동 준비(게인/중력off/자기충돌무시/
   수신기/IK/로거) 완료 상태. 씬에 끌어놓으면 됨. 변형 교체는 메뉴 **Tools/DG5F**.

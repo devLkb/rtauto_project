@@ -20,18 +20,23 @@ Dg5fThumbIK 디버그 CSV 분석 — "노랑·빨강은 일치하는데 초록(�
 import glob
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-DEFAULT_LOG_DIR = os.environ.get(
-    "DG5F_UNITY_LOGS",
-    r"C:\Users\dltmd\UnityProjects\cli_test\KDT_robot_AI\Logs")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from config.rtauto_config import DG5F_UNITY_LOGS
+
+# 머신마다 다른 경로라 기본값을 박아두지 않는다 — .env에 DG5F_UNITY_LOGS 설정할 것.
+DEFAULT_LOG_DIR = DG5F_UNITY_LOGS
 
 
 def find_csv(arg):
     if arg and arg != "latest":
         return arg
+    if not DEFAULT_LOG_DIR:
+        sys.exit("[오류] 로그 폴더가 필요합니다 (레포 루트 .env에 DG5F_UNITY_LOGS 설정)")
     files = sorted(glob.glob(os.path.join(DEFAULT_LOG_DIR, "thumbik_*.csv")),
                    key=os.path.getmtime)
     if not files:
