@@ -43,10 +43,17 @@ Tesollo DG5F 손은 MediaPipe 텔레옵으로 조작하는 디지털 트윈 프�
   정확한 Agent 계약은 `docs/AGENT_SPEC.md`, 설계 근거는 `docs/ML_AGENTS_DESIGN.md`,
   빌드·smoke·본학습 실행법은 `docs/ML_AGENTS_TRAINING_GUIDE.md` 참고.
 
-### 2. Python — **3.10.12 권장, 비전+ML-Agents 공용 가상환경 1개**
+### 2. Python — **3.10.11 권장, 비전+ML-Agents 공용 가상환경 1개**
 
-버전 선택 근거(2026-07-14 `vision/.vision`에서 검증):
-- **ML-Agents(mlagents)는 Python 3.10.x 전용** → 3.10.12 기준으로 통일
+설치 절차(Windows, 초보자 기준)는 [`docs/PYTHON_ENV_SETUP.md`](docs/PYTHON_ENV_SETUP.md)로
+분리했다 — conda/pyenv 없이 `venv` + cmd만으로 진행한다. 아래는 버전 선택 근거와
+검증된 패키지 조합만 요약.
+
+버전 선택 근거:
+- **ML-Agents(mlagents)는 Python 3.10.x 전용**이며 패치버전은 안 가린다
+  (2026-07-14 `3.10.12`, `3.10.4` 모두 동작 확인). **3.10.11로 고정**한 이유는
+  Windows용 설치 파일이 배포되는 마지막 3.10 패치가 3.10.11이기 때문
+  (3.10.12부터는 "보안 패치만" 단계로 들어가 소스만 배포 — 2026-08-26 확인).
 - 기존 판단은 `mediapipe 0.10.14`(protobuf 4.x 계열) 때문에 ML-Agents(protobuf 3.x)와
   가상환경을 분리해야 한다는 것이었으나, **`mediapipe==0.10.11`로 낮추면 `protobuf==3.20.3`에서
   동작**해 ML-Agents와 같은 venv에 공존 가능하다.
@@ -54,25 +61,17 @@ Tesollo DG5F 손은 MediaPipe 텔레옵으로 조작하는 디지털 트윈 프�
   `opencv-contrib-python==4.8.1.78`, `mlagents/mlagents_envs==1.2.0.dev0`.
 - **torch**: 전용 학습 서버(VDI)가 없어져 이제 본학습도 이 로컬 GPU에서 돌리므로
   `torch==2.1.1+cpu`가 아니라 **드라이버 CUDA 버전에 맞는 CUDA 빌드**를 설치한다
-  (`nvidia-smi`로 CUDA 버전 확인 후 고르기 — 예: CUDA 12.3 드라이버 → `cu121` 휠).
+  (`nvidia-smi`로 CUDA 버전 확인 후 고르기 — 예: 드라이버가 지원하는 최대 CUDA가
+  12.3이면 그 이하인 `cu121` 휠로 충분. PyTorch는 CUDA 버전을 정확히 맞추는 게 아니라
+  "드라이버가 지원하는 버전 이하"인 배포 휠 중에서 고르는 것).
+- `mlagents/mlagents_envs==1.2.0.dev0`은 `requirements-mlagents.txt`에 Release 23 커밋으로
+  고정했다. **GPU가 있는 머신에서 `torch_settings.device: cpu`로 학습 config를 돌리면
+  안 됨** — 이 dev 빌드는 모듈 로드 시 GPU가 있으면 PyTorch 전역 기본 디바이스를
+  cuda로 걸어두고, 이후 `device: cpu` 설정이 이걸 되돌리지 못하는 버그가 있어
+  `cpu vs cuda:0` 텐서 불일치로 죽는다 (`mlagents/torch_utils/torch.py`
+  `set_torch_config`). GPU 머신에서는 학습 config의 `torch_settings.device`를
+  **`cuda`로 맞출 것** (`training/config/dg5f_grasp_lift.yaml` 참고).
 
-```bash
-# 비전(텔레옵) + ML-Agents 공용 venv (리포 현재 검증 경로)
-python3.10 -m venv vision/.vision
-source vision/.vision/bin/activate      # Windows: vision\.vision\Scripts\activate
-
-# torch는 CUDA 빌드를 먼저 설치(버전은 vision/requirements-vision-mlagents.constraints.txt와
-# 반드시 맞출 것 — 다르면 아래 설치에서 재다운로드/버전충돌 발생)
-pip install torch==2.1.1+cu121 --index-url https://download.pytorch.org/whl/cu121
-
-pip install -r requirements-mlagents.txt
-pip install -r requirements-vision.txt
-
-# 전체 고정 버전 재현/감사가 필요할 때
-pip install -r vision/requirements-vision-mlagents.resolved.txt
-```
-
-`mlagents/mlagents_envs==1.2.0.dev0`은 `requirements-mlagents.txt`에 Release 23 커밋으로 고정했다.
 설치 후 `pip check`와 `mlagents-learn --help`를 반드시 확인한다. 텔레옵 스크립트(`vision/`)도
 같은 공용 venv에서 실행한다.
 

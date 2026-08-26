@@ -35,7 +35,10 @@ behaviors:
     threaded: false
 
 torch_settings:
-  device: cpu
+  # GPU가 있는 머신에서는 반드시 cuda로 둘 것 — cpu로 두면 이 ml-agents dev 빌드가
+  # 로드 시 걸어둔 전역 기본 디바이스(cuda)를 되돌리지 못해 cpu/cuda 텐서 불일치로
+  # 죽는다(mlagents/torch_utils/torch.py set_torch_config, 2026-08-26 확인).
+  device: cuda
 
 environment_parameters:
   # Grasp curriculum. Stage 1 keeps the block inside the annulus the transferred

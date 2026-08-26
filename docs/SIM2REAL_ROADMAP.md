@@ -3,6 +3,9 @@
 작성 2026-08-25 (v2 — 시뮬레이터/미들웨어 아키텍처 확정 반영).
 개정 2026-08-26 (v3 — **MuJoCo 폐기**, 물리·학습을 Unity 자체 엔진(PhysX)으로 환원하고
 Gazebo를 검증 단계로 추가).
+개정 2026-08-26 (v4 — **Gazebo 검증 단계 폐기**, ROS2 통합을
+[Unity-Robotics-Hub](https://github.com/Unity-Technologies/Unity-Robotics-Hub)
+(ROS-TCP-Connector/Endpoint)로 일원화 — 아래 "Gazebo 폐기 경위" 참고).
 1인 풀타임·로컬 단독 머신(RTX 2080, Windows) 체제.
 
 정책 계약 상세는 [`DG5F_GRASP_LIFT.md`](DG5F_GRASP_LIFT.md), SDK 실측 근거는
@@ -19,13 +22,25 @@ Gazebo를 검증 단계로 추가).
 > `Assets/Tests/MjThroughput/` 등)은 삭제하지 않고 과거 이력으로 남겨두되, 새 작업의
 > 기준으로 삼지 않는다.
 
+> ⚠️ **Gazebo 검증 단계 폐기 경위 (2026-08-26, v3 발행 당일).** v3에서 Unity 학습
+> 다음 단계로 추가했던 "Gazebo 범용 검증"(§7, 당시 설계 미착수)을 **폐기**한다.
+> 대신 Unity가 [ROS-TCP-Connector/Endpoint](https://github.com/Unity-Technologies/Unity-Robotics-Hub)로
+> **ROS2와 직접 통신**하며, 매니퓰레이션 정책·주행(Nav2) 모두 이 경로로 ROS2 생태계
+> 정합성을 확인한다 — 별도 물리 시뮬레이터(Gazebo)를 거치지 않는다. §7이 미정으로
+> 남겨뒀던 "Gazebo를 별도 실행해 결과만 비교 vs ROS-TCP-Connector로 Unity와 실시간
+> 연동" 질문에 대한 답이 후자로 정해진 것이자, §9(Nav2)와의 중복 우려도 동일 도구로
+> 해소됨을 뜻한다. §7은 이 개정에서 삭제하고 내용을 §9로 흡수했다(아래 "9. Phase 5"
+> 참고). Unity-Robotics-Hub의 공식 지원 배지는 ROS/ROS2 **Melodic·Noetic·Foxy**까지만
+> 명시하므로, Nav2에 필요한 최신 ROS2 배포판(Humble 이상) 호환은 착수 시 별도 확인이
+> 필요하다 — §11 리스크 참고.
+
 ## 1. 확정된 시스템 아키텍처
 
 | 레이어 | 담당 | 비고 |
 |---|---|---|
 | 물리·학습 | **Unity 자체 엔진(PhysX)** | ML-Agents. ~~MuJoCo~~ — 2026-08-26 폐기(파이프라인 통합·유지보수 부담) |
-| 검증 | **Gazebo** | Unity 학습 다음의 범용 물리/ROS2 생태계 검증 단계. 매니퓰레이션·주행 어느 한쪽 전용이 아님. **구체 설계 미정 — 착수 전 §7 먼저 채울 것** |
-| 자율주행 | **ROS2 + Nav2 + slam_toolbox** | [Robotics-Nav2-SLAM-Example](https://github.com/Unity-Technologies/Robotics-Nav2-SLAM-Example) 기반 |
+| ROS2 통합/검증 | **Unity-Robotics-Hub**(ROS-TCP-Connector/Endpoint) | Unity가 직접 ROS2와 통신. ~~Gazebo~~ — 2026-08-26 폐기(별도 물리 시뮬레이터 불필요, ROS2 생태계 정합성은 이 경로로 확인). 매니퓰레이션·주행 공용 |
+| 자율주행 | **ROS2 + Nav2 + slam_toolbox** | [Robotics-Nav2-SLAM-Example](https://github.com/Unity-Technologies/Robotics-Nav2-SLAM-Example) 기반, 통신은 위 ROS-TCP-Connector/Endpoint 공유 |
 | 실물 하드웨어 | **UR16e** (RTDE) + **Tesollo DG-5F-M-R (오른손)** (dgsdk) + **엔스퀘어(Nsquare) AMR**(모델·상세 스펙 미확보) | |
 | 3D 비전 | **손·팔 장착 예정** (eye-in-hand / arm-mounted) | 시기 미정 |
 
@@ -298,22 +313,13 @@ UR16e+오른손 조합에도 필요한지 Phase 2 착수 시 재확인.
 `unity/Assets/MLAgents/GraspLift`)는 **레거시로 동결하고 삭제하지 않는다** —
 위 포트 검증 게이트의 비교 기준(99.75%)이기 때문이다.
 
-## 7. Phase 3 — Gazebo 검증 (설계 미착수)
+## 7. Phase 3 — ~~Gazebo 검증~~ 폐기, ROS2 통합은 §9로 흡수
 
-Unity PhysX 학습·Phase 2 게이트 통과 다음에 오는 **범용 검증 단계**. 사용자
-확인(2026-08-26): 매니퓰레이션·주행 어느 한쪽 전용이 아니라 "Unity 다음의 범용
-검증 단계"로, ROS2 생태계 정합성 확인과 물리 재검증을 겸한다.
-
-**아직 정해지지 않은 것 (착수 전에 채워야 함)**:
-- 검증 대상 범위 — Phase 2의 매니퓰레이션 정책만인지, Phase 5의 Nav2 주행까지
-  포함하는지, 아니면 통합 시나리오(§10)까지인지.
-- Gazebo로 가져올 모델 — URDF는 이미 있으니 SDF 변환 여부, 센서 플러그인
-  (RTDE 대응 힘/토크, LiDAR, 카메라) 구성.
-- Unity와의 관계 — Gazebo를 별도 실행해 결과만 비교하는 것인지, ROS-TCP-Connector류
-  다리로 Unity와 실시간 연동하는 것인지.
-- Phase 5(Nav2)와의 중복 — Nav2 참고 예제(Robotics-Nav2-SLAM-Example) 자체가
-  이미 Gazebo/ROS2 생태계를 전제하므로, 이 Phase가 Phase 5의 시뮬레이터 선택과
-  겹치는지 명시적으로 정리할 것.
+**2026-08-26 폐기.** 별도 Gazebo 검증 단계를 두지 않는다. Unity가
+[Unity-Robotics-Hub](https://github.com/Unity-Technologies/Unity-Robotics-Hub)의
+ROS-TCP-Connector/Endpoint로 ROS2와 직접 통신하며, 매니퓰레이션 정책·Nav2 주행 검증
+모두 이 경로를 공유한다. 상세 구성(설치·토폴로지·버전 호환)은 §9(Phase 5 — 자율주행)
+참고 — 이 단계는 §9에 흡수됐으므로 별도 절로 남겨두지 않는다.
 
 ## 8. Phase 4 — 웨이퍼 케이스 재타겟 + Pick & Place
 
@@ -330,18 +336,29 @@ Unity PhysX 학습·Phase 2 게이트 통과 다음에 오는 **범용 검증 �
 그립이 표준 → 접촉 대향각 90° 조건과 케이지 판정도 함께), `ToppleLimitDegrees`
 (현재 45°, 웨이퍼는 훨씬 엄격할 것), YOLOv8 재학습.
 
-## 9. Phase 5 — 자율주행 (Nav2)
+## 9. Phase 5 — 자율주행 (Nav2) + ROS2 통합 (구 §7 Gazebo 검증 흡수)
 
+이 Phase가 **Unity ↔ ROS2 통합의 유일한 경로**다(§7 참고, 2026-08-26 Gazebo 검증
+단계 폐기 후 흡수). Nav2 주행뿐 아니라 매니퓰레이션 정책의 ROS2 생태계 정합성
+확인도 여기서 같은 브릿지로 수행한다 — 별도 Gazebo 인스턴스 없음.
+
+- **구성 요소** (Unity-Robotics-Hub 하위 저장소):
+  - `ROS TCP Endpoint` — ROS2 쪽(Python), 메시지 송수신 서버.
+  - `ROS TCP Connector` — Unity 패키지(UPM git URL), 메시지 송수신·시각화.
+  - `URDF Importer` — Unity 패키지, URDF 로드(§4 모델 정본화와 연결).
 - **토폴로지**: ROS2 + Nav2 + slam_toolbox를 **WSL2(Ubuntu) 또는 Docker**에서,
   Unity는 Windows에서, 둘을 **ROS-TCP-Connector/Endpoint**로 연결. ROS2를 Windows
   네이티브로 돌리는 건 피한다.
-- **호환 작업 예상**: Robotics-Nav2-SLAM-Example은 Unity 2020.3 LTS / ROS2 Foxy~Galactic
-  시절 기준이다. 이 프로젝트는 **Unity 6000.4.0f1**이라 ROS-TCP-Connector 패키지 버전,
-  렌더 파이프라인(이 프로젝트는 Built-in), 예제 로봇·센서 프리팹에 손이 필요하다.
+- **버전 호환 확인 필요**: Unity-Robotics-Hub 공식 지원 배지는 ROS Melodic/Noetic,
+  **ROS2는 Foxy까지**만 명시한다. Nav2에 보통 쓰는 Humble 이상 호환은 착수 시
+  별도 검증 필요(공식 미지원일 수 있음 — fork/커뮤니티 브랜치 확인).
+  Robotics-Nav2-SLAM-Example 자체도 Unity 2020.3 LTS / ROS2 Foxy~Galactic 시절
+  기준이라, 이 프로젝트의 **Unity 6000.4.0f1** + 렌더 파이프라인(Built-in) +
+  예제 로봇·센서 프리팹 쪽에 포팅 작업이 필요하다.
+- **원칙 1 (하드코딩 금지) 적용**: ROS_IP·TCP 포트는 [`config/rtauto_config.py`](../config/rtauto_config.py)에
+  추가하고 Unity(C#)·Python 양쪽에서 그걸 참조한다. 리터럴로 박지 않는다.
 - **베이스 스펙 대기 중에도 착수 가능** — 예제의 스톡 로봇으로 Nav2/SLAM 파이프라인을
   먼저 세우고, 실 베이스 스펙이 오면 교체한다. 스펙 대기로 막혔을 때 돌릴 작업.
-- Gazebo 검증(§7)의 범위에 주행이 포함되는 것으로 정리되면, 이 Phase의 시뮬레이터
-  선택과 §7이 겹치므로 착수 전에 조율할 것.
 
 ## 10. Phase 6 — 통합 오케스트레이션
 
@@ -362,10 +379,10 @@ ROS2 액션으로 노출해 상태기계가 호출하는 구조. 이유는 결�
 | eye-in-hand FK·장착변환 오차 전파 | 물체 자세 오차 누적 | 캘리브레이션 후 정지자세 실측 검증 |
 | 스펙 추가 변동 | 상수 재작업 반복 | 로봇·워크스페이스 상수를 런타임 파라미터로 유지 |
 | 관절 대응 미검증 | **하드웨어 손상** | Phase 1-2, 실물 구동 전 필수 |
-| Gazebo 검증 단계 설계 미정(범위·모델·Unity 연동 방식 전부 미정) | Phase 3 착수 지연, Phase 5와 범위 중복 가능 | 착수 전 §7의 미정 항목부터 정리 |
 | xDrive 게인 UR16e 미재튜닝(더 무거운 팔) | Phase 2 학습 불안정 가능 | Phase 2 착수 시 재튜닝·검증 |
 | 비전 자세 오차·지연 | 관찰 32칸 오염 | Phase 1 실측 → 랜덤화 범위로 사용 |
 | Nav2 예제 ↔ Unity 6 비호환 | 주행 착수 지연 | 스톡 로봇으로 선행, 스펙 대기 중 수행 |
+| Unity-Robotics-Hub 공식 지원이 ROS2 Foxy까지만 명시(Nav2는 보통 Humble+) | §9 착수 시 통신 브릿지 호환 문제 가능 | 착수 시 fork/커뮤니티 브랜치 여부 확인, 필요하면 직접 패치 |
 | 웨이퍼 그립 방식이 5지 파지와 다름 | 파지 포즈·보상 재설계 | Phase 4에 재학습 일정 반영 |
 | 단일 GPU 시분할 | 학습·하드웨어 동시 진행 불가 | 학습 야간 / 하드웨어·비전 주간 |
 | 아키텍처 결정이 하루 만에 뒤집힌 전례(MuJoCo 확정→폐기) | 로드맵 신선도에 대한 신뢰 저하 | "확정" 표시된 결정도 며칠간 재확인 없이는 다음 대형 작업의 전제로 쓰지 않는다 |

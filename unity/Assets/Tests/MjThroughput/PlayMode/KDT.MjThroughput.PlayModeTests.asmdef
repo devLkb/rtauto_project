@@ -1,0 +1,11 @@
+{
+  "name": "KDT.MjThroughput.PlayModeTests",
+  "rootNamespace": "KDT.MjThroughput",
+  "references": [
+    "Mujoco.Runtime",
+    "Mujoco.Editor"
+  ],
+  "optionalUnityReferences": ["TestAssemblies"],
+  "includePlatforms": [],
+  "autoReferenced": false
+}

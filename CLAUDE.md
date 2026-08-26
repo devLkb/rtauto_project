@@ -31,22 +31,27 @@
 ## 파이프라인
 
 ```text
-sim { Unity (ML-Agents 학습, 물리=Unity 자체 엔진/PhysX)
-      -> Gazebo (검증 — Unity 학습 다음의 범용 물리/ROS2 생태계 검증 단계) }
+sim { Unity (ML-Agents 학습, 물리=Unity 자체 엔진/PhysX) }
   -> real (UR16e RTDE + DG-5F-M-R dgsdk + 엔스퀘어 AMR, ROS2 + Nav2 오케스트레이션)
+
+ROS2 통합: Unity <-> ROS-TCP-Connector/Endpoint (Unity-Robotics-Hub) <-> ROS2(WSL2/Docker)
+  매니퓰레이션 정책 검증 + Nav2 주행 공용 — 별도 Gazebo 단계 없음
 ```
 
 > ⚠️ **MuJoCo 폐기 (2026-08-26).** 물리 엔진으로 MuJoCo를 도입하는 방안(2026-08-25
 > 확정·검증됨)은 **파이프라인 통합 및 후속 유지보수 어려움을 이유로 폐기**됐다.
-> `docs/SIM2REAL_ROADMAP.md`는 v3(2026-08-26)에서 이 결정을 반영해 이미 정리됐다 —
-> MuJoCo 관련 서술은 과거 이력 상자로만 남아 있고 본문은 PhysX/Gazebo 기준이다.
 > `urdf/ur16e_dg5f_right_build/*.mjcf.xml`, `patch_mjcf.py` 등 이미 만들어진 MuJoCo
 > 산출물은 삭제하지 말고 그대로 두되(과거 이력), 새 작업의 기준으로 삼지 않는다.
+
+> ⚠️ **Gazebo 검증 단계 폐기 (2026-08-26, MuJoCo 폐기와 같은 날 추가 결정).** v3에서
+> 도입했던 "Unity 다음의 Gazebo 범용 검증 단계"는 하루 만에 다시 폐기됐다. 대신 Unity가
+> [Unity-Robotics-Hub](https://github.com/Unity-Technologies/Unity-Robotics-Hub)의
+> ROS-TCP-Connector/Endpoint로 **ROS2와 직접 통신**하고, 이 경로로 매니퓰레이션
+> 정책·Nav2 주행 검증을 모두 수행한다. `docs/SIM2REAL_ROADMAP.md`는 v4(2026-08-26)에서
+> 이 결정을 반영했다 — 상세 구성(설치·토폴로지·ROS2 버전 호환 리스크)은 로드맵 §9
+> 참고. ROS_IP·TCP 포트는 원칙 1에 따라 `config/rtauto_config.py`로 뺄 것.
 - **물리·학습은 Unity 자체 엔진**(PhysX)으로 되돌아간다. Unity가 물리와 ML-Agents 에이전트
   로직을 모두 소유한다.
-- **Gazebo는 Unity 학습 다음에 오는 범용 검증 단계**다(ROS2 생태계 정합성 확인, 물리
-  재검증 등) — 매니퓰레이션·주행 어느 한쪽 전용이 아니다. 이 단계는 아직
-  `docs/SIM2REAL_ROADMAP.md`에 구체 설계가 없다 — 착수 전에 그 문서에 먼저 반영할 것.
 - **1차 목표**: Unity 경로로 sim2real 파이프라인을 완전히 뚫는 것. 그 뒤 **모방학습으로
   초기 데이터를 확보**해 강화학습/정책 개선의 시작점으로 쓴다.
 - **GPU 워크스테이션(Isaac Sim/Lab 가능 사양)을 제공받으면**: sim 단계의 Unity를
@@ -70,17 +75,19 @@ sim { Unity (ML-Agents 학습, 물리=Unity 자체 엔진/PhysX)
 
 ## 원칙 2 — 새 머신 부트스트랩 보장
 
-**다른 컴퓨터에서 Unity + Python 3.10.12 + 필요 라이브러리 설치가 끝나는 즉시** 강화학습을
+**다른 컴퓨터에서 Unity + Python 3.10.11 + 필요 라이브러리 설치가 끝나는 즉시** 강화학습을
 새로 시작하거나 이어서 시작할 수 있어야 한다. 이것이 모든 설계 결정의 조건이다.
 
 - 새로 시작: 설치 완료 → 바로 학습 실행 가능해야 한다. 문서화되지 않은 수동 단계가 있으면
   버그로 취급한다.
 - 이어서 시작: 체크포인트 등 추가로 필요한 파일 조건이 있다면, "그 조건 자체를 문서와
   스크립트에 명시"하는 것까지가 완료 조건이다 — 파일이 있다고 가정하고 넘어가지 않는다.
-- Python 버전은 **3.10.12 고정**(ML-Agents가 3.10.x 전용). 비전(mediapipe)과 ML-Agents는
-  버전 조합이 맞으면 venv 하나를 공유한다 — 근거와 정확한 버전 표는
-  [`README.md`](README.md) 참고.
-- 환경 셋업 절차 자체를 변경했으면 README를 그 자리에서 함께 갱신한다.
+- Python 버전은 **3.10.11 고정**(ML-Agents가 3.10.x 전용, 패치버전은 무관하나 3.10.12부터
+  Windows installer가 배포되지 않아 — 3.10부터는 보안 패치 전용 단계라 소스만 배포 —
+  installer가 있는 마지막 3.10 패치인 3.10.11로 고정, 2026-08-26 확인·정정). 비전(mediapipe)과
+  ML-Agents는 버전 조합이 맞으면 venv 하나를 공유한다 — 근거와 정확한 버전 표는
+  [`docs/PYTHON_ENV_SETUP.md`](docs/PYTHON_ENV_SETUP.md) 참고.
+- 환경 셋업 절차 자체를 변경했으면 `docs/PYTHON_ENV_SETUP.md`를 그 자리에서 함께 갱신한다.
 
 ## 리포 구조
 

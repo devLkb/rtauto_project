@@ -1,5 +1,7 @@
 # Python
-# Python == 3.10.12 (3.10.4로도 동작 확인 — mlagents는 3.10.x 전용, 패치버전은 무관)
+# Python == 3.10.11 (3.10.4/3.10.12로도 동작 확인 — mlagents는 3.10.x 전용, 패치버전은
+# 무관. 3.10.11로 고정한 이유는 Windows installer가 배포되는 마지막 3.10 패치라서
+# — 2026-08-26. 상세: docs/PYTHON_ENV_SETUP.md)
 # 2026-07-14 vision/.vision에서 검증한 비전+ML-Agents 공용 venv 제약.
 # pip freeze 전체 스냅샷은 requirements-vision-mlagents.resolved.txt 참고.
 

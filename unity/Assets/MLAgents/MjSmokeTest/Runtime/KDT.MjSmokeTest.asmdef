@@ -1,0 +1,10 @@
+{
+  "name": "KDT.MjSmokeTest",
+  "rootNamespace": "KDT.MjSmokeTest",
+  "references": [
+    "Mujoco.Runtime",
+    "Unity.ML-Agents"
+  ],
+  "includePlatforms": [],
+  "autoReferenced": true
+}

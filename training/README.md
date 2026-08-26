@@ -104,3 +104,20 @@ source vision/.vision/bin/activate
 RUN_ID=dg5f_grasp_lift_5m TIME_SCALE=20 TORCH_DEVICE=cpu \
   training/scripts/train_dg5f_grasp_lift.sh start --transfer
 ```
+
+위 스크립트는 Linux 빌드(`.x86_64`)+bash 전제라 Windows에서 그대로 못 돌린다. Windows에서
+빌드된 플레이어 없이 **Unity Editor에 직접 붙여서** 시작하는 방법(초보자 기준):
+
+```cmd
+vision\.vision\Scripts\activate
+mlagents-learn training\config\dg5f_grasp_lift.yaml --run-id=<이름>
+```
+
+- 콘솔에 "Start training by pressing the Play button in the Unity Editor."가 뜨면
+  Unity에서 `DG5FGraspLift` behavior가 들어있는 씬을 열고 ▶ Play.
+- 기본 대기시간은 60초 — Unity 로딩이 오래 걸리면 `--timeout-wait=300`처럼 늘린다.
+- 중단 후 이어서: 같은 `--run-id`에 `--resume` 추가.
+- **GPU 머신은 config의 `torch_settings.device`가 `cuda`인지 반드시 확인**
+  (`cpu`로 두면 이 ml-agents dev 빌드의 전역 디바이스 버그로 죽음 — 근거는
+  [`README.md`](../README.md) Python 절 참고).
+- 모니터링: `tensorboard --logdir training/results` 실행 후 `http://localhost:6006/`.

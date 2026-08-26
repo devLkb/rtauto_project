@@ -1,4 +1,6 @@
-# ML-Agents 학습 + 비전(텔레옵) 공용 가상환경 — Python 3.10.12에서 검증
+# ML-Agents 학습 + 비전(텔레옵) 공용 가상환경 — Python 3.10.11에서 검증
+# (mlagents는 패치버전을 안 가리지만, Windows installer가 배포되는 마지막 3.10 패치가
+# 3.10.11이라 이걸로 고정 — 2026-08-26. 상세: docs/PYTHON_ENV_SETUP.md)
 # 2026-07-14 현재 vision/.vision은 mediapipe==0.10.11 + protobuf==3.20.3 조합으로
 # mlagents와 같은 venv에서 pip check 통과. 더 높은 mediapipe(예: 0.10.14+)를 쓰면
 # protobuf 4.x 충돌 가능성이 있으므로 vision/requirements-vision-mlagents.constraints.txt를 유지.

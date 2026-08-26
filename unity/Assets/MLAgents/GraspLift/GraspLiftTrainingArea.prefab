@@ -979,7 +979,7 @@ MonoBehaviour:
     - hand_closure_delta
     VectorActionSpaceType: 1
     hasUpgradedBrainParametersWithActionSpec: 1
-  m_Model: {fileID: 5022602860645237092, guid: 4605f6f1c2dced7b4f9aac7f8de2a31f, type: 3}
+  m_Model: {fileID: 0}
   m_InferenceDevice: 0
   m_BehaviorType: 0
   m_BehaviorName: DG5FGraspLift
@@ -1100,6 +1100,7 @@ MonoBehaviour:
   - {fileID: 5643453649591601736}
   useDeterministicSpawns: 0
   spawnSeed: 12345
+  endEpisodeOnSuccess: 1
   armDeltaDegPerDecision: 2
   gripDeltaPerDecision: 0.08
 --- !u!114 &5413526489447527344
