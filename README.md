@@ -85,6 +85,28 @@ Unity 수동 팔 IK (UR16e)
 - `vision/dg5f/analyze_teleop.py`는 환경변수 `DG5F_UNITY_LOGS`, `DG5F_URDF_DIR` 또는
   `--logs-dir/--urdf-dir` 인자로 대체 가능
 
+## 빠른 시연 (웹캠 1대, 이 PC만 — 설정 불필요)
+
+디지털 트윈 시연은 **웹캠만 꽂으면** 바로 된다. 별도 기기 연동도, 포트/IP 설정도 없다.
+
+1. Unity에서 `Assets/Scenes/Pipeline_Demo_GraspLift.unity`를 열고 **Play ▶**
+   (수동 모드로 자동 시작 — 학습된 정책 없이 동작한다)
+2. 손 트래킹 실행:
+   ```bash
+   python vision/dg5f/vision_node_dg5f.py right
+   ```
+3. 화면 좌상단 **"손 트래킹: 수신중"**(초록)이 뜨면 연결된 것이다. 주황색
+   **"대기중"**이면 2번이 아직 안 돌고 있다는 뜻.
+
+조작은 두 가지다 — **손가락**은 웹캠 앞에서 오른손을 움직이면 그대로 미러링되고,
+**팔**은 화면 우하단 조이스틱(드래그)과 높이 슬라이더로 움직인다.
+
+> 포트는 Unity와 Python이 **같은 파일 하나**(레포 루트 `.env`, 없으면 `.env.example`)를
+> 읽으므로 손댈 일이 없다. 5006이 다른 프로그램과 겹칠 때만 `.env`의
+> `RTAUTO_PORT_DG5F_SIM`을 바꾸면 양쪽이 함께 따라온다. 카메라가 여러 대라
+> 엉뚱한 게 잡히면 `.env`의 `RTAUTO_VISION_CAMERA_INDEX`를 0, 1, 2로 바꿔본다.
+> 사용자·카메라가 바뀌었으면 최초 1회 `python vision/dg5f/calibrate_dg5f.py`로 보정한다.
+
 ## 텔레옵 실행 (UR16e + 오른손 모델)
 
 ```bash

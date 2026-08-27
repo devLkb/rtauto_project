@@ -89,6 +89,11 @@ Thumbs.db
 # 임시 이식성 검증용 venv (스크립트가 만들었다 지우는 일회성 폴더)
 .tmp_*/
 
+# PlayMode 테스트 러너가 Play 진입 때 Assets/에 만드는 임시 씬.
+# 정상 종료 시 스스로 지우지만 배치모드가 중단되면 남는다 — 커밋되면 안 된다.
+unity/Assets/InitTestScene*.unity
+unity/Assets/InitTestScene*.unity.meta
+
 # MuJoCo 런타임 로그 — MuJoCo는 폐기됐지만(CLAUDE.md) 과거 산출물 실행 시 생성된다
 MUJOCO_LOG.TXT
 unity/MUJOCO_LOG.TXT

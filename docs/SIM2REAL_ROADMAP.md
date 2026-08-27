@@ -16,11 +16,16 @@ Gazebo를 검증 단계로 추가).
 > 하루 만에 폐기**됐다. 이 v3는 그 결정을 반영해 물리·학습을 다시 Unity 자체 엔진
 > (PhysX)으로 되돌리고, 대신 Unity 학습 다음 단계에 **Gazebo 범용 검증**을 추가한
 > 구성으로 로드맵을 정리한 것이다. 아래 각 절의 MuJoCo 관련 서술은 이 개정으로
-> 무효화됐고, 이번 개정에서 PhysX/Gazebo 기준으로 다시 썼다. 이미 만들어진 MuJoCo
-> 산출물(`urdf/ur16e_dg5f_right_build/*.mjcf.xml`, `patch_mjcf.py`, Unity
-> `org.mujoco` 패키지 의존성, `Assets/Plugins/x86_64/mujoco.dll`,
-> `Assets/Tests/MjThroughput/` 등)은 삭제하지 않고 과거 이력으로 남겨두되, 새 작업의
-> 기준으로 삼지 않는다.
+> 무효화됐고, 이번 개정에서 PhysX/Gazebo 기준으로 다시 썼다.
+>
+> **2026-08-27 갱신 — MuJoCo 잔재 전부 삭제.** 위에서 "남겨두겠다"고 했던 산출물은
+> 실제로는 계속 비용을 물렸다: `org.mujoco`가 Git 의존성이라 새 PC마다 GitHub에서
+> 클론해야 했고, `testables`에 등록돼 있어 PlayMode 테스트를 돌릴 때마다 MuJoCo
+> 자체 테스트 8개가 함께 실행됐으며, `mujoco.dll`(5.1 MB)이 모든 clone에 포함되고
+> 런타임에 로드돼 `MUJOCO_LOG.TXT`에 불안정 경고를 남겼다. 그래서 패키지 의존성·
+> DLL·`Assets/Tests/MjThroughput/`·`Assets/Local/MjImports`·`*.mjcf.xml`·
+> `patch_mjcf.py`·`compile_mjcf.py`·`mj_smoketest.yaml`을 **전부 삭제**했다.
+> 과거 내용은 git 이력에 그대로 있다. 아래 각 절의 MuJoCo 서술은 역사 기록이다.
 
 > ⚠️ **Gazebo 검증 단계 폐기 경위 (2026-08-26, v3 발행 당일).** v3에서 Unity 학습
 > 다음 단계로 추가했던 "Gazebo 범용 검증"(§7, 당시 설계 미착수)을 **폐기**한다.

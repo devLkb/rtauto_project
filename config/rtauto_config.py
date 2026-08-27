@@ -15,7 +15,17 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _load_dotenv():
-    env_path = REPO_ROOT / ".env"
+    # 우선순위: 프로세스 환경변수 > .env > .env.example (.env.example 헤더가 명시한 계약).
+    # setdefault라 먼저 넣은 값이 이긴다 → .env를 .env.example보다 먼저 읽는다.
+    # .env.example까지 읽는 덕분에 새 PC에서 `cp .env.example .env` 없이도 공유 기본값이
+    # 그대로 적용된다 — 웹캠만 꽂고 바로 시연하는 흐름에 필요하다.
+    # Unity 쪽(Assets/Scripts/RtautoConfig.cs, MLAgents/Editor/BuildEnvironment.cs)도
+    # 같은 두 파일을 같은 순서로 읽는다. 세 리더가 어긋나면 안 된다.
+    for name in (".env", ".env.example"):
+        _merge_dotenv(REPO_ROOT / name)
+
+
+def _merge_dotenv(env_path):
     if not env_path.is_file():
         return
     # utf-8-sig: Windows 메모장/PowerShell Set-Content가 BOM을 붙여 저장하는 일이 잦은데,

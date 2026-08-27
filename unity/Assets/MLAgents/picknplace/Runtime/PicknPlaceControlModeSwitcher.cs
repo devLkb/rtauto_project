@@ -90,11 +90,12 @@ namespace KDT.PicknPlaceTraining
         {
             if (!showModeUI) return;
 
-            GUILayout.BeginArea(new Rect(10, 10, 200, 70), GUI.skin.box);
+            GUILayout.BeginArea(new Rect(10, 10, 240, 96), GUI.skin.box);
             GUILayout.Label("제어 모드");
             if (handOnlyManualMode)
             {
                 GUILayout.Label("[MediaPipe 오른손 미러]");
+                DrawHandTrackingStatus();
                 GUILayout.EndArea();
                 return;
             }
@@ -102,7 +103,25 @@ namespace KDT.PicknPlaceTraining
             if (GUILayout.Button(!_isManual ? "[자동]" : "자동")) SetManualMode(false);
             if (GUILayout.Button(_isManual ? "[수동]" : "수동")) SetManualMode(true);
             GUILayout.EndHorizontal();
+            DrawHandTrackingStatus();
             GUILayout.EndArea();
+        }
+
+        /// 웹캠만 꽂고 바로 시연하는 흐름에서, 손이 안 움직일 때 원인이 "파이썬 미실행"인지
+        /// "포즈 인식 실패"인지 화면만 보고 구분할 수 있게 한다. 콘솔을 열지 않아도 되도록.
+        void DrawHandTrackingStatus()
+        {
+            if (handReceiver == null) return;
+
+            bool live = handReceiver.enabled && handReceiver.secondsSinceLastPacket < 0.5f;
+            Color previous = GUI.color;
+            GUI.color = live ? Color.green : new Color(1f, 0.65f, 0f);
+            GUILayout.Label(live
+                ? $"손 트래킹: 수신중 (UDP {handReceiver.ActivePort})"
+                : $"손 트래킹: 대기중 (UDP {handReceiver.ActivePort})");
+            GUI.color = previous;
+            if (!live)
+                GUILayout.Label("vision_node_dg5f.py 실행 필요", GUI.skin.label);
         }
     }
 }

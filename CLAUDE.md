@@ -38,10 +38,16 @@ ROS2 통합: Unity <-> ROS-TCP-Connector/Endpoint (Unity-Robotics-Hub) <-> ROS2(
   매니퓰레이션 정책 검증 + Nav2 주행 공용 — 별도 Gazebo 단계 없음
 ```
 
-> ⚠️ **MuJoCo 폐기 (2026-08-26).** 물리 엔진으로 MuJoCo를 도입하는 방안(2026-08-25
-> 확정·검증됨)은 **파이프라인 통합 및 후속 유지보수 어려움을 이유로 폐기**됐다.
-> `urdf/ur16e_dg5f_right_build/*.mjcf.xml`, `patch_mjcf.py` 등 이미 만들어진 MuJoCo
-> 산출물은 삭제하지 말고 그대로 두되(과거 이력), 새 작업의 기준으로 삼지 않는다.
+> ⚠️ **MuJoCo 폐기 완료 (2026-08-26 결정, 2026-08-27 잔재 제거).** 물리 엔진으로
+> MuJoCo를 도입하는 방안(2026-08-25 확정·검증됨)은 **파이프라인 통합 및 후속 유지보수
+> 어려움을 이유로 폐기**됐다. 2026-08-27에 잔재를 **전부 삭제**했다 — `org.mujoco`
+> 패키지 의존성(`manifest.json`/`packages-lock.json`), `Assets/Plugins/x86_64/mujoco.dll`,
+> `Assets/Tests/MjThroughput/`, `Assets/Local/MjImports`,
+> `urdf/ur16e_dg5f_right_build/*.mjcf.xml`·`patch_mjcf.py`·`compile_mjcf.py`,
+> `training/archives/config/mj_smoketest.yaml`.
+> **MuJoCo를 다시 들이지 않는다.** 과거 내용이 필요하면 git 이력에서 꺼낸다
+> (삭제 커밋 이전). `Dg5fGraspLiftSpec.cs`의 주석이 아직 `*.sim.mjcf.xml`을 관절값
+> 검증 출처로 언급하는데, 이는 그 수치가 어떻게 나왔는지에 대한 기록일 뿐 의존성이 아니다.
 
 > ⚠️ **Gazebo 검증 단계 폐기 (2026-08-26, MuJoCo 폐기와 같은 날 추가 결정).** v3에서
 > 도입했던 "Unity 다음의 Gazebo 범용 검증 단계"는 하루 만에 다시 폐기됐다. 대신 Unity가

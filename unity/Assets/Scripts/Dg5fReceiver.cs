@@ -7,8 +7,10 @@
 // 길이로 버전 판별 — 상위 버전 필드는 없으면 미제공 처리. 비교가 '>='라 상위 버전 패킷을
 // 하위 버전만 아는 빌드에 쏴도 앞부분만 읽고 뒤는 무시된다(양방향 호환).
 // 채널 순서(계약): [0..3]엄지 1_1~1_4 / [4..7]검지 2_1~2_4 / [8..11]중지 / [12..15]약지 / [16..19]새끼
-// 포트 5006 — SVH(5005)·ZED 좌표(5007)·DG5F 실물 SDK 브리지(5008)와 공존.
-// 포트 번호의 유일한 출처는 config/rtauto_config.py(PORT_DG5F_SIM) — 바꾸려면 거기부터.
+// 포트 기본값 5006 — SVH(5005)·ZED 좌표(5007)·DG5F 실물 SDK 브리지(5008)와 공존.
+// 포트의 유일한 출처는 config/rtauto_config.py(PORT_DG5F_SIM) = 레포 루트 .env의
+// RTAUTO_PORT_DG5F_SIM이고, 이 스크립트도 RtautoConfig로 같은 파일을 읽는다.
+// 따라서 .env만 고치면 파이썬 송신측과 Unity 수신측이 함께 따라온다 (원칙 1).
 // ⚠️ udp_test_receiver 같은 로컬 수신기가 같은 포트에 살아있으면 패킷을 뺏김 (SVH 포트 함정과 동일).
 
 using System;
@@ -21,6 +23,8 @@ public class Dg5fReceiver : MonoBehaviour
 {
     public const int ChannelCount = 20;
 
+    [Tooltip("레포 루트 .env에 RTAUTO_PORT_DG5F_SIM이 없을 때만 쓰는 최후 기본값. "
+             + "실제 사용 포트는 ActivePort — .env를 고치면 파이썬과 함께 따라온다.")]
     public int port = 5006;
     [Tooltip("마지막 패킷 수신 후 경과(초). 0.5 이상이면 송신 끊김.")]
     public float secondsSinceLastPacket = float.PositiveInfinity;
@@ -60,9 +64,37 @@ public class Dg5fReceiver : MonoBehaviour
 
     public bool HasData => _hasData;
 
+    /// Start()에서 확정된 실제 수신 포트. Inspector의 port는 .env가 없을 때의 기본값이다.
+    public int ActivePort { get; private set; }
+
     void Start()
     {
-        _client = new UdpClient(port);
+        // 포트의 정본은 config/rtauto_config.py + 레포 .env다. 여기서 같은 파일을 읽어
+        // 파이썬 송신측과 항상 같은 번호를 쓰게 한다 (원칙 1: 숫자를 두 번 타이핑하지 않음).
+        ActivePort = RtautoConfig.GetInt("RTAUTO_PORT_DG5F_SIM", port);
+
+        try
+        {
+            _client = new UdpClient(ActivePort);
+        }
+        catch (SocketException e)
+        {
+            // 시연 중 제일 흔한 실패: 이전 파이썬/Unity 프로세스가 포트를 잡고 있음.
+            // 조용히 죽으면 "손이 안 움직인다"로만 보이므로 원인을 분명히 남긴다.
+            Debug.LogError(
+                $"[Dg5fReceiver] UDP {ActivePort} 포트를 열지 못했습니다 ({e.SocketErrorCode}). "
+                + "이미 다른 프로세스가 이 포트를 쓰고 있을 가능성이 큽니다 — 이전에 띄운 "
+                + "vision_node_dg5f.py나 Unity 인스턴스를 닫고 다시 Play하세요. "
+                + $"포트를 바꾸려면 레포 루트 .env의 RTAUTO_PORT_DG5F_SIM을 수정합니다 (현재 출처: {RtautoConfig.SourceLabel}).",
+                this);
+            enabled = false;
+            return;
+        }
+
+        Debug.Log($"[Dg5fReceiver] UDP {ActivePort} 수신 대기 (설정 출처: {RtautoConfig.SourceLabel}). "
+                  + "손이 움직이지 않으면 `python vision/dg5f/vision_node_dg5f.py right`가 "
+                  + "실행 중인지 확인하세요.");
+
         _running = true;
         _thread = new Thread(ReceiveLoop) { IsBackground = true };
         _thread.Start();
@@ -78,7 +110,7 @@ public class Dg5fReceiver : MonoBehaviour
 
     void ReceiveLoop()
     {
-        var remote = new IPEndPoint(IPAddress.Any, port);
+        var remote = new IPEndPoint(IPAddress.Any, ActivePort);
         while (_running)
         {
             try
