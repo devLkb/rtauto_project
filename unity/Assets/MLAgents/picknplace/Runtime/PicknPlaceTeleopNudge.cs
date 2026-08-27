@@ -17,10 +17,11 @@ namespace KDT.PicknPlaceTraining
 
         [Tooltip("Game 뷰에 조절 UI(OnGUI)를 그릴지 여부")]
         public bool showControlUI = true;
-        [Tooltip("기준점 위/아래로 조절 가능한 범위[m] — 스폰 반경 전체를 덮도록 nudge보다 크다")]
-        public float maxHeightOffset = 0.5f;
+        [Tooltip("기준점 위/아래로 조절 가능한 범위[m]. grasp+lift 시연에 필요한 10cm보다 " +
+                 "여유를 두되 UR16e가 외곽 고도에서 특이점에 들어가지 않도록 제한")]
+        public float maxHeightOffset = 0.2f;
         [Tooltip("기준점 기준 수평(로봇 기준 좌우/전후)으로 조절 가능한 최대 반경[m]")]
-        public float maxHorizontalOffset = 0.6f;
+        public float maxHorizontalOffset = 0.25f;
         [Tooltip("조이스틱을 끝까지 밀었을 때 수평 이동 속도[m/s]")]
         public float horizontalMoveSpeed = 0.05f;
 
@@ -32,6 +33,8 @@ namespace KDT.PicknPlaceTraining
         float _heightOffset;
         Vector2 _horizontalOffset; // (right, forward)
         Vector2 _joystickInput;    // -1..1 per axis, read in FixedUpdate
+        Vector3 _lastCommandedTarget;
+        bool _hasCommandedTarget;
         bool _dragging;
         bool _active;
 
@@ -67,10 +70,18 @@ namespace KDT.PicknPlaceTraining
                     _horizontalOffset = _horizontalOffset.normalized * maxHorizontalOffset;
             }
 
-            _ikTarget.position = _basePosition
+            Vector3 nextTarget = _basePosition
                 + up * _heightOffset
                 + right * _horizontalOffset.x
                 + forward * _horizontalOffset.y;
+            bool targetMoving = _hasCommandedTarget
+                && (nextTarget - _lastCommandedTarget).sqrMagnitude > 1e-8f;
+            _ikTarget.position = nextTarget;
+            _lastCommandedTarget = nextTarget;
+            _hasCommandedTarget = true;
+            // 조작 중에는 도달 히스테리시스가 느린 드래그를 끊지 않게 계속 추적한다.
+            // 마우스를 놓아 타겟이 멈추면 안전장치를 되살려 도달/정체 상태에서 관절도 멈춘다.
+            if (armIK != null) armIK.ignoreArrivalAndStallGating = targetMoving;
         }
 
         /// PicknPlaceControlModeSwitcher가 자동/수동 전환 시 직접 호출한다.
@@ -87,6 +98,8 @@ namespace KDT.PicknPlaceTraining
                 _joystickInput = Vector2.zero;
                 _dragging = false;
                 _ikTarget.position = _basePosition;
+                _lastCommandedTarget = _basePosition;
+                _hasCommandedTarget = true;
 
                 if (armSliderUI != null)
                 {
@@ -99,12 +112,11 @@ namespace KDT.PicknPlaceTraining
                 {
                     armIK.target = _ikTarget;
                     armIK.enableIK = true;
-                    // 조이스틱이 타겟을 느리게 계속 옮기는 상황에서는 도달/정체 안전장치가
-                    // "다 왔다"로 오판해 멈췄다 확 움직이는 끊김을 만든다 — 텔레옵 중엔 끈다.
-                    armIK.ignoreArrivalAndStallGating = true;
-                    // 손목을 특정 각도로 강제하지 않는다 — 6관절 전부 위치 CCD에 참여시켜
-                    // 손이 자연스러운(필요하면 기운) 각도로 다가가게 둔다.
-                    armIK.positionJointCount = -1;
+                    armIK.ignoreArrivalAndStallGating = false;
+                    // 위치 CCD는 어깨/팔꿈치 3축만 사용한다. 위치만 맞추는 IK에 손목 3축까지
+                    // 넣으면 높은 목표/완전 신전 부근에서 동일 위치의 여러 관절해 사이를
+                    // 프레임마다 뒤집으며 물리 드라이브를 크게 흔든다. 손목은 현재 파지 자세 유지.
+                    armIK.positionJointCount = 3;
                     armIK.enabled = true;
                 }
             }

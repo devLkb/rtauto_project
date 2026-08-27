@@ -6,6 +6,7 @@
 # pip freeze 전체 스냅샷은 requirements-vision-mlagents.resolved.txt 참고.
 
 # ML-Agents / MediaPipe 공통 핵심 의존성
+setuptools==81.0.0
 numpy==1.23.5
 protobuf==3.20.3
 grpcio==1.53.2
@@ -16,9 +17,10 @@ tensorboard==2.14.1
 # torch==2.1.1+cpu 였음(2026-07-14) — 당시 본학습은 별도 CUDA VDI에서 돌렸고 이 로컬 venv는
 # 스모크테스트 전용이라 CPU로 충분했다(docs/DG5F_GRASP_READY_REACH_HANDOFF.md 참고).
 # 그 VDI가 없어져 본학습도 이 로컬 RTX 2080에서 해야 하므로 CUDA 빌드로 전환(2026-08-25).
-# 드라이버 CUDA 12.3(nvidia-smi) 기준 cu121 휠 사용: pip install torch==2.1.1+cu121
+# 공개 버전만 제한하면 PEP 440상 CPU(2.1.1)와 CUDA 로컬 빌드(2.1.1+cu121)를 모두 허용한다.
+# 현재 개발 PC는 cu121 사용: pip install torch==2.1.1+cu121
 #   --index-url https://download.pytorch.org/whl/cu121
-torch==2.1.1+cu121
+torch==2.1.1
 h5py==3.10.0
 Pillow==10.2.0
 PyYAML==6.0.1

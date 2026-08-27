@@ -2453,8 +2453,8 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 204831774}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalRotation: {x: 0.21423128, y: -0.42077398, z: 0.102964886, w: 0.8754727}
+  m_LocalPosition: {x: 0.03549841, y: 0.6108495, z: 0.4384}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -3890,8 +3890,8 @@ ArticulationBody:
   m_XDrive:
     lowerLimit: -360
     upperLimit: 360
-    stiffness: 0
-    damping: 0
+    stiffness: 10000
+    damping: 200
     forceLimit: 150
     target: 0
     targetVelocity: 0
@@ -4572,7 +4572,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Unity.Robotics.UrdfImporter::Unity.Robotics.UrdfImporter.UrdfVisuals
 --- !u!1 &337212593
 GameObject:
-  m_ObjectHideFlags: 0
+  m_ObjectHideFlags: 3
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
@@ -4589,7 +4589,7 @@ GameObject:
   m_IsActive: 1
 --- !u!4 &337212594
 Transform:
-  m_ObjectHideFlags: 0
+  m_ObjectHideFlags: 3
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
@@ -4604,7 +4604,7 @@ Transform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &337212595
 MonoBehaviour:
-  m_ObjectHideFlags: 0
+  m_ObjectHideFlags: 3
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
@@ -5411,7 +5411,7 @@ Transform:
   m_GameObject: {fileID: 426239618}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: -0.4, y: 0.31, z: 0.25}
+  m_LocalPosition: {x: -0.4344, y: 0.31, z: 0.7935}
   m_LocalScale: {x: 0.035, y: 0.12, z: 0.035}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -6627,8 +6627,8 @@ ArticulationBody:
   m_XDrive:
     lowerLimit: -360
     upperLimit: 360
-    stiffness: 0
-    damping: 0
+    stiffness: 10000
+    damping: 200
     forceLimit: 28
     target: 0
     targetVelocity: 0
@@ -9093,8 +9093,8 @@ ArticulationBody:
   m_XDrive:
     lowerLimit: -180
     upperLimit: 180
-    stiffness: 0
-    damping: 0
+    stiffness: 10000
+    damping: 200
     forceLimit: 150
     target: 0
     targetVelocity: 0
@@ -11748,7 +11748,7 @@ MonoBehaviour:
   cameraLabels:
   - "\uC804\uCCB4 \uBCF4\uAE30"
   - "\uD074\uB85C\uC988\uC5C5"
-  defaultCameraIndex: 1
+  defaultCameraIndex: 0
   showCameraUI: 1
   minFieldOfView: 15
   maxFieldOfView: 120
@@ -11769,6 +11769,8 @@ MonoBehaviour:
   handReceiver: {fileID: 854382496}
   handDriver: {fileID: 854382495}
   showModeUI: 1
+  startInManualMode: 1
+  handOnlyManualMode: 0
 --- !u!114 &854382492
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -11781,13 +11783,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: cd998f629bd740f49a07946c08432a33, type: 3}
   m_Name: 
   m_EditorClassIdentifier: KDT.PicknPlaceTraining::KDT.PicknPlaceTraining.PicknPlaceTeleopNudge
-  agent: {fileID: 0}
-  armIK: {fileID: 0}
-  armSliderUI: {fileID: 0}
+  agent: {fileID: 854382498}
+  armIK: {fileID: 854382493}
+  armSliderUI: {fileID: 854382494}
   showControlUI: 1
-  maxHeightOffset: 0.5
-  maxHorizontalOffset: 0.6
-  horizontalMoveSpeed: 0.05
+  maxHeightOffset: 0.2
+  maxHorizontalOffset: 0.25
+  horizontalMoveSpeed: 0.12
 --- !u!114 &854382493
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -11801,7 +11803,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: KDT.RobotScripts::ArmTargetIK
   target: {fileID: 0}
-  endEffector: {fileID: 0}
+  endEffector: {fileID: 520330917}
   enableIK: 1
   showUI: 1
   ignoreArrivalAndStallGating: 0
@@ -11956,7 +11958,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 854382488}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 3a5c9d521e5ef4759a8246a07d52221e, type: 3}
   m_Name: 
@@ -11971,7 +11973,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 854382488}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 21bffed8c93f3e2448af0c27a77979bd, type: 3}
   m_Name: 
@@ -14641,11 +14643,11 @@ Camera:
     y: 0
     width: 1
     height: 1
-  near clip plane: 0.3
-  far clip plane: 1000
-  field of view: 60
+  near clip plane: 0.1
+  far clip plane: 5000
+  field of view: 32
   orthographic: 0
-  orthographic size: 5
+  orthographic size: 10
   m_Depth: -1
   m_CullingMask:
     serializedVersion: 2
@@ -14669,8 +14671,8 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1045700008}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 1, z: -10}
+  m_LocalRotation: {x: 0.21423133, y: -0.42077404, z: 0.102964915, w: 0.8754727}
+  m_LocalPosition: {x: 0.03549841, y: 0.6108495, z: 0.4384}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -16370,8 +16372,8 @@ ArticulationBody:
   m_XDrive:
     lowerLimit: -360
     upperLimit: 360
-    stiffness: 0
-    damping: 0
+    stiffness: 10000
+    damping: 200
     forceLimit: 150
     target: 0
     targetVelocity: 0
@@ -27262,8 +27264,8 @@ ArticulationBody:
   m_XDrive:
     lowerLimit: -360
     upperLimit: 360
-    stiffness: 0
-    damping: 0
+    stiffness: 10000
+    damping: 200
     forceLimit: 28
     target: 0
     targetVelocity: 0
@@ -27909,8 +27911,8 @@ ArticulationBody:
   m_XDrive:
     lowerLimit: -360
     upperLimit: 360
-    stiffness: 0
-    damping: 0
+    stiffness: 10000
+    damping: 200
     forceLimit: 28
     target: 0
     targetVelocity: 0

@@ -1,17 +1,18 @@
-# KDT_1_AX_rtauto — UR5e GraspPoint 강화학습 + DG5F 텔레옵
+# KDT_1_AX_rtauto — UR16e + DG-5F-M-R 디지털 트윈
 
-3D 목표 좌표를 바탕으로 UR5e 팔의 `GraspPoint`를 빠르고 정확하게 이동시키고, 도달 후
-Tesollo DG5F 손은 MediaPipe 텔레옵으로 조작하는 디지털 트윈 프로젝트다.
+확정 하드웨어인 UR16e와 Tesollo DG-5F-M-R 오른손으로 파지·들어올리기를 검증하는
+디지털 트윈 프로젝트다. 현재 시연 씬에서는 MediaPipe가 오른손 손가락을 구동하고,
+사용자가 Unity 화면의 조이스틱과 높이 슬라이더로 팔을 직접 움직인다.
 
 ```text
-3D 카메라 목표 좌표(후속 입력 경계)
-  -> DG5FGraspPointReach 강화학습으로 팔 이동
-  -> vision/dg5f 원격조작으로 손 조작
+Unity 수동 팔 IK (UR16e)
+  + MediaPipe 오른손 관절 20채널
+  -> UDP -> DG-5F-M-R 디지털 트윈
 ```
 
-현재 강화학습 범위는 가운데 팔 이동 단계다. 학습 환경에서는 랜덤 목표가 카메라 입력을
-대신하며, 카메라 수신 코드는 아직 포함하지 않는다. 개발 이력과 의사결정은
-`docs/WORKLOG.md`에 보존한다.
+강화학습 환경은 동일 하드웨어의 12cm 블록 grasp+lift 태스크(obs 57 / act 7)를 제공한다.
+현재 시연은 정책 없이 수동 팔 조작과 손 미러링을 우선한다. 최신 아키텍처와 결정은
+`docs/SIM2REAL_ROADMAP.md`가 정본이다.
 
 ## 리포 구조
 
@@ -31,22 +32,16 @@ Tesollo DG5F 손은 MediaPipe 텔레옵으로 조작하는 디지털 트윈 프�
 - **Unity 6000.4.0f1** (다른 버전은 ArticulationBody 물리 재검증 필요)
 - Unity Hub → Open → `unity/` 폴더 선택. 첫 오픈 시 Library 생성으로 수 분 소요.
 - 렌더 파이프라인: Built-in (URP 아님 — 머티리얼 마젠타면 확인)
-- 씬: `Assets/Scenes/DG5F_Import.unity` (메인 — DG5F 왼손 인스턴스 배치됨)
-  ※ SVH 관련 코드·씬(SampleScene, unity_pkg)은 DG5F 전환에 따라 제거됨(2026-07-13).
-  UR 팔 결합 시 `urdf/build_arm_hand.py`(기종·좌우 파라미터화)와 `Assets/Scripts/ArmTargetIK.cs`
-  (팔 IK, WORKLOG §15·§18)를 재사용해 새로 구성.
-- 프리팹: `Assets/Robots/Prefabs/dg5f_*.prefab` 4변형 — 구동 준비(게인/중력off/자기충돌무시/
-  수신기/IK/로거) 완료 상태. 씬에 끌어놓으면 됨. 변형 교체는 메뉴 **Tools/DG5F**.
-- ML-Agents 학습 환경: `Assets/MLAgents/Reach/`.
-  현재 구현은 단일 `DG5FGraspPointReach` 정책이며 checkpoint 전이 없이 처음부터 학습한다.
-  Unity·강화학습을 처음 접하면 `docs/ML_AGENTS_LEARNING_FLOW.md`부터 읽는다.
-  정확한 Agent 계약은 `docs/AGENT_SPEC.md`, 설계 근거는 `docs/ML_AGENTS_DESIGN.md`,
-  빌드·smoke·본학습 실행법은 `docs/ML_AGENTS_TRAINING_GUIDE.md` 참고.
+- 시연 씬: `Assets/Scenes/Pipeline_Demo_GraspLift.unity`
+- 결합 프리팹: `Assets/Robots/Prefabs/ur16e_dg5f_right.prefab`
+- ML-Agents 학습 환경: `Assets/MLAgents/picknplace/` (`DG5FPicknPlace`라는 기존 이름을
+  유지하지만 현재 태스크는 place가 제거된 grasp+lift다.)
+- 학습 실행법은 `training/README.md`, 계약과 근거는 `docs/DG5F_PICKNPLACE.md` 참고.
 
 ### 2. Python — **3.10.11 권장, 비전+ML-Agents 공용 가상환경 1개**
 
-설치 절차(Windows, 초보자 기준)는 [`docs/PYTHON_ENV_SETUP.md`](docs/PYTHON_ENV_SETUP.md)로
-분리했다 — conda/pyenv 없이 `venv` + cmd만으로 진행한다. 아래는 버전 선택 근거와
+설치 절차(Windows/Linux, 초보자 기준)는 [`docs/PYTHON_ENV_SETUP.md`](docs/PYTHON_ENV_SETUP.md)로
+분리했다 — conda/pyenv 없이 `venv`만으로 진행한다. 아래는 버전 선택 근거와
 검증된 패키지 조합만 요약.
 
 버전 선택 근거:
@@ -90,17 +85,16 @@ Tesollo DG5F 손은 MediaPipe 텔레옵으로 조작하는 디지털 트윈 프�
 - `vision/dg5f/analyze_teleop.py`는 환경변수 `DG5F_UNITY_LOGS`, `DG5F_URDF_DIR` 또는
   `--logs-dir/--urdf-dir` 인자로 대체 가능
 
-## 텔레옵 실행 (왼손 모델 기준)
+## 텔레옵 실행 (UR16e + 오른손 모델)
 
 ```bash
-cd vision/dg5f
-python calibrate_dg5f.py          # 최초 1회 보정 — CALIBRATION_GUIDE.md의 동작 수행
-# Unity에서 Play ▶ (씬에 dg5f_left 인스턴스)
-python vision_node_dg5f.py left   # 오른손 모델이면 인자 생략
+python vision/dg5f/calibrate_dg5f.py  # 새 사용자/카메라에서 최초 1회 보정
+# Unity에서 Pipeline_Demo_GraspLift 씬 Play ▶ (수동 모드로 자동 시작)
+python vision/dg5f/vision_node_dg5f.py right
 ```
 - 프로토콜/채널 순서/좌표계 계약은 `vision/dg5f/README.md` 참고 (v2: 관절각 20 + 엄지끝 위치 + 핀치)
-- 웹캠 없이 배선 검증: `python probe_sender.py fist left` / `ok left` / `oktip left`
-- 추종 정량 분석: `python analyze_teleop.py latest latest --hand left`
+- 웹캠 없이 오른손 배선 검증: `python probe_sender.py fist right` / `open right`
+- 추종 정량 분석: `python analyze_teleop.py latest latest --hand right`
   (Unity 쪽은 Dg5fJointLogger가 Play마다 자동 기록)
 
 ## 새 핸드 URDF 임포트 (범용 파이프라인)
@@ -115,14 +109,11 @@ python probe_test.py <이름> --urdf <hand.urdf>         # 전 관절 사각파 
 
 ## 강화학습 계약
 
-- Behavior: `DG5FGraspPointReach`
-- observation 26개, UR5e continuous action 6개
-- 손가락 20관절은 정책에서 제외하고 별도 텔레옵으로 제어
-- 빨간 목표: 패널 기준 반경 0.20~0.85 m와 전 방향 360°를 각각 균등 생성
-- 성공: GraspPoint 거리 1 cm 이내와 속도 0.05 m/s 이하를 0.25초 유지
-- episode 제한: 20 simulation seconds
-
-이전 move→grasp→lift 단계형 정책과 손 20관절 checkpoint 전이는 폐기됐다.
+- Behavior: `DG5FPicknPlace` (레거시 이름, 현재 동작은 grasp+lift)
+- observation 57개, continuous action 7개(UR16e 팔 6 + 손 closure 1)
+- 모델: UR16e + DG-5F-M-R 오른손
+- 대상: 0.035×0.12×0.035m 블록
+- 성공: force-closure 파지를 확인하고 목표 높이까지 들어 올려 유지
 학습·평가 명령은 [`training/README.md`](training/README.md)를 따른다.
 
 ## 현재 상태 / 알려진 이슈 (2026-07-20)

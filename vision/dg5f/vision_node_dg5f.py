@@ -31,7 +31,11 @@ import mediapipe as mp
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from config.rtauto_config import UNITY_IP, PORT_DG5F_SIM, PORT_DG5F_BRIDGE
+from config.rtauto_config import (
+    UNITY_IP, PORT_DG5F_SIM, PORT_DG5F_BRIDGE,
+    VISION_CAMERA_INDEX, VISION_CAMERA_WIDTH, VISION_CAMERA_HEIGHT,
+    VISION_CAMERA_FPS, VISION_CAMERA_BACKEND,
+)
 
 from one_euro_filter import OneEuroFilter
 from dg5f_angles import (compute_raw, map_to_dg5f, compute_thumb_tip, landmarks_to_xyz,
@@ -41,12 +45,16 @@ from dg5f_angles import (compute_raw, map_to_dg5f, compute_thumb_tip, landmarks_
 from dg5f_paths import unique_log_path
 
 # ------------------------- 설정 -------------------------
-CAM_INDEX = 0                 # 프레임 크기는 카메라 기본값(640x480@30)을 그대로 쓴다 —
-                              # 강제 설정 상수를 두지 않는 이유는 cap 생성부 주석 참조
+# 카메라 인덱스·모드는 PC마다 다르므로 config/rtauto_config.py + .env에서 읽는다.
+# 창만 확대하면 원본 정보량은 늘지 않는다. 실제 해상도가 낮으면 인식 입력에 대비
+# 향상과 고품질 확대를 적용한다.
 UNITY_PORT = PORT_DG5F_SIM     # ⚠️ SVH(5005)와 다른 포트 — 공존용. 값은 config/rtauto_config.py 참조
 BRIDGE_PORT = PORT_DG5F_BRIDGE  # --bridge 시 실물 SDK 브리지(dg5f_sdk_bridge.py)에도 같은 패킷 송신
 SEND_HZ_CAP = 120
 LOG_EVERY_SEC = 0.5
+WINDOW_NAME = "DG5F right-hand MediaPipe (q to quit)"
+WINDOW_WIDTH = 1280
+WINDOW_HEIGHT = 720
 # 경로 규칙은 dg5f_paths가 소유 — 초 단위 + 중복 시 접미사라 덮어쓰기 불가
 LOG_CSV = unique_log_path("vision_dg5f")
 # One Euro: 값 단위가 deg(0~115)라 SVH(rad) 대비 beta를 1/57 스케일로 낮춤.
@@ -103,12 +111,61 @@ def main():
         model_complexity=1, max_num_hands=1,
         min_detection_confidence=0.6, min_tracking_confidence=0.6)
 
-    # ⚠️ cap.set() 을 추가하지 말 것. 2026-07-27 실측(4회 반복, 이 웹캠 + Windows MSMF):
-    #    FOURCC/W/H/FPS 4개를 넣으면 시작에 6.3~18.9초가 붙는데(set 하나당 2~4.3초)
-    #    read 지연·해상도·fps는 넣든 안 넣든 33ms / 640x480 / 30fps로 **완전히 동일**했다.
-    #    카메라 기본값이 이미 640x480@30이고, MSMF는 set(FOURCC, MJPG)에 False를 반환(무시)한다.
-    #    즉 순수 손해. 해상도를 정말 바꿔야 하면 그때 set 하나만 넣고 시작시간을 재볼 것.
-    cap = cv2.VideoCapture(CAM_INDEX)
+    # OpenCV의 백엔드 상수는 어느 OS 빌드에나 정의돼 있으므로(플랫폼별 컴파일 분기가
+    # 아니라 videoio enum 값) 여기서 전부 나열해도 import 에러가 나지 않는다.
+    # 실제로 열리는지는 OS가 결정하며, 실패하면 아래에서 auto로 되돌아간다.
+    backend_names = {
+        "auto": cv2.CAP_ANY,
+        "msmf": cv2.CAP_MSMF,           # Windows 기본
+        "dshow": cv2.CAP_DSHOW,         # Windows 레거시 — msmf가 카메라를 못 열 때
+        "v4l2": cv2.CAP_V4L2,           # Linux (/dev/video*)
+        "avfoundation": cv2.CAP_AVFOUNDATION,  # macOS
+        "gstreamer": cv2.CAP_GSTREAMER,        # Linux 산업용/네트워크 카메라
+    }
+    if VISION_CAMERA_BACKEND not in backend_names:
+        print("[오류] RTAUTO_VISION_CAMERA_BACKEND 값이 잘못됐습니다: "
+              f"{VISION_CAMERA_BACKEND!r}\n"
+              f"       사용 가능: {', '.join(backend_names)}\n"
+              "       Windows는 auto/msmf/dshow, Linux는 auto/v4l2, macOS는 "
+              "auto/avfoundation을 쓴다.")
+        hands.close()
+        return
+    backend = backend_names[VISION_CAMERA_BACKEND]
+    cap = cv2.VideoCapture(VISION_CAMERA_INDEX, backend)
+    if not cap.isOpened() and backend != cv2.CAP_ANY:
+        print(f"[카메라] {VISION_CAMERA_BACKEND} 열기 실패, 기본 백엔드로 재시도")
+        cap.release()
+        cap = cv2.VideoCapture(VISION_CAMERA_INDEX)
+    if not cap.isOpened():
+        print(f"[오류] 카메라 {VISION_CAMERA_INDEX}을 열 수 없습니다. "
+              "레포 루트 .env의 RTAUTO_VISION_CAMERA_INDEX를 0, 1, 2 순으로 바꿔보세요.")
+        if sys.platform.startswith("linux"):
+            print("       Linux: `ls /dev/video*`로 실제 인덱스를 확인하고, 권한이 없으면 "
+                  "`sudo usermod -aG video $USER` 후 재로그인한다.")
+        elif sys.platform == "win32":
+            print("       Windows: 설정 > 개인 정보 > 카메라에서 데스크톱 앱 접근이 "
+                  "켜져 있는지, 다른 앱이 카메라를 점유 중은 아닌지 확인한다.")
+        hands.close()
+        return
+
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, VISION_CAMERA_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, VISION_CAMERA_HEIGHT)
+    cap.set(cv2.CAP_PROP_FPS, VISION_CAMERA_FPS)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+    actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    actual_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    actual_fps = cap.get(cv2.CAP_PROP_FPS)
+    print(f"[카메라] 실제 캡처 {actual_width}x{actual_height} @ {actual_fps:.1f}fps "
+          f"(요청 {VISION_CAMERA_WIDTH}x{VISION_CAMERA_HEIGHT} @ {VISION_CAMERA_FPS}fps, "
+          f"index={VISION_CAMERA_INDEX}, backend={VISION_CAMERA_BACKEND})")
+    low_resolution = actual_width < 640 or actual_height < 480
+    if low_resolution:
+        print("[경고] 카메라/드라이버가 640x480 미만만 제공합니다. "
+              "인식용 영상 보정을 적용하지만 실제 화질 향상에는 HD 웹캠이 필요합니다.")
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
+    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(WINDOW_NAME, WINDOW_WIDTH, WINDOW_HEIGHT)
 
     filters = {n: OneEuroFilter(freq=FILTER_FREQ, min_cutoff=FILTER_MIN_CUTOFF,
                                 beta=FILTER_BETA) for n in CHANNEL_NAMES}
@@ -152,6 +209,17 @@ def main():
         if not ok:
             continue
         frame = cv2.flip(frame, 1)  # 거울 모드(보기 편의, 각도 계산 무관)
+        source_width, source_height = frame.shape[1], frame.shape[0]
+        if low_resolution:
+            # 160x120 같은 저해상도 입력에서 손 윤곽 대비를 살리고 MediaPipe 입력 크기를
+            # 최소 640x480으로 만든다. 보간은 새 디테일을 만들 수 없지만 작은 손의 검출률은
+            # 기본 창 확대만 했을 때보다 안정적이다.
+            ycrcb = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
+            ycrcb[:, :, 0] = clahe.apply(ycrcb[:, :, 0])
+            frame = cv2.cvtColor(ycrcb, cv2.COLOR_YCrCb2BGR)
+            scale = max(640 / source_width, 480 / source_height)
+            frame = cv2.resize(frame, None, fx=scale, fy=scale,
+                               interpolation=cv2.INTER_LANCZOS4)
         res = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
         now = time.time()
@@ -222,7 +290,14 @@ def main():
                                   f"→ sent(filt) {vals[idx]:+6.1f}deg")
                     last_log = now
 
-        cv2.imshow("dg5f vision (q to quit)", frame)
+        status = "RIGHT HAND DETECTED" if res.multi_hand_landmarks else "SHOW RIGHT HAND"
+        color = (0, 220, 0) if res.multi_hand_landmarks else (0, 180, 255)
+        cv2.putText(frame, status, (16, 36), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.9, color, 2, cv2.LINE_AA)
+        cv2.putText(frame, f"SOURCE {source_width}x{source_height} / PROCESS {frame.shape[1]}x{frame.shape[0]}",
+                    (16, frame.shape[0] - 18), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.65, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.imshow(WINDOW_NAME, frame)
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 

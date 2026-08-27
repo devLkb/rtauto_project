@@ -88,6 +88,14 @@ ROS2 통합: Unity <-> ROS-TCP-Connector/Endpoint (Unity-Robotics-Hub) <-> ROS2(
   ML-Agents는 버전 조합이 맞으면 venv 하나를 공유한다 — 근거와 정확한 버전 표는
   [`docs/PYTHON_ENV_SETUP.md`](docs/PYTHON_ENV_SETUP.md) 참고.
 - 환경 셋업 절차 자체를 변경했으면 `docs/PYTHON_ENV_SETUP.md`를 그 자리에서 함께 갱신한다.
+  이 문서는 **Windows와 Linux를 모두** 다룬다 — 한쪽만 고치고 끝내지 않는다.
+- 문서의 실행 예시는 OS를 가리지 않게 쓴다: 저장소 상대경로는 `/`로 적고(PowerShell도
+  받아들인다), 가상환경 활성화처럼 OS마다 다른 명령은 PowerShell/bash 두 블록을 나란히 둔다.
+- 줄바꿈은 `.gitattributes`가 저장소 표현을 LF로 고정한다. 이게 없으면 각 PC의
+  `core.autocrlf`에 결과가 좌우돼, Windows에서 커밋한 `.sh`가 Linux에서
+  `bad interpreter: /bin/bash^M`으로 죽는다. 새 파일 확장자를 추가할 때 이 파일도 확인한다.
+- 문서에 파일 경로·스크립트명을 적었으면 **실제로 존재하는지 확인한다.** 폐기된 behavior의
+  스크립트를 문서에 남겨두면 새 PC 사용자가 그대로 따라 하다 막힌다(원칙 2 위반).
 
 ## 리포 구조
 

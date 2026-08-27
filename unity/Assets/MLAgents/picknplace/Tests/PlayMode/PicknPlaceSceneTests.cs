@@ -74,6 +74,27 @@ namespace KDT.PicknPlaceTraining.PlayModeTests
         }
 
         [UnityTest]
+        public IEnumerator RobotUsesOnlyTheConfirmedRightHandModel()
+        {
+            yield return LoadScene();
+
+            foreach (var agent in Object.FindObjectsByType<Dg5fPicknPlaceAgent>(
+                         FindObjectsSortMode.None))
+            {
+                var transforms = agent.GetComponentsInChildren<Transform>(true);
+                Assert.That(transforms.Any(t => t.name == "rl_dg_palm"), Is.True,
+                    $"{agent.transform.root.name} must contain the DG-5F-M-R right palm");
+                Assert.That(transforms.Any(t => t.name == "ll_dg_palm"), Is.False,
+                    $"{agent.transform.root.name} must not contain a left-hand model");
+                for (int finger = 1; finger <= Dg5fPicknPlaceSpec.FingerCount; finger++)
+                {
+                    Assert.That(transforms.Any(t => t.name == $"rl_dg_{finger}_tip"), Is.True,
+                        $"right fingertip {finger} is missing");
+                }
+            }
+        }
+
+        [UnityTest]
         public IEnumerator CubeUsesTheDocumentedPhysicsSetup()
         {
             yield return LoadScene();

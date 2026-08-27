@@ -9,7 +9,7 @@ Gazebo를 검증 단계로 추가).
 1인 풀타임·로컬 단독 머신(RTX 2080, Windows) 체제.
 
 정책 계약 상세는 [`DG5F_GRASP_LIFT.md`](DG5F_GRASP_LIFT.md), SDK 실측 근거는
-[`TESOLLO_SDK_기술부채_조사.md`](TESOLLO_SDK_기술부채_조사.md)를 우선한다.
+[`TESOLLO_SDK_기술부채_조사.md`](docs2/TESOLLO_SDK_기술부채_조사.md)를 우선한다.
 
 > ⚠️ **MuJoCo 폐기 경위 (2026-08-26).** v2(2026-08-25)에서 물리·학습 엔진으로 MuJoCo
 > 도입을 확정·검증까지 마쳤으나, **파이프라인 통합 및 후속 유지보수 어려움을 이유로

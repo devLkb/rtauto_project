@@ -18,12 +18,21 @@ def _load_dotenv():
     env_path = REPO_ROOT / ".env"
     if not env_path.is_file():
         return
-    for line in env_path.read_text(encoding="utf-8").splitlines():
+    # utf-8-sig: Windows 메모장/PowerShell Set-Content가 BOM을 붙여 저장하는 일이 잦은데,
+    # BOM이 남으면 첫 줄 키가 '﻿RTAUTO_...'가 돼 조용히 무시된다.
+    for line in env_path.read_text(encoding="utf-8-sig").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
+        # Linux/macOS 사용자가 습관적으로 붙이는 `export KEY=value`도 받아준다.
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
         key, _, value = line.partition("=")
-        os.environ.setdefault(key.strip(), value.strip())
+        value = value.strip()
+        # 따옴표로 감싼 값에서 따옴표를 벗긴다 — 안 벗기면 경로/IP에 " 가 섞여 들어간다.
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        os.environ.setdefault(key.strip(), value)
 
 
 _load_dotenv()
@@ -43,6 +52,14 @@ PORT_SVH_JOINTS = int(_env("RTAUTO_PORT_SVH_JOINTS", "5005"))    # 레거시 SVH
 PORT_DG5F_SIM = int(_env("RTAUTO_PORT_DG5F_SIM", "5006"))        # → Unity Dg5fReceiver (DG5F 손 관절 트윈)
 PORT_ZED_TARGET = int(_env("RTAUTO_PORT_ZED_TARGET", "5007"))    # → Unity CameraTargetReceiver (ZED 객체 좌표)
 PORT_DG5F_BRIDGE = int(_env("RTAUTO_PORT_DG5F_BRIDGE", "5008"))  # vision_node --bridge → dg5f_sdk_bridge.py (실물 SDK)
+
+# ---------------- MediaPipe 카메라 ----------------
+# 카메라 열거 순서와 지원 모드는 PC/드라이버마다 다르므로 vision 스크립트에 고정하지 않는다.
+VISION_CAMERA_INDEX = int(_env("RTAUTO_VISION_CAMERA_INDEX", "0"))
+VISION_CAMERA_WIDTH = int(_env("RTAUTO_VISION_CAMERA_WIDTH", "1280"))
+VISION_CAMERA_HEIGHT = int(_env("RTAUTO_VISION_CAMERA_HEIGHT", "720"))
+VISION_CAMERA_FPS = int(_env("RTAUTO_VISION_CAMERA_FPS", "30"))
+VISION_CAMERA_BACKEND = _env("RTAUTO_VISION_CAMERA_BACKEND", "auto").strip().lower()
 
 # ---------------- 경로 (머신마다 다름 — 기본값 없음, 없으면 각 스크립트가 명확히 에러) ----------------
 UNITY_PROJECT = _env("RTAUTO_UNITY_PROJECT", "")   # tools/urdf_hand_import용 Unity 프로젝트 루트

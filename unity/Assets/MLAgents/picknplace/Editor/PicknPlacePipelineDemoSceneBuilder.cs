@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using Cinemachine;
 using KDT.PicknPlaceTraining;
+using Unity.MLAgents;
 using Unity.MLAgents.Policies;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -43,13 +44,14 @@ namespace KDT.PicknPlaceTraining.Editor
         public const string SourceAreaName = "DG5F_PicknPlaceTrainingArea_00";
         public const string DemoScenePath = "Assets/Scenes/Pipeline_Demo_GraspLift.unity";
         const string HandRootName = "rl_dg_palm";
+        const string WrongHandRootName = "ll_dg_palm";
         const string OverviewCameraName = "OverviewCamera";
         const string CloseUpCameraName = "PicknPlaceCloseUpCamera";
         const float CloseUpCameraFieldOfView = 32f;
         const float MinZoomFieldOfView = 15f;
         const float MaxZoomFieldOfView = 120f;
         // Close-up camera starts live, matching the reach/GraspLift demo convention.
-        const int DefaultLiveCameraIndex = 1;
+        const int DefaultLiveCameraIndex = 0;
 
         // World-space offset (Transposer BindingMode.WorldSpace) so the close-up camera
         // doesn't spin with the wrist as the arm rotates into the grasp.
@@ -152,6 +154,18 @@ namespace KDT.PicknPlaceTraining.Editor
             if (sliderUI == null) sliderUI = robot.AddComponent<HandSliderUI>();
             ArmTargetIK armIK = robot.GetComponent<ArmTargetIK>();
             if (armIK == null) armIK = robot.AddComponent<ArmTargetIK>();
+            // The hierarchy contains collision/shadow objects with repeated names.
+            // Never let ArmTargetIK's name-based fallback pick the wrong GraspPoint.
+            armIK.endEffector = agent.graspPoint;
+            foreach (ArticulationBody body in robot.GetComponentsInChildren<ArticulationBody>(true))
+            {
+                if (!Dg5fPicknPlaceSpec.ArmLinks.Contains(body.name)) continue;
+                ArticulationDrive drive = body.xDrive;
+                drive.stiffness = Dg5fPicknPlaceSpec.ArmDriveStiffness;
+                drive.damping = Dg5fPicknPlaceSpec.ArmDriveDamping;
+                body.xDrive = drive;
+                body.useGravity = false;
+            }
             receiver.enabled = false;
             driver.enabled = false;
             sliderUI.enabled = false;
@@ -161,6 +175,13 @@ namespace KDT.PicknPlaceTraining.Editor
                 .FirstOrDefault(t => t.name == HandRootName);
             if (handRoot == null)
                 throw new InvalidOperationException($"Missing transform: {HandRootName}");
+            if (area.GetComponentsInChildren<Transform>(true)
+                .Any(t => t.name == WrongHandRootName))
+            {
+                throw new InvalidOperationException(
+                    $"Unexpected left-hand transform: {WrongHandRootName}. "
+                    + "Pipeline_Demo_GraspLift must use DG-5F-M-R (right hand).");
+            }
             foreach (ArticulationBody body in handRoot.GetComponentsInChildren<ArticulationBody>(true))
                 body.enabled = true;
             foreach (Collider collider in handRoot.GetComponentsInChildren<Collider>(true))
@@ -168,6 +189,9 @@ namespace KDT.PicknPlaceTraining.Editor
 
             PicknPlaceTeleopNudge nudge = robot.GetComponent<PicknPlaceTeleopNudge>();
             if (nudge == null) nudge = robot.AddComponent<PicknPlaceTeleopNudge>();
+            nudge.agent = agent;
+            nudge.armIK = armIK;
+            nudge.armSliderUI = sliderUI;
 
             PicknPlaceControlModeSwitcher switcher =
                 robot.GetComponent<PicknPlaceControlModeSwitcher>();
@@ -176,6 +200,17 @@ namespace KDT.PicknPlaceTraining.Editor
             switcher.armNudge = nudge;
             switcher.handReceiver = receiver;
             switcher.handDriver = driver;
+            switcher.startInManualMode = true;
+            // MediaPipe drives the right-hand fingers while the operator moves the
+            // UR16e arm with PicknPlaceTeleopNudge's mouse joystick/height slider.
+            switcher.handOnlyManualMode = false;
+            nudge.maxHeightOffset = 0.2f;
+            nudge.maxHorizontalOffset = 0.25f;
+            nudge.horizontalMoveSpeed = 0.12f;
+
+            agent.enabled = false;
+            DecisionRequester requester = robot.GetComponent<DecisionRequester>();
+            if (requester != null) requester.enabled = false;
         }
 
         /// 기존 Main Camera에 CinemachineBrain을 붙이고, 그 자리를 물려받는 정적 OverviewCamera와

@@ -1,4 +1,5 @@
 using UnityEngine;
+using Unity.MLAgents;
 
 namespace KDT.PicknPlaceTraining
 {
@@ -18,20 +19,59 @@ namespace KDT.PicknPlaceTraining
 
         [Tooltip("Game 뷰에 자동/수동 전환 UI(OnGUI)를 그릴지 여부")]
         public bool showModeUI = true;
+        [Tooltip("빠른 디지털 트윈 시연은 정책 모델 없이 손/팔 텔레옵부터 사용하므로 Play 시작 시 수동 모드로 진입")]
+        public bool startInManualMode = true;
+        [Tooltip("켜면 현재 씬 자세를 고정하고 MediaPipe 오른손 손가락만 구동. 끄면 마우스 팔 조작도 활성화")]
+        public bool handOnlyManualMode = false;
 
         bool _isManual;
 
         public bool IsManual => _isManual;
 
+        void Start()
+        {
+            if (handOnlyManualMode)
+            {
+                DisableAutomaticAndArmControl();
+                SetManualMode(true);
+            }
+            else if (startInManualMode)
+            {
+                SetManualMode(true);
+            }
+        }
+
+        void DisableAutomaticAndArmControl()
+        {
+            if (agent != null)
+            {
+                agent.PauseForManualControl();
+                agent.enabled = false;
+                DecisionRequester requester = agent.GetComponent<DecisionRequester>();
+                if (requester != null) requester.enabled = false;
+            }
+            if (armNudge != null) armNudge.SetActive(false);
+        }
+
+        void FixedUpdate()
+        {
+            // Agent.OnEpisodeBegin can run after this component's Start and make
+            // the policy active again. Keep the ownership contract true on every
+            // physics tick so policy actions never overwrite manual IK/UDP drives.
+            if (_isManual && agent != null && agent.IsEpisodeActive)
+                agent.PauseForManualControl();
+        }
+
         public void SetManualMode(bool manual)
         {
+            if (handOnlyManualMode && !manual) return;
             if (manual == _isManual) return;
             _isManual = manual;
 
             if (manual)
             {
                 if (agent != null) agent.PauseForManualControl();
-                if (armNudge != null) armNudge.SetActive(true);
+                if (armNudge != null) armNudge.SetActive(!handOnlyManualMode);
                 if (handReceiver != null) handReceiver.enabled = true;
                 if (handDriver != null) handDriver.enabled = true;
             }
@@ -52,6 +92,12 @@ namespace KDT.PicknPlaceTraining
 
             GUILayout.BeginArea(new Rect(10, 10, 200, 70), GUI.skin.box);
             GUILayout.Label("제어 모드");
+            if (handOnlyManualMode)
+            {
+                GUILayout.Label("[MediaPipe 오른손 미러]");
+                GUILayout.EndArea();
+                return;
+            }
             GUILayout.BeginHorizontal();
             if (GUILayout.Button(!_isManual ? "[자동]" : "자동")) SetManualMode(false);
             if (GUILayout.Button(_isManual ? "[수동]" : "수동")) SetManualMode(true);

@@ -85,3 +85,13 @@ Thumbs.db
 *.omc
 *.omx
 *.claude
+
+# 임시 이식성 검증용 venv (스크립트가 만들었다 지우는 일회성 폴더)
+.tmp_*/
+
+# MuJoCo 런타임 로그 — MuJoCo는 폐기됐지만(CLAUDE.md) 과거 산출물 실행 시 생성된다
+MUJOCO_LOG.TXT
+unity/MUJOCO_LOG.TXT
+
+# pytest 캐시
+.pytest_cache/

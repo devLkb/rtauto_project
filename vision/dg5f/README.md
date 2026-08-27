@@ -68,11 +68,12 @@ FK 실측(왼손 URDF)으로 축·역할 확정. 전관절 격리 눈검증 완�
 
 ## 왼손 모델 사용
 
-씬을 왼손 결합 모델(`ur5e_dg5f_left`)로, 스크립트에 `left` 인자:
+확정 모델인 오른손 DG-5F-M-R(`ur16e_dg5f_right`) 시연:
 ```bash
-python vision_node_dg5f.py left      # 웹캠에도 왼손을 보여줄 것(미러 텔레옵)
-python probe_sender.py fist left
+python vision_node_dg5f.py           # DG-5F-M-R 오른손: 인자 생략(기본 right)
+python probe_sender.py fist right    # 웹캠 없이 오른손 폐합 배선 검증
 ```
+왼손 레거시 모델을 별도로 시험할 때만 두 명령에 `left` 인자를 붙인다.
 `dg5f_angles.LEFT_MIRROR_CHANNELS`에 든 채널만 부호 반전: `thumb_opp, thumb_mcp, thumb_ip, index_abd, middle_abd, ring_abd, pinky_cmc, pinky_lat`.
 **thumb_cmc(1_1)은 제외** — `|abd|` 매핑이 왼손각을 직접 산출하므로 또 반전하면 안 됨(우수 모델은 `THUMB_CMC_FOLD_DEG/SPREAD_DEG` 부호를 뒤집을 것).
 보정은 좌우 공용(굽힘 크기만 잼) — 실제 쓸 손으로 하는 게 정확.

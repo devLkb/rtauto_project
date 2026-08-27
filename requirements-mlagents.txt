@@ -8,5 +8,7 @@
 # conflicts with this repo's verified grpcio 1.53.2 environment.
 -c vision/requirements-vision-mlagents.constraints.txt
 
+# mlagents 1.2.0.dev0이 pkg_resources를 import한다. setuptools 82+에서는 제거됐으므로 고정.
+setuptools==81.0.0
 mlagents-envs @ git+https://github.com/Unity-Technologies/ml-agents.git@a2777719560e4676be99e2ea128c5eb1fbeb3dbb#subdirectory=ml-agents-envs
 mlagents @ git+https://github.com/Unity-Technologies/ml-agents.git@a2777719560e4676be99e2ea128c5eb1fbeb3dbb#subdirectory=ml-agents

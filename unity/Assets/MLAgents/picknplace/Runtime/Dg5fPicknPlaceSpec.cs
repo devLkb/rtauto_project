@@ -384,6 +384,12 @@ namespace KDT.PicknPlaceTraining
         // (35 deg). Order matches ArmLinks.
         public static readonly float[] HomeArmDeg = { 0f, -60f, 90f, -120f, -30f, 0f };
 
+        // Unity position-drive gains for the UR16e digital twin. The imported
+        // prefab has zero stiffness/damping, so xDrive.target otherwise has no
+        // effect and the arm freely collapses even though commands are received.
+        public const float ArmDriveStiffness = 10000f;
+        public const float ArmDriveDamping = 200f;
+
         // --- curriculum -----------------------------------------------------------
         // Unified grasp curriculum (spawn annulus + lift target/hold), identical
         // shape to Dg5fGraspLiftSpec's grasp_stage.

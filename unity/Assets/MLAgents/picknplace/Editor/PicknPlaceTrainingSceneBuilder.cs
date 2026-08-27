@@ -223,9 +223,8 @@ namespace KDT.PicknPlaceTraining.Editor
                 }
                 else
                 {
-                    // Same gains as GraspLift's UR5e setup — UR16e's heavier arm
-                    // has not been retuned against these yet. See
-                    // docs/SIM2REAL_ROADMAP.md Phase 2.
+                    drive.stiffness = Dg5fPicknPlaceSpec.ArmDriveStiffness;
+                    drive.damping = Dg5fPicknPlaceSpec.ArmDriveDamping;
                     drive.forceLimit =
                         body.name.StartsWith("wrist_", StringComparison.Ordinal) ? 28f : 150f;
                 }

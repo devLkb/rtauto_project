@@ -1,90 +1,73 @@
-# DG5FGraspReadyReach training
+# ML-Agents 학습 (DG5FGraspLift / DG5FPicknPlace)
 
-## Linux 빌드 출력 설정
+현재 살아있는 behavior는 두 개다. 아래 각 절을 참고한다.
 
-저장소 루트의 `.env.example`에 공유 기본값이 있다. 이를 `.env`로 복사하면
-Unity Linux 빌드의 출력 폴더와 실행 파일명을 사용자별로 변경할 수 있다.
+| Behavior | 하드웨어 | obs/act | config |
+|---|---|---|---|
+| [`DG5FGraspLift`](#dg5f-grasp--lift-dg5fgrasplift) | UR5e + 왼손 (레거시, 검증된 기준선) | 57/7 | `config/dg5f_grasp_lift.yaml` |
+| [`DG5FPicknPlace`](#dg5f-grasp--place-인프라-현재는-grasp--lift-dg5fpicknplace) | **UR16e + DG-5F-M-R 오른손 (확정 스펙)** | 57/7 | `config/dg5f_picknplace.yaml` |
+
+> 이전의 `DG5FGraspReadyReach`(37/6, UR5e 팔 단독 reach) 절은 삭제했다. 그 전용
+> config·셸 스크립트(`train/smoke/run_*_grasp_point_reach.*`)는 저장소에 더 이상
+> 존재하지 않아 문서만 남으면 새 PC에서 그대로 따라 하다 막힌다. 관련 테스트는
+> `training/tests/`에 남아있고 설계 기록은 git 이력에 있다.
+
+## 새 PC에서 시작하기
+
+Python 가상환경 설치는 [`docs/PYTHON_ENV_SETUP.md`](../docs/PYTHON_ENV_SETUP.md)가
+정본이다 (Windows/Linux 양쪽). 아래는 그게 끝난 뒤의 학습 실행 절차다.
+
+**1) 가상환경 활성화** — 활성화 스크립트 경로가 OS마다 다르다.
+
+```powershell
+.\vision\.vision\Scripts\Activate.ps1
+```
+
+```bash
+source vision/.vision/bin/activate
+```
+
+**2) 로컬 설정 1회** — 저장소 루트의 `.env.example`을 `.env`로 복사한다. Unity Linux
+빌드의 출력 폴더·실행 파일명과 Python 쪽 IP/포트/카메라를 모두 이 파일 하나로 관리한다.
+
+```powershell
+Copy-Item .env.example .env
+```
 
 ```bash
 cp .env.example .env
 ```
 
 상대 경로는 저장소 루트를 기준으로 해석한다. 적용 우선순위는
-`프로세스 환경변수 > .env > .env.example`이며, `.env`는 Git에 포함되지 않는다.
+`프로세스 환경변수 > .env > 코드 기본값`이며, `.env`는 Git에 포함되지 않는다.
+값의 정본은 [`config/rtauto_config.py`](../config/rtauto_config.py)다.
 
-현재 활성 학습 계약은 열린 DG5F 손을 공 위로 안전하게 이동하고 파지 준비 자세에서
-팔을 고정하는 단일 정책이다.
-
-- Behavior/spec: `DG5FGraspReadyReach` / `2.0.0`
-- observations/actions: `37/6`
-- policy 제어: UR5e 팔 6축
-- 비-policy 상태: DG5F 손 20관절을 prefab의 열린 자세로 유지
-- 접근: 공 10 cm 위 waypoint → 5 cm 수평 범위 안에서 하강
-- 금지: root base 이외 로봇의 패널 접촉, 조기 하강, 바닥 쓸기
-- 잠금: 1 cm, 0.05 m/s, palm 15°, 상부 45° cone을 0.25초 유지
-- 학습: checkpoint/curriculum 없는 fresh PPO, 최대 5M steps
-
-정확한 계약은 [`docs/AGENT_SPEC.md`](../docs/AGENT_SPEC.md), 실행 순서는
-[`docs/ML_AGENTS_TRAINING_GUIDE.md`](../docs/ML_AGENTS_TRAINING_GUIDE.md)를 따른다.
-
-## Active files
-
-- PPO config: `config/dg5f_grasp_point_reach.yaml`
-- trainer: `scripts/train_dg5f_grasp_point_reach.sh`
-- 512-step smoke: `scripts/smoke_dg5f_grasp_point_reach.sh`
-- deterministic evaluation: `scripts/run_dg5f_grasp_point_reach_evaluation.sh`
-- CSV validator: `scripts/evaluate_dg5f_grasp_point_reach.py`
-- Linux player: `builds/DG5FGraspReadyReach/DG5FGraspReadyReach.x86_64`
-
-`builds/`, `results/`, `logs/`의 과거 Grasp/StableGrasp/PointReach 산출물은 새 Behavior와
-호환되는 checkpoint가 아니다.
-
-## Setup and tests
+**3) 확인**
 
 ```bash
-cd <repo-root>   # 과거 전용 학습서버(/home/lkb/...) 경로였음 — 서버 폐지, 지금은 로컬 1대뿐이라 저장소 루트로 이동
-source vision/.vision/bin/activate
 pip check
-python -m unittest discover -s training/tests -p 'test_*grasp_point_reach*.py'
+python -m unittest discover -s training/tests -p 'test_validate_unity_environment.py'
 ```
 
-Unity 메뉴에서 다음을 순서대로 실행한다.
+`Ran 4 tests ... OK`가 나오면 설치가 정상이다. 이 모듈이 현재 저장소 상태에서
+100% 통과하는 유일한 테스트 모듈이라 설치 확인용으로 쓴다.
 
-1. **Tools > ML-Agents > Build DG5F GraspPoint Reach Scene**
-2. Reach EditMode/PlayMode tests
-3. **Tools > ML-Agents > Build DG5F Grasp Ready Reach Linux Player**
+> ⚠️ `python -m unittest discover -s training/tests -p 'test_*.py'`로 전체를 돌리면
+> 22개 중 15개가 `FileNotFoundError`로 실패한다. **새 PC 설치가 잘못된 게 아니다** —
+> 폐기된 behavior(ReadyReach, grasp v2/v3, surface-hold 커리큘럼)의 테스트가
+> 이미 삭제된 config·스크립트·`.cs`를 계속 읽고 있어서다. 이 잔재는 별도로 정리해야
+> 한다. `test_bootstrap_v1_to_joint26`도 5개 중 4개만 통과한다(나머지 1개가
+> 삭제된 `dg5f_grasp_v2_handfirst_lr5e5.yaml`을 참조).
 
-## Smoke
+**4) 학습 실행** — Unity Editor에 직접 붙이는 방식이 가장 간단하며 빌드된 플레이어가
+필요 없다. behavior별 명령은 아래 각 절에 있다.
 
-```bash
-ENV_PATH="$PWD/training/builds/DG5FGraspReadyReach/DG5FGraspReadyReach.x86_64" \
-training/scripts/smoke_dg5f_grasp_point_reach.sh
-```
+> **GPU 머신은 config의 `torch_settings.device`가 `cuda`인지 반드시 확인.** `cpu`로
+> 두면 이 ml-agents dev 빌드의 전역 디바이스 버그로 죽는다 — 근거는 루트
+> [`README.md`](../README.md)의 Python 절 참고.
 
-smoke는 communicator와 37/6 shape 검증이며 수렴 증거가 아니다.
-
-## 5M training
-
-```bash
-RUN_ID=dg5f-grasp-ready-reach-5m \
-ENV_PATH="$PWD/training/builds/DG5FGraspReadyReach/DG5FGraspReadyReach.x86_64" \
-TORCH_DEVICE=cuda TIME_SCALE=10 \
-training/scripts/train_dg5f_grasp_point_reach.sh
-```
-
-새 실험에는 새 run ID를 사용한다. `--initialize-from`은 금지하며, `--resume`은 같은
-실험을 중단 후 재개할 때만 사용한다.
-
-## Approval evaluation
-
-```bash
-DG5F_RUN_ID=dg5f-grasp-ready-reach-5m \
-DG5F_EVAL_EPISODES=500 DG5F_EVAL_BASE_SEED=500000 \
-training/scripts/run_dg5f_grasp_point_reach_evaluation.sh
-```
-
-성공률 90% 이상과 모든 정밀 잠금 조건, 패널 접촉/조기 하강/clearance/물리/workspace
-안전 조건을 validator가 함께 검사한다.
+`builds/`, `results/`, `logs/`의 과거 Grasp/StableGrasp/PointReach 산출물은 현재
+Behavior와 호환되는 checkpoint가 아니다.
 
 ## DG5F Grasp + Lift (`DG5FGraspLift`)
 
@@ -105,12 +88,17 @@ training/scripts/run_dg5f_grasp_point_reach_evaluation.sh
 > `training/archives/scripts/README.md` 참고. `--transfer` 전이는 이제
 > `prepare_dg5f_grasp_lift_transfer.py`를 직접 호출해 준비해야 한다.
 
-Windows에서 빌드된 Linux 플레이어 없이 **Unity Editor에 직접 붙여서** 시작하는
-방법(초보자 기준):
+빌드된 플레이어 없이 **Unity Editor에 직접 붙여서** 시작하는 방법(초보자 기준,
+Windows/Linux 공통):
 
-```cmd
-vision\.vision\Scripts\activate
-mlagents-learn training\config\dg5f_grasp_lift.yaml --run-id=<이름>
+```powershell
+.\vision\.vision\Scripts\Activate.ps1
+mlagents-learn training/config/dg5f_grasp_lift.yaml --run-id=<이름>
+```
+
+```bash
+source vision/.vision/bin/activate
+mlagents-learn training/config/dg5f_grasp_lift.yaml --run-id=<이름>
 ```
 
 - 콘솔에 "Start training by pressing the Play button in the Unity Editor."가 뜨면
@@ -166,18 +154,28 @@ behavior. GraspLift(UR5e + 왼손)의 검증된 접근·파지·리프트 보상
      `config/rtauto_config.py`의 `PORT_DG5F_SIM`, 기본 5006)로 쏘고 `Dg5fHandDriver`가
      그리퍼에 그대로 주입한다 — 팔은 화면 조이스틱+높이 슬라이더(`ArmTargetIK` 기반
      `PicknPlaceTeleopNudge`)로 조종. 손 트래킹 실행:
-     ```cmd
-     vision\.vision\Scripts\activate
-     python vision\dg5f\vision_node_dg5f.py
+     ```powershell
+     .\vision\.vision\Scripts\Activate.ps1
+     python vision/dg5f/vision_node_dg5f.py
+     ```
+
+     ```bash
+     source vision/.vision/bin/activate
+     python vision/dg5f/vision_node_dg5f.py
      ```
      (오른손 모델 기준 — 인자 없이 실행. 최초 1회 `python calibrate_dg5f.py` 보정 필요,
      `vision/dg5f/CALIBRATION_GUIDE.md` 참고.)
 
-Windows에서 Unity Editor에 직접 붙여서 시작하는 방법(위 GraspLift 절차와 동일 패턴):
+Unity Editor에 직접 붙여서 시작하는 방법(위 GraspLift 절차와 동일 패턴):
 
-```cmd
-vision\.vision\Scripts\activate
-mlagents-learn training\config\dg5f_picknplace.yaml --run-id=<이름>
+```powershell
+.\vision\.vision\Scripts\Activate.ps1
+mlagents-learn training/config/dg5f_picknplace.yaml --run-id=<이름>
+```
+
+```bash
+source vision/.vision/bin/activate
+mlagents-learn training/config/dg5f_picknplace.yaml --run-id=<이름>
 ```
 
 - 콘솔에 "Start training by pressing the Play button in the Unity Editor."가 뜨면

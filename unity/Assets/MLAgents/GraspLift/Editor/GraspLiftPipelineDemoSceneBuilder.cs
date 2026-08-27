@@ -30,7 +30,11 @@ namespace KDT.GraspLiftTraining.Editor
         public const string SourceScenePath =
             "Assets/MLAgents/GraspLift/DG5F_GraspLiftTraining.unity";
         public const string SourceAreaName = "DG5F_GraspLiftTrainingArea_00";
-        public const string DemoScenePath = "Assets/Scenes/Pipeline_Demo_GraspLift.unity";
+        // The production demo path belongs to the confirmed UR16e + DG-5F-M-R
+        // right-hand PicknPlace builder. Keep this retired UR5e + left-hand demo
+        // separate so running the legacy menu item cannot silently replace it.
+        public const string DemoScenePath =
+            "Assets/Scenes/Pipeline_Demo_GraspLift_LegacyLeft.unity";
         const string HandRootName = "ll_dg_palm";
         const string OverviewCameraName = "OverviewCamera";
         const string CloseUpCameraName = "GraspLiftCloseUpCamera";
