@@ -176,6 +176,12 @@ namespace KDT.PicknPlaceTraining
         public const float ToppleLimitDegrees = 45f;
         public const string ToppleLimitParameterName = "topple_limit_deg";
         public const float UnsafeSurfacePenalty = -2.0f;
+        // Same severity as UnsafeSurfacePenalty: a link touching another
+        // non-adjacent link (finger crossing finger, hand folding into the
+        // forearm) is exactly as hard a safety violation as touching the floor,
+        // and the codebase already treats that as a terminal failure — kept
+        // consistent rather than inventing a softer rule for an equally bad event.
+        public const float SelfCollisionPenalty = -2.0f;
         public const float ClosedHandAscentPenalty = -0.004f;
         public const float ClosedHandAscentHeight = 0.15f;
         public const float NearObjectControlClearance = 0.08f;
@@ -195,10 +201,28 @@ namespace KDT.PicknPlaceTraining
         public const float MaximumGraspPosturePenaltyScale = 0f;
         public const string GraspPosturePenaltyScaleParameterName = "grasp_posture_penalty_scale";
 
+        // A top-down power grasp opposes the four fingers with the thumb held
+        // roughly level or upward, not pointing at the floor — a thumb pointing
+        // down is either a degenerate grasp or the hand about to jam a digit into
+        // the table. Modeled as a continuous per-decision cost like
+        // GraspPosturePenalty (a graded posture concern, not a discrete safety
+        // event the way floor contact or self-collision are), but unlike that
+        // penalty this one defaults ON (non-zero): it encodes a hard requirement
+        // from the task brief for this run, not an optional experimental sweep.
+        // The 60 deg threshold and default scale are initial estimates — like
+        // most shaping constants in this file, expect to retune against the
+        // first training curves.
+        public const float ThumbDownSafeAngleDegrees = 60f;
+        public const float ThumbDownPenaltyScale = -0.10f;
+        public const float MinimumThumbDownPenaltyScale = -1f;
+        public const float MaximumThumbDownPenaltyScale = 0f;
+        public const string ThumbDownPenaltyScaleParameterName = "thumb_down_penalty_scale";
+
         static float _topDownAlignmentPotentialMax = TopDownAlignmentPotentialMax;
         static float _actionRatePenaltyScale = ActionRatePenaltyScale;
         static float _handSurfacePenaltyPerSecond = HandSurfacePenaltyPerSecond;
         static float _graspPosturePenaltyScale = GraspPosturePenaltyScale;
+        static float _thumbDownPenaltyScale = ThumbDownPenaltyScale;
         static float _toppleLimitDeg = ToppleLimitDegrees;
 
         public static float CurrentTopDownAlignmentPotentialMax => _topDownAlignmentPotentialMax;
@@ -263,6 +287,35 @@ namespace KDT.PicknPlaceTraining
                 : GraspPosturePenaltyScale;
         }
 
+        public static float CurrentThumbDownPenaltyScale => _thumbDownPenaltyScale;
+
+        public static void RefreshThumbDownPenaltyScale()
+        {
+            SetThumbDownPenaltyScale(Academy.Instance.EnvironmentParameters.GetWithDefault(
+                ThumbDownPenaltyScaleParameterName, ThumbDownPenaltyScale));
+        }
+
+        public static void SetThumbDownPenaltyScale(float scale)
+        {
+            _thumbDownPenaltyScale = IsFinite(scale)
+                ? Mathf.Clamp(scale, MinimumThumbDownPenaltyScale, MaximumThumbDownPenaltyScale)
+                : ThumbDownPenaltyScale;
+        }
+
+        /// Per-decision cost that grows as the thumb approaches pointing straight
+        /// down. thumbDownAngleDegrees is measured from straight-down (0 deg =
+        /// thumb points at the floor, 180 deg = thumb points straight up) — the
+        /// same convention as TopDownAngleDegrees, so callers can reuse
+        /// TopDownAlignment/TopDownAngleDegrees against the thumb's own pointing
+        /// direction instead of the grasp axis.
+        public static float ThumbDownPenalty(float thumbDownAngleDegrees)
+        {
+            if (!IsFinite(thumbDownAngleDegrees)) return 0f;
+            float progress = Mathf.Clamp01(
+                (ThumbDownSafeAngleDegrees - thumbDownAngleDegrees) / ThumbDownSafeAngleDegrees);
+            return _thumbDownPenaltyScale * progress;
+        }
+
         public static float CurrentToppleLimitDegrees => _toppleLimitDeg;
 
         public static void RefreshToppleLimit()
@@ -300,6 +353,36 @@ namespace KDT.PicknPlaceTraining
               0f,  95f,  80f,  70f,
               0f,   0f,  80f,  70f
         };
+
+        // Arm reset pose. Dg5fGraspLiftAgent (and, until this constant existed,
+        // this agent too) resets to whatever xDrive.target the robot PREFAB
+        // happened to be saved with — for GraspLift's UR5e prefab that is a
+        // reasonable pose, but the UR16e prefab was generated straight from the
+        // URDF import (Tools > Robots > Create UR16e DG5F Right Prefab) and was
+        // never manually posed. Measured consequence (2026-08-27, first headless
+        // training run): the hand sat on the floor panel for 100% of every
+        // episode from step 1 onward and never moved off that pose —
+        // ResetRobot() teleports the joints directly (ArticulationBody.
+        // jointPosition, not a gradual xDrive approach), so this was the literal
+        // saved pose, not a dynamics/gain issue.
+        //
+        // This value was NOT guessed from generic "UR look-down pose" tutorials
+        // — a first guess based on that (shoulder_lift=-90, elbow=90, wrist_1/2
+        // =-90) measurably cleared the floor (0.47 m) but left the palm pointing
+        // 90 deg from straight down (horizontal, not top-down) once actually
+        // verified. It was replaced after measuring real forward kinematics via
+        // Tools > ML-Agents > Diagnose PicknPlace Arm Poses (Physics.Simulate in
+        // Edit mode — Physics.SyncTransforms alone does NOT recompute an
+        // ArticulationBody chain's FK outside an actual physics step, so an
+        // earlier pass of that same tool silently reported the on-disk zero pose
+        // for every candidate). That sweep found wrist_2 controls the down-angle
+        // almost linearly (measured: wrist_2=-90 -> 90 deg off vertical,
+        // wrist_2=-120 -> 120 deg off), and wrist_2's safe range caps at -30 deg
+        // (ArmSafeMinDeg/MaxDeg[4]) — the closest-to-vertical that range allows.
+        // This exact combination measured 0.32 m clear of the panel with the
+        // palm 30.1 deg off straight-down, inside MaximumTopDownAngleDegrees
+        // (35 deg). Order matches ArmLinks.
+        public static readonly float[] HomeArmDeg = { 0f, -60f, 90f, -120f, -30f, 0f };
 
         // --- curriculum -----------------------------------------------------------
         // Unified grasp curriculum (spawn annulus + lift target/hold), identical
@@ -641,16 +724,41 @@ namespace KDT.PicknPlaceTraining
             return Mathf.Sqrt(Mathf.Lerp(minimum * minimum, maximum * maximum, Mathf.Clamp01(unitSample)));
         }
 
-        public static float SpawnAzimuthRadians(float azimuthUnitSample)
+        // Ported from Dg5fGraspLiftSpec (2026-08-27): a pure-uniform azimuth left
+        // ~half of spawns behind/beside the home pose's fixed facing direction,
+        // where DirectionalApproachPotential's IsPalmFacingObject gate can only
+        // be satisfied by the arm rotating there first. Measured consequence in
+        // the first healthy training run (v3, post home-pose fix): 600k+ steps
+        // (~3000 episodes across 40 areas) with FinalDistanceMeters completely
+        // flat and ContactCount/MaxObjectTiltDegrees never leaving zero — the
+        // reward was climbing purely from the removed floor penalty, not from
+        // any learned approach behaviour. GraspLift hit the same problem and
+        // fixed it with this directional bias; restoring it rather than
+        // reinventing since it is already training-proven.
+        public static float SpawnAzimuthRadians(
+            float distributionUnitSample,
+            float azimuthUnitSample)
         {
-            return Mathf.Clamp01(azimuthUnitSample) * 2f * Mathf.PI;
+            float distribution = Mathf.Clamp01(distributionUnitSample);
+            float azimuth = Mathf.Clamp01(azimuthUnitSample);
+            if (distribution < 0.5f)
+                return azimuth * 2f * Mathf.PI;
+
+            // Robot-local +Z is forward and +X is right. Half the samples stay
+            // globally uniform; the other half concentrates on the forward and
+            // right sectors the arm reaches most comfortably from the home pose.
+            float sectorCenter = distribution < 0.75f ? 0.5f * Mathf.PI : 0f;
+            return sectorCenter + (azimuth - 0.5f) * 0.5f * Mathf.PI;
         }
 
         public static Vector3 SpawnCubeLocalPosition(
-            float radiusUnitSample, float azimuthUnitSample, float cubeHeight)
+            float radiusUnitSample,
+            float distributionUnitSample,
+            float azimuthUnitSample,
+            float cubeHeight)
         {
             float horizontalRadius = AreaUniformRadius(radiusUnitSample);
-            float azimuth = SpawnAzimuthRadians(azimuthUnitSample);
+            float azimuth = SpawnAzimuthRadians(distributionUnitSample, azimuthUnitSample);
             return new Vector3(
                 Mathf.Cos(azimuth) * horizontalRadius,
                 SupportTopHeight + Mathf.Max(0f, cubeHeight) * 0.5f,
@@ -708,6 +816,8 @@ namespace KDT.PicknPlaceTraining
         {
             if (string.Equals(reason, "UnsafeSurfaceContact", StringComparison.Ordinal))
                 return UnsafeSurfacePenalty;
+            if (string.Equals(reason, "SelfCollision", StringComparison.Ordinal))
+                return SelfCollisionPenalty;
             if (string.Equals(reason, "Dropped", StringComparison.Ordinal))
                 return DropPenalty;
             if (string.Equals(reason, "ObjectPushedAway", StringComparison.Ordinal))

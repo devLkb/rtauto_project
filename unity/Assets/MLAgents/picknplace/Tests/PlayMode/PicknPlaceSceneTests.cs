@@ -30,16 +30,16 @@ namespace KDT.PicknPlaceTraining.PlayModeTests
         }
 
         [UnityTest]
-        public IEnumerator SceneHasTwentyIndependentTrainingAreas()
+        public IEnumerator SceneHasFortyIndependentTrainingAreas()
         {
             yield return LoadScene();
 
             var agents = Object.FindObjectsByType<Dg5fPicknPlaceAgent>(FindObjectsSortMode.None);
-            Assert.That(agents, Has.Length.EqualTo(20));
-            Assert.That(agents.Select(a => a.transform.root).Distinct().Count(), Is.EqualTo(20));
-            Assert.That(agents.Select(a => a.cubeTarget).Distinct().Count(), Is.EqualTo(20));
-            Assert.That(agents.Select(a => a.pedestal).Distinct().Count(), Is.EqualTo(20));
-            Assert.That(agents.Select(a => a.spawnSeed).Distinct().Count(), Is.EqualTo(20));
+            Assert.That(agents, Has.Length.EqualTo(40));
+            Assert.That(agents.Select(a => a.transform.root).Distinct().Count(), Is.EqualTo(40));
+            Assert.That(agents.Select(a => a.cubeTarget).Distinct().Count(), Is.EqualTo(40));
+            Assert.That(agents.Select(a => a.pedestal).Distinct().Count(), Is.EqualTo(40));
+            Assert.That(agents.Select(a => a.spawnSeed).Distinct().Count(), Is.EqualTo(40));
 
             foreach (var agent in agents)
             {
@@ -153,6 +153,25 @@ namespace KDT.PicknPlaceTraining.PlayModeTests
                     Assert.That(t.name.Contains("_dg_"), Is.False,
                         "fingers must be free to work at the floor surface");
                 }
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator SelfCollisionSensorsCoverEveryRobotLinkWithATriggerShadow()
+        {
+            yield return LoadScene();
+
+            var agent = Object.FindAnyObjectByType<Dg5fPicknPlaceAgent>();
+            Assert.That(agent.selfCollisionSensors, Is.Not.Empty,
+                "self-collision must be detectable, not silently disabled");
+            foreach (var sensor in agent.selfCollisionSensors)
+            {
+                Assert.That(sensor.owningBody, Is.Not.Null);
+                var colliders = sensor.GetComponents<Collider>();
+                Assert.That(colliders.Any(c => c.isTrigger), Is.True,
+                    $"{sensor.name} must carry a trigger shadow collider");
+                Assert.That(colliders.Any(c => !c.isTrigger), Is.True,
+                    $"{sensor.name} must keep its original physical collider");
             }
         }
     }

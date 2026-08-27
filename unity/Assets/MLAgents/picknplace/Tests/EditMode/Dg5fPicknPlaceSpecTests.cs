@@ -20,6 +20,7 @@ namespace KDT.PicknPlaceTraining.Tests
             Dg5fPicknPlaceSpec.SetHandSurfacePenaltyPerSecond(
                 Dg5fPicknPlaceSpec.HandSurfacePenaltyPerSecond);
             Dg5fPicknPlaceSpec.SetGraspPosturePenaltyScale(Dg5fPicknPlaceSpec.GraspPosturePenaltyScale);
+            Dg5fPicknPlaceSpec.SetThumbDownPenaltyScale(Dg5fPicknPlaceSpec.ThumbDownPenaltyScale);
         }
 
         // --- cube geometry parameters ------------------------------------------
@@ -103,6 +104,21 @@ namespace KDT.PicknPlaceTraining.Tests
         // --- contract -------------------------------------------------------
 
         [Test]
+        public void HomeArmDegStaysWithinTheSafeJointRange()
+        {
+            Assert.AreEqual(Dg5fPicknPlaceSpec.ArmLinks.Length, Dg5fPicknPlaceSpec.HomeArmDeg.Length);
+            for (int i = 0; i < Dg5fPicknPlaceSpec.HomeArmDeg.Length; i++)
+            {
+                Assert.GreaterOrEqual(
+                    Dg5fPicknPlaceSpec.HomeArmDeg[i], Dg5fPicknPlaceSpec.ArmSafeMinDeg[i],
+                    $"joint {i} below its safe minimum");
+                Assert.LessOrEqual(
+                    Dg5fPicknPlaceSpec.HomeArmDeg[i], Dg5fPicknPlaceSpec.ArmSafeMaxDeg[i],
+                    $"joint {i} above its safe maximum");
+            }
+        }
+
+        [Test]
         public void PolicyShapeMatchesTheGraspLiftContract()
         {
             Assert.AreEqual(57, Dg5fPicknPlaceSpec.ObservationSize);
@@ -169,7 +185,7 @@ namespace KDT.PicknPlaceTraining.Tests
                 {
                     float u = i / 40f;
                     Vector3 spawn = Dg5fPicknPlaceSpec.SpawnCubeLocalPosition(
-                        u, 1f - u, Dg5fPicknPlaceSpec.CubeHeight);
+                        u, u, 1f - u, Dg5fPicknPlaceSpec.CubeHeight);
                     Assert.IsTrue(
                         Dg5fPicknPlaceSpec.IsValidCubeSpawn(
                             spawn,
@@ -192,7 +208,7 @@ namespace KDT.PicknPlaceTraining.Tests
         public void SpawnsRestOnThePanelTop()
         {
             Vector3 spawn = Dg5fPicknPlaceSpec.SpawnCubeLocalPosition(
-                0.5f, 0.3f, Dg5fPicknPlaceSpec.CubeHeight);
+                0.5f, 0.1f, 0.3f, Dg5fPicknPlaceSpec.CubeHeight);
             Assert.AreEqual(
                 Dg5fPicknPlaceSpec.SupportTopHeight + Dg5fPicknPlaceSpec.CubeHeight * 0.5f,
                 spawn.y,
@@ -252,6 +268,71 @@ namespace KDT.PicknPlaceTraining.Tests
             // This task grasps a generic cube (not fragile wafer cargo), so it
             // should use the same tolerance GraspLift validated.
             Assert.AreEqual(45f, Dg5fPicknPlaceSpec.ToppleLimitDegrees, 1e-6f);
+        }
+
+        // --- self-collision ---------------------------------------------------
+
+        [Test]
+        public void SelfCollisionIsAsSevereAsUnsafeSurfaceContact()
+        {
+            Assert.AreEqual(
+                Dg5fPicknPlaceSpec.UnsafeSurfacePenalty,
+                Dg5fPicknPlaceSpec.SelfCollisionPenalty,
+                1e-6f,
+                "a link touching another non-adjacent link is exactly as severe as touching the floor");
+            Assert.AreEqual(
+                Dg5fPicknPlaceSpec.SelfCollisionPenalty,
+                Dg5fPicknPlaceSpec.FailurePenalty("SelfCollision"));
+        }
+
+        // --- thumb orientation --------------------------------------------------
+
+        [Test]
+        public void ThumbDownPenaltyGrowsAsTheThumbApproachesStraightDown()
+        {
+            Dg5fPicknPlaceSpec.SetThumbDownPenaltyScale(-0.5f);
+            Assert.AreEqual(0f, Dg5fPicknPlaceSpec.ThumbDownPenalty(180f), 1e-6f,
+                "thumb pointing straight up must be free");
+            Assert.AreEqual(0f,
+                Dg5fPicknPlaceSpec.ThumbDownPenalty(Dg5fPicknPlaceSpec.ThumbDownSafeAngleDegrees), 1e-6f,
+                "exactly at the safe boundary must still be free");
+            Assert.AreEqual(-0.5f, Dg5fPicknPlaceSpec.ThumbDownPenalty(0f), 1e-6f,
+                "thumb pointing straight down must pay the full scale");
+            Assert.Greater(
+                Dg5fPicknPlaceSpec.ThumbDownPenalty(30f),
+                Dg5fPicknPlaceSpec.ThumbDownPenalty(10f),
+                "30 deg from straight-down is less severe than 10 deg, so it must cost less "
+                    + "(penalties are negative, so 'greater' is closer to zero)");
+            Assert.AreEqual(0f, Dg5fPicknPlaceSpec.ThumbDownPenalty(float.NaN), 1e-6f);
+        }
+
+        [Test]
+        public void ThumbDownPenaltyScaleDefaultsOnUnlikeGraspPosturePenalty()
+        {
+            // Unlike GraspPosturePenaltyScale (default 0, an optional experimental
+            // sweep), this constraint was requested as a hard requirement for the
+            // current training run, so it must be active out of the box.
+            Assert.Less(Dg5fPicknPlaceSpec.ThumbDownPenaltyScale, 0f);
+        }
+
+        [Test]
+        public void ThumbDownPenaltyScaleClampsAndRejectsNonFinite()
+        {
+            Dg5fPicknPlaceSpec.SetThumbDownPenaltyScale(-2f);
+            Assert.AreEqual(
+                Dg5fPicknPlaceSpec.MinimumThumbDownPenaltyScale,
+                Dg5fPicknPlaceSpec.CurrentThumbDownPenaltyScale,
+                1e-6f);
+            Dg5fPicknPlaceSpec.SetThumbDownPenaltyScale(1f);
+            Assert.AreEqual(
+                Dg5fPicknPlaceSpec.MaximumThumbDownPenaltyScale,
+                Dg5fPicknPlaceSpec.CurrentThumbDownPenaltyScale,
+                1e-6f);
+            Dg5fPicknPlaceSpec.SetThumbDownPenaltyScale(float.NaN);
+            Assert.AreEqual(
+                Dg5fPicknPlaceSpec.ThumbDownPenaltyScale,
+                Dg5fPicknPlaceSpec.CurrentThumbDownPenaltyScale,
+                1e-6f);
         }
 
         [Test]

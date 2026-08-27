@@ -2,11 +2,15 @@ behaviors:
   DG5FPicknPlace:
     trainer_type: ppo
     hyperparameters:
-      # 20 parallel training areas x ~200 decisions per episode (20 s episodes at
-      # a 0.1 s decision period) — identical shape to dg5f_grasp_lift.yaml, this
-      # behavior is a grasp+lift port onto the UR16e right-hand hardware.
-      batch_size: 2048
-      buffer_size: 20480
+      # 40 parallel training areas x ~200 decisions per episode (20 s episodes at
+      # a 0.1 s decision period). Area count and batch/buffer doubled from
+      # dg5f_grasp_lift.yaml's 20/2048/20480 (2026-08-27): a 20-area run left the
+      # GPU at ~17% utilization (environment throughput was the bottleneck, not
+      # the PPO update), so both were scaled up together to use the RTX 2080
+      # headroom without changing the update's relative shape (buffer:batch
+      # ratio, epochs) from the proven GraspLift config.
+      batch_size: 4096
+      buffer_size: 40960
       learning_rate: 0.0003
       learning_rate_schedule: linear
       beta: 0.01

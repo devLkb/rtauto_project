@@ -39,6 +39,8 @@ namespace KDT.PicknPlaceTraining
             Array.Empty<PicknPlaceSurfaceContactSensor>();
         public PicknPlaceHandSurfaceSensor[] handSurfaceSensors =
             Array.Empty<PicknPlaceHandSurfaceSensor>();
+        public PicknPlaceSelfCollisionSensor[] selfCollisionSensors =
+            Array.Empty<PicknPlaceSelfCollisionSensor>();
 
         [Header("Episode")]
         public bool useDeterministicSpawns;
@@ -77,6 +79,12 @@ namespace KDT.PicknPlaceTraining
         float _slipSeconds;
         float _bestLiftHeight;
         float _maxObjectTiltDeg;
+        // Temporary diagnostic (2026-08-27): the policy converged to near-zero
+        // movement with ContactCount/FinalDistanceMeters completely flat across
+        // 2M+ steps. DirectionalApproachPotential only pays when
+        // IsPalmFacingObject is true, so this tracks how close that gate ever
+        // gets to opening per episode — remove once the root cause is confirmed.
+        float _maxPalmFacingAlignment;
         float _handSurfaceContactSeconds;
         float _handSurfaceContactSecondsSinceDecision;
         float _sumSquaredArmActionDeltas;
@@ -222,6 +230,8 @@ namespace KDT.PicknPlaceTraining
                 safetySensors = GetComponentsInChildren<PicknPlaceSurfaceContactSensor>(true);
             if (handSurfaceSensors == null || handSurfaceSensors.Length == 0)
                 handSurfaceSensors = GetComponentsInChildren<PicknPlaceHandSurfaceSensor>(true);
+            if (selfCollisionSensors == null || selfCollisionSensors.Length == 0)
+                selfCollisionSensors = GetComponentsInChildren<PicknPlaceSelfCollisionSensor>(true);
         }
 
         static ArticulationBody FindBody(IEnumerable<ArticulationBody> bodies, string name)
@@ -279,6 +289,14 @@ namespace KDT.PicknPlaceTraining
                     "[Dg5fPicknPlaceAgent] No hand-panel contact sensors were resolved; "
                     + "the scrape penalty and contact-time stat will remain zero.",
                     this);
+            // Old generated scenes do not contain these sensors yet. Warn instead
+            // of throwing so a stale scene remains usable until it is regenerated.
+            if (selfCollisionSensors == null || selfCollisionSensors.Length == 0)
+                Debug.LogWarning(
+                    "[Dg5fPicknPlaceAgent] No self-collision sensors were resolved; "
+                    + "self-collision will never terminate the episode until the "
+                    + "scene is regenerated.",
+                    this);
         }
 
         // ------------------------------------------------------------------ episode
@@ -296,6 +314,7 @@ namespace KDT.PicknPlaceTraining
             Dg5fPicknPlaceSpec.RefreshActionRatePenaltyScale();
             Dg5fPicknPlaceSpec.RefreshHandSurfacePenaltyPerSecond();
             Dg5fPicknPlaceSpec.RefreshGraspPosturePenaltyScale();
+            Dg5fPicknPlaceSpec.RefreshThumbDownPenaltyScale();
 
             _closure = 0f;
             _episodeSeconds = 0f;
@@ -304,6 +323,7 @@ namespace KDT.PicknPlaceTraining
             _slipSeconds = 0f;
             _bestLiftHeight = 0f;
             _maxObjectTiltDeg = 0f;
+            _maxPalmFacingAlignment = -1f;
             _handSurfaceContactSeconds = 0f;
             _handSurfaceContactSecondsSinceDecision = 0f;
             _sumSquaredArmActionDeltas = 0f;
@@ -330,6 +350,8 @@ namespace KDT.PicknPlaceTraining
                 if (sensor != null) sensor.ResetContacts();
             foreach (var sensor in handSurfaceSensors)
                 if (sensor != null) sensor.ResetContacts();
+            foreach (var sensor in selfCollisionSensors)
+                if (sensor != null) sensor.ResetContacts();
 
             _previousApproachPotential = Dg5fPicknPlaceSpec.DirectionalApproachPotential(
                 GraspDistance(), PalmFacingAlignment());
@@ -347,7 +369,9 @@ namespace KDT.PicknPlaceTraining
 
         void ResetRobot()
         {
-            foreach (var body in _allJoints)
+            // Hand joints reset to whatever open-hand pose the prefab was saved
+            // with (fine — this is not implicated in the home-pose bug below).
+            foreach (var body in _handJoints)
             {
                 float targetDeg = InitialTargetDeg(body);
                 var drive = body.xDrive;
@@ -357,11 +381,21 @@ namespace KDT.PicknPlaceTraining
                 body.jointVelocity = new ArticulationReducedSpace(0f);
             }
 
+            // Arm joints reset to Dg5fPicknPlaceSpec.HomeArmDeg, NOT the prefab's
+            // saved xDrive.target — see that constant's comment for why (the
+            // UR16e prefab's raw import pose sat with the hand on the floor).
             for (int i = 0; i < _armJoints.Length; i++)
             {
-                float initial = InitialTargetDeg(_armJoints[i]);
-                _armTargetDeg[i] = Mathf.Clamp(
-                    initial, Dg5fPicknPlaceSpec.ArmSafeMinDeg[i], Dg5fPicknPlaceSpec.ArmSafeMaxDeg[i]);
+                float homeDeg = Mathf.Clamp(
+                    Dg5fPicknPlaceSpec.HomeArmDeg[i],
+                    Dg5fPicknPlaceSpec.ArmSafeMinDeg[i], Dg5fPicknPlaceSpec.ArmSafeMaxDeg[i]);
+                _armTargetDeg[i] = homeDeg;
+                var body = _armJoints[i];
+                var drive = body.xDrive;
+                drive.target = homeDeg;
+                body.xDrive = drive;
+                body.jointPosition = new ArticulationReducedSpace(homeDeg * Mathf.Deg2Rad);
+                body.jointVelocity = new ArticulationReducedSpace(0f);
             }
             ApplyArmTargets();
             _closure = 0f;
@@ -375,7 +409,7 @@ namespace KDT.PicknPlaceTraining
             for (int attempt = 0; attempt < 32 && !sampled; attempt++)
             {
                 localPosition = Dg5fPicknPlaceSpec.SpawnCubeLocalPosition(
-                    Next01(), Next01(), Dg5fPicknPlaceSpec.CurrentCubeHeight);
+                    Next01(), Next01(), Next01(), Dg5fPicknPlaceSpec.CurrentCubeHeight);
                 sampled = Dg5fPicknPlaceSpec.IsValidCubeSpawn(
                     localPosition,
                     Dg5fPicknPlaceSpec.CurrentCubeWidth,
@@ -557,6 +591,7 @@ namespace KDT.PicknPlaceTraining
                 _sumGraspPostureAngleDegrees += graspPostureAngleDegrees;
                 _graspPostureAngleSampleCount++;
             }
+            AddReward(Dg5fPicknPlaceSpec.ThumbDownPenalty(ThumbDownAngleDegrees()));
 
             bool nearObject = Dg5fPicknPlaceSpec.UsesNearObjectControl(graspDistance);
             float actionScale = nearObject ? Dg5fPicknPlaceSpec.NearObjectArmDeltaScale : 1f;
@@ -665,6 +700,12 @@ namespace KDT.PicknPlaceTraining
             if (_unsafeSurfaceContact || HasUnsafeSurfaceContact())
             {
                 FinishEpisode(false, "UnsafeSurfaceContact");
+                return;
+            }
+
+            if (HasSelfCollision())
+            {
+                FinishEpisode(false, "SelfCollision");
                 return;
             }
 
@@ -824,8 +865,10 @@ namespace KDT.PicknPlaceTraining
             // where it started, so the approach terms are frozen at that point.
             if (_graspConfirmed) return;
 
+            float palmFacingAlignment = PalmFacingAlignment();
+            _maxPalmFacingAlignment = Mathf.Max(_maxPalmFacingAlignment, palmFacingAlignment);
             float currentApproach = Dg5fPicknPlaceSpec.DirectionalApproachPotential(
-                GraspDistance(), PalmFacingAlignment());
+                GraspDistance(), palmFacingAlignment);
             AddReward(Dg5fPicknPlaceSpec.PotentialDelta(_previousApproachPotential, currentApproach));
             _previousApproachPotential = currentApproach;
 
@@ -871,6 +914,14 @@ namespace KDT.PicknPlaceTraining
             return false;
         }
 
+        bool HasSelfCollision()
+        {
+            if (selfCollisionSensors == null) return false;
+            foreach (var sensor in selfCollisionSensors)
+                if (sensor != null && sensor.HasViolation) return true;
+            return false;
+        }
+
         public void NotifyUnsafeSurfaceContact(Collider surface)
         {
             if (surface == pedestalCollider) _unsafeSurfaceContact = true;
@@ -913,6 +964,14 @@ namespace KDT.PicknPlaceTraining
             _stats.Add(
                 "PicknPlace/TopDownAngleDegrees",
                 Dg5fPicknPlaceSpec.TopDownAngleDegrees(TopDownAlignment()),
+                StatAggregationMethod.Average);
+            _stats.Add(
+                "PicknPlace/MaxPalmFacingAlignment",
+                _maxPalmFacingAlignment,
+                StatAggregationMethod.Average);
+            _stats.Add(
+                "PicknPlace/ThumbDownAngleDegrees",
+                ThumbDownAngleDegrees(),
                 StatAggregationMethod.Average);
             _stats.Add(
                 "PicknPlace/GraspPostureAngleDegrees",
@@ -991,6 +1050,25 @@ namespace KDT.PicknPlaceTraining
                 graspPoint.position - GraspTargetPosition(), robotBase.up);
             return Dg5fPicknPlaceSpec.TopDownAlignmentPotential(
                 GraspDistance(), heightAboveObject, TopDownAlignment());
+        }
+
+        /// Angle (deg) between the thumb's pointing direction and straight-down.
+        /// The thumb's own local axis convention is not known in code, so the
+        /// direction is approximated from its base joint to its tip position —
+        /// robust regardless of how the URDF importer oriented the joint frame.
+        /// Reuses TopDownAlignment/TopDownAngleDegrees since the math (dot against
+        /// -robotUp) is identical; 180 deg (safe, "points up") is the fallback for
+        /// any missing reference, matching TopDownAlignment's own invalid-input
+        /// convention.
+        float ThumbDownAngleDegrees()
+        {
+            if (fingerTips == null || fingerTips.Length == 0 || fingerTips[0] == null
+                || _handJoints == null || _handJoints.Length == 0 || _handJoints[0] == null
+                || robotBase == null)
+                return 180f;
+            Vector3 thumbDirection = fingerTips[0].position - _handJoints[0].transform.position;
+            return Dg5fPicknPlaceSpec.TopDownAngleDegrees(
+                Dg5fPicknPlaceSpec.TopDownAlignment(thumbDirection, robotBase.up));
         }
 
         // ---------------------------------------------------------------- heuristic

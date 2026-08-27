@@ -32,8 +32,14 @@ namespace KDT.PicknPlaceTraining.Editor
         const string CubeMaterialPath = TrainingRoot + "/PicknPlaceCube.mat";
         const string PanelPhysicsMaterialPath = TrainingRoot + "/PicknPlacePanel.physicMaterial";
         const string CubePhysicsMaterialPath = TrainingRoot + "/PicknPlaceCube.physicMaterial";
-        const int TrainingAreaCount = 20;
-        const int TrainingAreaColumns = 4;
+        // Raised from 20 (2026-08-27): the RTX 2080 was sitting at ~17% GPU
+        // utilization with 20 areas — environment throughput (CPU-bound Unity
+        // physics), not the PPO update, was the bottleneck. More parallel areas
+        // feed more experience per second into the same GPU update, without
+        // changing the learning algorithm itself. 12 WSL2 CPU cores had ample
+        // headroom at 20 areas.
+        const int TrainingAreaCount = 40;
+        const int TrainingAreaColumns = 8;
         const float TrainingAreaSpacing = 3f;
 
         static readonly HashSet<string> CompetingDriverTypes = new HashSet<string>
@@ -47,7 +53,17 @@ namespace KDT.PicknPlaceTraining.Editor
             "ArmTargetIK",
             "RobotInitialPoseSync",
             "Dg5fGraspAgent",
-            "GraspTeleoperationHandoff"
+            "GraspTeleoperationHandoff",
+            // Unity.Robotics.UrdfImporter.Control.Controller: the URDF-Importer
+            // package's own demo keyboard controller. It ships on the imported
+            // robot and calls the legacy UnityEngine.Input API every Update(),
+            // which throws (the project uses the new Input System) and spams the
+            // log at simulation rate across all 20 training areas — found while
+            // smoke-testing the headless Linux player (2026-08-27). Harmless to
+            // training itself (it never got a chance to drive joints — Dg5fPicknPlaceAgent
+            // is the sole xDrive writer regardless), but wasteful over a
+            // multi-hour headless run.
+            "Controller"
         };
 
         [MenuItem("Tools/ML-Agents/Build DG5F PicknPlace Training Scene")]
@@ -97,6 +113,7 @@ namespace KDT.PicknPlaceTraining.Editor
             var unsafeSurfaces = new[] { panelCollider };
             agent.safetySensors = ConfigureSafetySensors(robot, unsafeSurfaces, agent);
             agent.handSurfaceSensors = ConfigureHandSurfaceSensors(robot, panelCollider);
+            agent.selfCollisionSensors = ConfigureSelfCollisionSensors(robot);
             agent.MaxStep = 0;
 
             var behavior = robot.GetComponent<BehaviorParameters>();
@@ -329,6 +346,84 @@ namespace KDT.PicknPlaceTraining.Editor
                 sensors.Add(sensor);
             }
             return sensors.ToArray();
+        }
+
+        /// Instruments every physical robot collider with a same-shaped trigger
+        /// "shadow" so PicknPlaceSelfCollisionSensor can detect real geometric
+        /// overlap between non-adjacent links without touching physics response —
+        /// see that component's doc comment for why this can't reuse
+        /// RobotSelfCollisionIgnore's ignore-pair table.
+        static PicknPlaceSelfCollisionSensor[] ConfigureSelfCollisionSensors(GameObject robot)
+        {
+            var sensors = new List<PicknPlaceSelfCollisionSensor>();
+            foreach (Collider collider in robot.GetComponentsInChildren<Collider>(true))
+            {
+                if (collider == null || collider.isTrigger) continue;
+                ArticulationBody body = collider.GetComponentInParent<ArticulationBody>();
+                if (body == null || body.isRoot) continue;
+
+                AddTriggerShadow(collider.gameObject, collider);
+                var sensor = collider.gameObject.GetComponent<PicknPlaceSelfCollisionSensor>();
+                if (sensor == null)
+                    sensor = collider.gameObject.AddComponent<PicknPlaceSelfCollisionSensor>();
+                sensor.owningBody = body;
+                sensors.Add(sensor);
+            }
+            if (sensors.Count == 0)
+                throw new InvalidOperationException(
+                    "No robot colliders were available for self-collision detection.");
+            return sensors.ToArray();
+        }
+
+        /// Adds a same-shaped trigger-only collider alongside an existing physical
+        /// one on the same GameObject. Handles the collider primitive types the
+        /// URDF importer produces; throws on anything unexpected so a new/unusual
+        /// collision-geometry type fails loudly at build time rather than silently
+        /// leaving a gap in self-collision coverage.
+        static void AddTriggerShadow(GameObject target, Collider source)
+        {
+            switch (source)
+            {
+                case BoxCollider box:
+                {
+                    var shadow = target.AddComponent<BoxCollider>();
+                    shadow.center = box.center;
+                    shadow.size = box.size;
+                    shadow.isTrigger = true;
+                    break;
+                }
+                case SphereCollider sphere:
+                {
+                    var shadow = target.AddComponent<SphereCollider>();
+                    shadow.center = sphere.center;
+                    shadow.radius = sphere.radius;
+                    shadow.isTrigger = true;
+                    break;
+                }
+                case CapsuleCollider capsule:
+                {
+                    var shadow = target.AddComponent<CapsuleCollider>();
+                    shadow.center = capsule.center;
+                    shadow.radius = capsule.radius;
+                    shadow.height = capsule.height;
+                    shadow.direction = capsule.direction;
+                    shadow.isTrigger = true;
+                    break;
+                }
+                case MeshCollider mesh:
+                {
+                    var shadow = target.AddComponent<MeshCollider>();
+                    shadow.sharedMesh = mesh.sharedMesh;
+                    // Trigger mesh colliders must be convex in PhysX.
+                    shadow.convex = true;
+                    shadow.isTrigger = true;
+                    break;
+                }
+                default:
+                    throw new InvalidOperationException(
+                        $"Unsupported collider type for self-collision shadow: {source.GetType().Name} "
+                        + $"on {target.name}.");
+            }
         }
 
         static GameObject CreatePanel(Transform parent, PhysicsMaterial material)

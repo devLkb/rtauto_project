@@ -151,8 +151,27 @@ behavior. GraspLift(UR5e + 왼손)의 검증된 접근·파지·리프트 보상
    로봇을 `Assets/Robots/Prefabs/ur16e_dg5f_right.prefab`로 저장 (씬 자체는 건드리지 않음).
 2. **Tools > ML-Agents > Build DG5F PicknPlace Training Scene** — 위 prefab으로부터
    `Assets/MLAgents/picknplace/DG5F_PicknPlaceTraining.unity`를 절차적으로 생성
-   (20개 병렬 학습 영역). 이 씬은 빌드 산출물이므로 직접 편집하지 않고, 바뀔 때마다
+   (40개 병렬 학습 영역). 이 씬은 빌드 산출물이므로 직접 편집하지 않고, 바뀔 때마다
    이 메뉴를 다시 실행한다.
+3. **Tools > ML-Agents > Build PicknPlace Pipeline Demo Scene** — 위 학습 씬의
+   `DG5F_PicknPlaceTrainingArea_00`을 하나 복제해 `Assets/Scenes/Pipeline_Demo_GraspLift.unity`로
+   저장한다(이 씬도 빌드 산출물 — 직접 편집 금지). 좌상단 "제어 모드" 버튼으로
+   **자동**(`Dg5fPicknPlaceAgent` 정책이 ONNX로 파지+리프트 수행)과 **수동**(사람이
+   조종) 두 모드를 전환한다:
+   - 자동: `Assets/MLAgents/picknplace/Models/DG5FPicknPlace.onnx`가 학습 완료 후
+     같은 경로에 채워지면 `DG5F_PicknPlaceTraining.unity`의 BehaviorParameters에
+     이미 연결돼 있으므로(`PicknPlaceTrainingSceneBuilder`가 매 빌드마다 다시 읽는다)
+     이 메뉴를 재실행만 하면 데모 씬에도 반영된다. 모델이 없으면 자동 모드는 대기(정지) 상태.
+   - 수동: 캠 앞에서 손을 움직이면 미디어파이프가 20관절 각도를 뽑아 UDP(포트는
+     `config/rtauto_config.py`의 `PORT_DG5F_SIM`, 기본 5006)로 쏘고 `Dg5fHandDriver`가
+     그리퍼에 그대로 주입한다 — 팔은 화면 조이스틱+높이 슬라이더(`ArmTargetIK` 기반
+     `PicknPlaceTeleopNudge`)로 조종. 손 트래킹 실행:
+     ```cmd
+     vision\.vision\Scripts\activate
+     python vision\dg5f\vision_node_dg5f.py
+     ```
+     (오른손 모델 기준 — 인자 없이 실행. 최초 1회 `python calibrate_dg5f.py` 보정 필요,
+     `vision/dg5f/CALIBRATION_GUIDE.md` 참고.)
 
 Windows에서 Unity Editor에 직접 붙여서 시작하는 방법(위 GraspLift 절차와 동일 패턴):
 

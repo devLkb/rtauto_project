@@ -64,6 +64,32 @@ behavior 이름(`DG5FPicknPlace`)뿐이다. 보상 상수·커리큘럼 임계�
 치수는 전부 GraspLift와 동일한 값을 그대로 가져왔다(`Dg5fGraspLiftSpec.cs`
 원본 주석에 각 상수의 근거가 있다).
 
+또한 GraspLift에 없던 안전 제약 2개가 이 behavior에만 추가됐다
+(2026-08-27, headless 학습 착수 전 요청 반영):
+
+- **자기충돌 방지**: `PicknPlaceSelfCollisionSensor` — 손가락끼리, 또는
+  팔/손이 서로 다른(직접 연결되지 않은) 링크와 접촉하면 `UnsafeSurfaceContact`
+  와 동일한 심각도(-2.0)로 에피소드를 즉시 종료한다. `RobotSelfCollisionIgnore`
+  가 로봇 전체 콜라이더 쌍의 물리 충돌 반응을 이미 꺼두고 있어(지골 겹침으로
+  인한 접촉 진동 방지, 그 컴포넌트 주석 참고) `OnCollisionEnter`를 재사용할 수
+  없다 — 대신 각 물리 콜라이더 옆에 같은 모양의 **트리거 전용 섀도 콜라이더**를
+  추가해 물리 반응은 건드리지 않고 겹침만 감지한다(`Physics.IgnoreCollision`은
+  트리거 콜백을 막지 않음). "자기충돌"의 정의는 두 콜라이더의 소유
+  ArticulationBody가 같지 않고 부모-자식(관절로 직접 연결)도 아닌 경우 —
+  인접 링크의 설계상 겹침(지골끼리, 손목-손마운트)은 정상으로 제외된다.
+  `PicknPlaceTrainingSceneBuilder.ConfigureSelfCollisionSensors`/
+  `AddTriggerShadow` 참고.
+- **엄지 방향 제약**: 손끝(`fingerTips[0]`, finger index 1 = 엄지)에서 기저
+  관절(`_handJoints[0]`)로의 벡터를 "엄지가 가리키는 방향"으로 근사해(URDF
+  임포트 로컬 축 관례를 모르는 상태에서도 안전한, 위치 기반 근사)
+  `TopDownAlignment`/`TopDownAngleDegrees`를 재사용, 바닥 방향(0°)에 가까울수록
+  커지는 연속 페널티(`ThumbDownPenalty`)를 매 결정마다 부과한다. 60° 안쪽은
+  무료, 기본 스케일 -0.10(환경 파라미터 `thumb_down_penalty_scale`로 조정
+  가능). `GraspPosturePenaltyScale`(기본 0, 꺼짐)과 달리 이 페널티는 **기본
+  켜짐** — 실험적 스윕이 아니라 이번 학습에서 요구된 하드 제약이기 때문.
+  각도 임계값·스케일 모두 초기 추정값이라 실제 학습 곡선을 보고 재조정이
+  필요할 수 있다.
+
 ## 커리큘럼
 
 `grasp_stage` (1..3): 큐브 스폰 annulus를 좁은 범위→전체 범위로, 리프트
