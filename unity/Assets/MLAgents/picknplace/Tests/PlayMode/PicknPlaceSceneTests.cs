@@ -12,8 +12,8 @@ namespace KDT.PicknPlaceTraining.PlayModeTests
 {
     /// <summary>
     /// Scene contract for the generated DG5F_PicknPlaceTraining scene: a cube
-    /// (pick object) spawned at a random floor position, and a fixed FOUP-shaped
-    /// platform (place target) with a randomized marker on its top face.
+    /// (grasp object) spawned at a random floor position on the UR16e right-hand
+    /// robot — a near-verbatim port of GraspLift's scene contract.
     /// </summary>
     public sealed class PicknPlaceSceneTests
     {
@@ -24,6 +24,8 @@ namespace KDT.PicknPlaceTraining.PlayModeTests
             SceneManager.LoadScene(SceneName);
             yield return null;
             if (!waitForSettling) yield break;
+            // Let the agents resolve, reset, and release their cubes (the release
+            // happens two fixed steps after OnEpisodeBegin).
             for (int i = 0; i < 8; i++) yield return new WaitForFixedUpdate();
         }
 
@@ -36,7 +38,6 @@ namespace KDT.PicknPlaceTraining.PlayModeTests
             Assert.That(agents, Has.Length.EqualTo(20));
             Assert.That(agents.Select(a => a.transform.root).Distinct().Count(), Is.EqualTo(20));
             Assert.That(agents.Select(a => a.cubeTarget).Distinct().Count(), Is.EqualTo(20));
-            Assert.That(agents.Select(a => a.platform).Distinct().Count(), Is.EqualTo(20));
             Assert.That(agents.Select(a => a.pedestal).Distinct().Count(), Is.EqualTo(20));
             Assert.That(agents.Select(a => a.spawnSeed).Distinct().Count(), Is.EqualTo(20));
 
@@ -45,8 +46,6 @@ namespace KDT.PicknPlaceTraining.PlayModeTests
                 Transform area = agent.transform.root;
                 Assert.That(agent.cubeTarget.transform.IsChildOf(area), Is.True,
                     "each area must own its own cube");
-                Assert.That(agent.platform.IsChildOf(area), Is.True,
-                    "each area must own its own platform");
                 Assert.That(agent.pedestal.IsChildOf(area), Is.True);
                 var behavior = agent.GetComponent<BehaviorParameters>();
                 Assert.That(behavior, Is.Not.Null, $"{area.name} must have behavior parameters");
@@ -85,35 +84,27 @@ namespace KDT.PicknPlaceTraining.PlayModeTests
             Assert.That(cube.useGravity, Is.True);
             Assert.That(cube.isKinematic, Is.False, "the cube must be released after reset");
             Assert.That(cube.collisionDetectionMode,
-                Is.EqualTo(CollisionDetectionMode.ContinuousDynamic));
+                Is.EqualTo(CollisionDetectionMode.ContinuousDynamic),
+                "fast-closing fingers tunnel through a discrete-detection cube");
 
             Collider collider = cube.GetComponent<Collider>();
             Assert.That(collider, Is.TypeOf<BoxCollider>());
+            // Measure the box itself, not its world AABB: the cube spawns with a
+            // random yaw, so the axis-aligned bounds are wider than the box.
+            var box = (BoxCollider)collider;
+            Vector3 size = Vector3.Scale(box.size, cube.transform.lossyScale);
+            Assert.That(size.x, Is.EqualTo(Dg5fPicknPlaceSpec.CurrentCubeWidth).Within(2e-3f));
+            Assert.That(size.y, Is.EqualTo(Dg5fPicknPlaceSpec.CurrentCubeHeight).Within(2e-3f));
+            Assert.That(size.z, Is.EqualTo(Dg5fPicknPlaceSpec.CurrentCubeWidth).Within(2e-3f));
             Assert.That(collider.material.staticFriction, Is.GreaterThan(1f),
                 "the cube needs high friction for a friction grasp to hold");
         }
 
         [UnityTest]
-        public IEnumerator PlatformIsStaticAndHasNoRigidbody()
+        public IEnumerator CubeSpawnsUprightAndRestingOnThePanel()
         {
-            yield return LoadScene();
-
-            var agent = Object.FindAnyObjectByType<Dg5fPicknPlaceAgent>();
-            Assert.That(agent.platform.GetComponent<Rigidbody>(), Is.Null,
-                "the landing platform must be a fixed, static object");
-            Assert.That(agent.platformCollider, Is.Not.Null);
-            Assert.That(agent.platformCollider, Is.TypeOf<BoxCollider>());
-
-            var expectedWorldPos =
-                agent.robotBase.TransformPoint(Dg5fPicknPlaceSpec.PlatformLocalPosition);
-            Assert.That(
-                Vector3.Distance(agent.platform.position, expectedWorldPos), Is.LessThan(1e-4f),
-                "the platform must sit at the documented fixed position");
-        }
-
-        [UnityTest]
-        public IEnumerator CubeSpawnsUprightAndClearOfThePlatform()
-        {
+            // This is a spawn-geometry contract. Inspect the reset pose before the
+            // two-step release, physics settling, or a policy decision can alter it.
             yield return LoadScene(waitForSettling: false);
 
             foreach (var agent in Object.FindObjectsByType<Dg5fPicknPlaceAgent>(
@@ -148,7 +139,7 @@ namespace KDT.PicknPlaceTraining.PlayModeTests
         }
 
         [UnityTest]
-        public IEnumerator SafetySensorsCoverBothPanelAndPlatformButSkipTheHand()
+        public IEnumerator PanelSafetySensorsSkipTheHand()
         {
             yield return LoadScene();
 
@@ -157,11 +148,10 @@ namespace KDT.PicknPlaceTraining.PlayModeTests
             foreach (var sensor in agent.safetySensors)
             {
                 Assert.That(sensor.unsafeSurfaces, Does.Contain(agent.pedestalCollider));
-                Assert.That(sensor.unsafeSurfaces, Does.Contain(agent.platformCollider));
                 for (Transform t = sensor.transform; t != null; t = t.parent)
                 {
                     Assert.That(t.name.Contains("_dg_"), Is.False,
-                        "fingers must be free to work at the floor/platform surface");
+                        "fingers must be free to work at the floor surface");
                 }
             }
         }

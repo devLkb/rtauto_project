@@ -5,14 +5,13 @@ namespace KDT.PicknPlaceTraining
 {
     /// <summary>
     /// Reports contact between one moving arm collider and any of a fixed set of
-    /// unsafe surfaces (the floor panel and the static landing platform). Hand
-    /// links are deliberately NOT instrumented: the fingers have to work right at
-    /// the floor/platform surface to grasp and place the cube, so treating their
-    /// contact as a safety failure would make the task impossible.
+    /// unsafe surfaces (the floor panel). Hand links are deliberately NOT
+    /// instrumented: the fingers have to work right at the floor surface to grasp
+    /// the cube, so treating their contact as a safety failure would make the task
+    /// impossible.
     ///
-    /// Ported from GraspLift's GraspLiftSurfaceContactSensor, extended from a
-    /// single unsafe surface to an array — this task has two static
-    /// surfaces (panel, platform) an arm link must not hit.
+    /// Ported from GraspLift's GraspLiftSurfaceContactSensor, generalized from a
+    /// single unsafe surface to an array (currently populated with just the panel).
     /// </summary>
     public sealed class PicknPlaceSurfaceContactSensor : MonoBehaviour
     {

@@ -9,8 +9,7 @@ namespace KDT.PicknPlaceTraining.Tests
         [TearDown]
         public void ResetStage()
         {
-            Dg5fPicknPlaceSpec.SetPickStage(Dg5fPicknPlaceSpec.FinalPickStage);
-            Dg5fPicknPlaceSpec.SetPlaceStage(Dg5fPicknPlaceSpec.FinalPlaceStage);
+            Dg5fPicknPlaceSpec.SetGraspStage(Dg5fPicknPlaceSpec.FinalGraspStage);
             Dg5fPicknPlaceSpec.SetCubeWidth(Dg5fPicknPlaceSpec.CubeWidth);
             Dg5fPicknPlaceSpec.SetCubeHeight(Dg5fPicknPlaceSpec.CubeHeight);
             Dg5fPicknPlaceSpec.SetCubeComHeightFraction(Dg5fPicknPlaceSpec.CubeComHeightFraction);
@@ -48,47 +47,137 @@ namespace KDT.PicknPlaceTraining.Tests
                 "the grasp target must retain its 2 cm inset below the top face");
         }
 
-        // --- pick-stage curriculum (spawn annulus) ------------------------------
+        [Test]
+        public void DefaultCubeHeightIsTheRequestedTwelveCentimetrePillar()
+        {
+            Dg5fPicknPlaceSpec.SetCubeHeight(Dg5fPicknPlaceSpec.CubeHeight);
+            Assert.AreEqual(0.12f, Dg5fPicknPlaceSpec.CurrentCubeHeight, 1e-6f,
+                "the grasp target is the GraspLift-proven 12 cm square pillar");
+        }
 
         [Test]
-        public void PickSpawnAnnulusWidensOutwardAcrossStages()
+        public void CubeMassFollowsCubeVolume()
         {
-            Dg5fPicknPlaceSpec.SetPickStage(1);
+            Dg5fPicknPlaceSpec.SetCubeWidth(0.03f);
+            Dg5fPicknPlaceSpec.SetCubeHeight(0.09f);
+            float smallWidthAndHeight = Dg5fPicknPlaceSpec.CurrentCubeMass;
+            Dg5fPicknPlaceSpec.SetCubeWidth(0.05f);
+            float largeWidth = Dg5fPicknPlaceSpec.CurrentCubeMass;
+            Assert.Greater(largeWidth, smallWidthAndHeight);
+            Dg5fPicknPlaceSpec.SetCubeHeight(0.12f);
+            float largeWidthAndHeight = Dg5fPicknPlaceSpec.CurrentCubeMass;
+            Assert.Greater(largeWidthAndHeight, largeWidth);
+            Assert.AreEqual(
+                0.05f * 0.05f * 0.12f * Dg5fPicknPlaceSpec.CubeDensity,
+                largeWidthAndHeight,
+                1e-6f);
+        }
+
+        [Test]
+        public void CubeCenterOfMassHeightFractionIsClampedAndMappedToLocalSpace()
+        {
+            Dg5fPicknPlaceSpec.SetCubeComHeightFraction(0f);
+            Assert.AreEqual(
+                Dg5fPicknPlaceSpec.MinimumCubeComHeightFraction,
+                Dg5fPicknPlaceSpec.CurrentCubeComHeightFraction,
+                1e-6f);
+            Dg5fPicknPlaceSpec.SetCubeComHeightFraction(1f);
+            Assert.AreEqual(
+                Dg5fPicknPlaceSpec.MaximumCubeComHeightFraction,
+                Dg5fPicknPlaceSpec.CurrentCubeComHeightFraction,
+                1e-6f);
+            Dg5fPicknPlaceSpec.SetCubeComHeightFraction(float.NaN);
+            Assert.AreEqual(
+                Dg5fPicknPlaceSpec.CubeComHeightFraction,
+                Dg5fPicknPlaceSpec.CurrentCubeComHeightFraction,
+                1e-6f);
+
+            float fraction = 0.25f;
+            Dg5fPicknPlaceSpec.SetCubeComHeightFraction(fraction);
+            Assert.AreEqual(
+                fraction - 0.5f,
+                Dg5fPicknPlaceSpec.CurrentCubeCenterOfMassLocal.y,
+                1e-6f);
+        }
+
+        // --- contract -------------------------------------------------------
+
+        [Test]
+        public void PolicyShapeMatchesTheGraspLiftContract()
+        {
+            Assert.AreEqual(57, Dg5fPicknPlaceSpec.ObservationSize);
+            Assert.AreEqual(7, Dg5fPicknPlaceSpec.ActionSize);
+            Assert.AreEqual(6, Dg5fPicknPlaceSpec.ContactPointCount);
+            Assert.AreEqual(5, Dg5fPicknPlaceSpec.PalmContactIndex);
+            Assert.AreEqual(20, Dg5fPicknPlaceSpec.RightFistDeg.Length);
+            Assert.AreEqual(6, Dg5fPicknPlaceSpec.ArmLinks.Length);
+        }
+
+        // --- curriculum -----------------------------------------------------
+
+        [Test]
+        public void GraspStageIsClampedAndRounded()
+        {
+            Dg5fPicknPlaceSpec.SetGraspStage(-4f);
+            Assert.AreEqual(Dg5fPicknPlaceSpec.FirstGraspStage, Dg5fPicknPlaceSpec.CurrentGraspStage);
+            Dg5fPicknPlaceSpec.SetGraspStage(99f);
+            Assert.AreEqual(Dg5fPicknPlaceSpec.FinalGraspStage, Dg5fPicknPlaceSpec.CurrentGraspStage);
+            Dg5fPicknPlaceSpec.SetGraspStage(1.6f);
+            Assert.AreEqual(2, Dg5fPicknPlaceSpec.CurrentGraspStage);
+            Dg5fPicknPlaceSpec.SetGraspStage(float.NaN);
+            Assert.AreEqual(Dg5fPicknPlaceSpec.FirstGraspStage, Dg5fPicknPlaceSpec.CurrentGraspStage);
+        }
+
+        [Test]
+        public void GraspStageWidensTheSpawnAnnulusOutward()
+        {
+            Dg5fPicknPlaceSpec.SetGraspStage(1);
             float stage1Min = Dg5fPicknPlaceSpec.CurrentMinimumSpawnRadius;
             float stage1Max = Dg5fPicknPlaceSpec.CurrentMaximumSpawnRadius;
 
-            Dg5fPicknPlaceSpec.SetPickStage(Dg5fPicknPlaceSpec.FinalPickStage);
+            Dg5fPicknPlaceSpec.SetGraspStage(Dg5fPicknPlaceSpec.FinalGraspStage);
             Assert.Less(Dg5fPicknPlaceSpec.CurrentMinimumSpawnRadius, stage1Min);
             Assert.Greater(Dg5fPicknPlaceSpec.CurrentMaximumSpawnRadius, stage1Max);
         }
 
-        // --- cube spawn validity — must avoid the platform footprint -----------
+        [Test]
+        public void CurriculumMonotonicallyTightensTheLiftContract()
+        {
+            Dg5fPicknPlaceSpec.SetGraspStage(1);
+            float easyHeight = Dg5fPicknPlaceSpec.CurrentLiftTargetHeight;
+            float easyHold = Dg5fPicknPlaceSpec.CurrentLiftHoldSeconds;
+            Dg5fPicknPlaceSpec.SetGraspStage(3);
+            Assert.Greater(Dg5fPicknPlaceSpec.CurrentLiftTargetHeight, easyHeight);
+            Assert.Greater(Dg5fPicknPlaceSpec.CurrentLiftHoldSeconds, easyHold);
+            Assert.AreEqual(
+                Dg5fPicknPlaceSpec.LiftTargetHeight,
+                Dg5fPicknPlaceSpec.CurrentLiftTargetHeight,
+                1e-6f);
+        }
+
+        // --- cube spawn ---------------------------------------------------------
 
         [Test]
-        public void IsValidCubeSpawnRejectsPositionsNearThePlatform()
+        public void EverySampledSpawnIsValidAtEveryStage()
         {
-            Dg5fPicknPlaceSpec.SetPickStage(Dg5fPicknPlaceSpec.FinalPickStage);
-            float restY = Dg5fPicknPlaceSpec.SupportTopHeight + Dg5fPicknPlaceSpec.CubeHeight * 0.5f;
-
-            // Chosen to sit inside the pick annulus (radius ~0.49, within
-            // 0.37..0.58) by radius alone, but only 0.25 m from the platform
-            // centre (0.60, 0) — inside PlatformExclusionRadius (0.30). Isolates
-            // the platform-exclusion check from the annulus check.
-            var nearPlatform = new Vector3(0.45f, restY, 0.20f);
-            Assert.Less(
-                Vector2.Distance(new Vector2(0.45f, 0.20f), new Vector2(0.60f, 0f)),
-                Dg5fPicknPlaceSpec.PlatformExclusionRadius,
-                "test setup check: the candidate must actually be inside the exclusion disk");
-            Assert.IsFalse(Dg5fPicknPlaceSpec.IsValidCubeSpawn(
-                nearPlatform, Dg5fPicknPlaceSpec.CubeWidth, Dg5fPicknPlaceSpec.CubeHeight),
-                "a spawn inside the platform's exclusion radius must never be valid");
-
-            float midRadius =
-                (Dg5fPicknPlaceSpec.MinimumSpawnRadius + Dg5fPicknPlaceSpec.MaximumSpawnRadius) * 0.5f;
-            // Opposite side of the panel from the platform (platform is at +X).
-            var valid = new Vector3(-midRadius, restY, 0f);
-            Assert.IsTrue(Dg5fPicknPlaceSpec.IsValidCubeSpawn(
-                valid, Dg5fPicknPlaceSpec.CubeWidth, Dg5fPicknPlaceSpec.CubeHeight));
+            for (int stage = Dg5fPicknPlaceSpec.FirstGraspStage;
+                 stage <= Dg5fPicknPlaceSpec.FinalGraspStage;
+                 stage++)
+            {
+                Dg5fPicknPlaceSpec.SetGraspStage(stage);
+                for (int i = 0; i <= 40; i++)
+                {
+                    float u = i / 40f;
+                    Vector3 spawn = Dg5fPicknPlaceSpec.SpawnCubeLocalPosition(
+                        u, 1f - u, Dg5fPicknPlaceSpec.CubeHeight);
+                    Assert.IsTrue(
+                        Dg5fPicknPlaceSpec.IsValidCubeSpawn(
+                            spawn,
+                            Dg5fPicknPlaceSpec.CubeWidth,
+                            Dg5fPicknPlaceSpec.CubeHeight),
+                        $"stage {stage} sample {u} produced an invalid spawn {spawn}");
+                }
+            }
         }
 
         [Test]
@@ -99,80 +188,109 @@ namespace KDT.PicknPlaceTraining.Tests
                 Dg5fPicknPlaceSpec.CubeHeight));
         }
 
-        // --- place-stage curriculum ----------------------------------------------
-
         [Test]
-        public void PlaceStagePrecisionTightensAcrossStages()
+        public void SpawnsRestOnThePanelTop()
         {
-            Dg5fPicknPlaceSpec.SetPlaceStage(1);
-            float stage1Range = Dg5fPicknPlaceSpec.CurrentMarkerRangeMeters;
-            float stage1Tolerance = Dg5fPicknPlaceSpec.CurrentPlacePositionToleranceMeters;
-
-            Dg5fPicknPlaceSpec.SetPlaceStage(Dg5fPicknPlaceSpec.FinalPlaceStage);
-            Assert.Greater(Dg5fPicknPlaceSpec.CurrentMarkerRangeMeters, stage1Range,
-                "later stages randomize the marker over a wider area");
-            Assert.Less(Dg5fPicknPlaceSpec.CurrentPlacePositionToleranceMeters, stage1Tolerance,
-                "later stages demand tighter placement precision");
-        }
-
-        [Test]
-        public void MarkerLocalOffsetStaysWithinTheCurrentRange()
-        {
-            Dg5fPicknPlaceSpec.SetPlaceStage(Dg5fPicknPlaceSpec.FinalPlaceStage);
-            float range = Dg5fPicknPlaceSpec.CurrentMarkerRangeMeters;
-            Vector3 corner = Dg5fPicknPlaceSpec.MarkerLocalOffset(1f, 1f);
-            Assert.AreEqual(range, corner.x, 1e-4f);
-            Assert.AreEqual(range, corner.z, 1e-4f);
-            Vector3 center = Dg5fPicknPlaceSpec.MarkerLocalOffset(0.5f, 0.5f);
-            Assert.AreEqual(0f, center.x, 1e-4f);
-            Assert.AreEqual(0f, center.z, 1e-4f);
-        }
-
-        // --- transport / placement geometry --------------------------------------
-
-        [Test]
-        public void TransportTargetHoversUntilArrivedThenDropsToPlatformHeight()
-        {
-            var marker = new Vector3(1f, Dg5fPicknPlaceSpec.PlatformTopHeight, 0.5f);
-            Vector3 hovering = Dg5fPicknPlaceSpec.TransportTargetPosition(marker, Vector3.up, false);
+            Vector3 spawn = Dg5fPicknPlaceSpec.SpawnCubeLocalPosition(
+                0.5f, 0.3f, Dg5fPicknPlaceSpec.CubeHeight);
             Assert.AreEqual(
-                Dg5fPicknPlaceSpec.PlatformTopHeight + Dg5fPicknPlaceSpec.TransportClearanceHeight,
-                hovering.y, 1e-4f);
-
-            Vector3 arrived = Dg5fPicknPlaceSpec.TransportTargetPosition(marker, Vector3.up, true);
-            Assert.AreEqual(Dg5fPicknPlaceSpec.PlatformTopHeight, arrived.y, 1e-4f);
+                Dg5fPicknPlaceSpec.SupportTopHeight + Dg5fPicknPlaceSpec.CubeHeight * 0.5f,
+                spawn.y,
+                1e-5f);
         }
 
         [Test]
-        public void HasArrivedAboveMarkerRequiresBothXZAndHeight()
+        public void SpawnRadiusStaysInsideTheCurrentStageAnnulus()
         {
-            Assert.IsFalse(Dg5fPicknPlaceSpec.HasArrivedAboveMarker(0f, 0f),
-                "xz-aligned but not yet at hover height");
-            Assert.IsFalse(Dg5fPicknPlaceSpec.HasArrivedAboveMarker(1f, Dg5fPicknPlaceSpec.HoverHeight),
-                "at hover height but not xz-aligned");
-            Assert.IsTrue(Dg5fPicknPlaceSpec.HasArrivedAboveMarker(0f, Dg5fPicknPlaceSpec.HoverHeight));
+            Dg5fPicknPlaceSpec.SetGraspStage(1);
+            for (int i = 0; i <= 20; i++)
+            {
+                float radius = Dg5fPicknPlaceSpec.AreaUniformRadius(i / 20f);
+                Assert.GreaterOrEqual(radius, Dg5fPicknPlaceSpec.CurrentMinimumSpawnRadius - 1e-5f);
+                Assert.LessOrEqual(radius, Dg5fPicknPlaceSpec.CurrentMaximumSpawnRadius + 1e-5f);
+            }
+        }
+
+        // --- lift -----------------------------------------------------------
+
+        [Test]
+        public void LiftPotentialTracksHeightAndSaturatesAtTheTarget()
+        {
+            Dg5fPicknPlaceSpec.SetGraspStage(Dg5fPicknPlaceSpec.FinalGraspStage);
+            Assert.AreEqual(0f, Dg5fPicknPlaceSpec.LiftPotential(-0.05f), 1e-6f);
+            Assert.Greater(
+                Dg5fPicknPlaceSpec.LiftPotential(0.08f),
+                Dg5fPicknPlaceSpec.LiftPotential(0.04f));
+            Assert.AreEqual(
+                Dg5fPicknPlaceSpec.LiftPotentialMaximum,
+                Dg5fPicknPlaceSpec.LiftPotential(1f),
+                1e-6f);
         }
 
         [Test]
-        public void IsAtRestOnTargetRequiresPositionSpeedAndUpright()
+        public void AFlyingObjectIsNotAStableLift()
         {
-            Assert.IsTrue(Dg5fPicknPlaceSpec.IsAtRestOnTarget(
-                0f, Dg5fPicknPlaceSpec.PlatformTopHeight, 0f, 0f));
-            Assert.IsFalse(Dg5fPicknPlaceSpec.IsAtRestOnTarget(
-                1f, Dg5fPicknPlaceSpec.PlatformTopHeight, 0f, 0f), "too far from the marker");
-            Assert.IsFalse(Dg5fPicknPlaceSpec.IsAtRestOnTarget(
-                0f, Dg5fPicknPlaceSpec.PlatformTopHeight, 5f, 0f), "moving too fast");
-            Assert.IsFalse(Dg5fPicknPlaceSpec.IsAtRestOnTarget(
-                0f, Dg5fPicknPlaceSpec.PlatformTopHeight, 0f, 90f), "tipped over");
+            float height = Dg5fPicknPlaceSpec.LiftTargetHeight + 0.01f;
+            Assert.IsTrue(Dg5fPicknPlaceSpec.IsStableLift(height, 0.1f));
+            Assert.IsFalse(Dg5fPicknPlaceSpec.IsStableLift(height, 5f));
+            Assert.IsFalse(Dg5fPicknPlaceSpec.IsStableLift(0.01f, 0.1f));
         }
+
+        [Test]
+        public void LiftHeightIsMeasuredAgainstTheSpawnHeight()
+        {
+            Assert.AreEqual(0.07f, Dg5fPicknPlaceSpec.LiftHeight(0.37f, 0.30f), 1e-5f);
+            Assert.AreEqual(-0.02f, Dg5fPicknPlaceSpec.LiftHeight(0.28f, 0.30f), 1e-5f);
+            Assert.AreEqual(0f, Dg5fPicknPlaceSpec.LiftHeight(float.NaN, 0.3f));
+        }
+
+        // --- toppling / termination -----------------------------------------
 
         [Test]
         public void ToppleLimitMatchesGraspLiftsCubeScaleDefault()
         {
             // This task grasps a generic cube (not fragile wafer cargo), so it
-            // should use the same tolerance GraspLift validated, not the FOUP
-            // handle-grasp iteration's stricter placeholder.
+            // should use the same tolerance GraspLift validated.
             Assert.AreEqual(45f, Dg5fPicknPlaceSpec.ToppleLimitDegrees, 1e-6f);
+        }
+
+        [Test]
+        public void EpisodeTimesOutAtTheContractedLimit()
+        {
+            Assert.IsFalse(Dg5fPicknPlaceSpec.ReachedEpisodeTimeout(
+                Dg5fPicknPlaceSpec.EpisodeTimeoutSeconds - 1f));
+            Assert.IsTrue(Dg5fPicknPlaceSpec.ReachedEpisodeTimeout(
+                Dg5fPicknPlaceSpec.EpisodeTimeoutSeconds));
+        }
+
+        [Test]
+        public void FailurePenaltiesAreOrderedBySeverity()
+        {
+            Assert.AreEqual(
+                Dg5fPicknPlaceSpec.UnsafeSurfacePenalty,
+                Dg5fPicknPlaceSpec.FailurePenalty("UnsafeSurfaceContact"));
+            Assert.AreEqual(
+                Dg5fPicknPlaceSpec.DropPenalty, Dg5fPicknPlaceSpec.FailurePenalty("Dropped"));
+            Assert.AreEqual(0f, Dg5fPicknPlaceSpec.FailurePenalty("Timeout"));
+            Assert.Less(
+                Dg5fPicknPlaceSpec.FailurePenalty("UnsafeSurfaceContact"),
+                Dg5fPicknPlaceSpec.FailurePenalty("Dropped"));
+        }
+
+        // --- numeric hygiene --------------------------------------------------
+
+        [Test]
+        public void NonFiniteInputsNeverProduceNonFiniteRewards()
+        {
+            float nan = float.NaN;
+            Assert.AreEqual(0f, Dg5fPicknPlaceSpec.PotentialDelta(nan, 1f));
+            Assert.AreEqual(0f, Dg5fPicknPlaceSpec.NewBestPotentialDelta(1f, nan));
+            Assert.AreEqual(0f, Dg5fPicknPlaceSpec.NearObjectActionPenalty(nan));
+            Assert.AreEqual(0f, Dg5fPicknPlaceSpec.LiftProgress(nan));
+            Assert.AreEqual(0f, Dg5fPicknPlaceSpec.GraspProgress(nan));
+            Assert.IsFalse(Dg5fPicknPlaceSpec.IsGraspConfirmed(nan));
+            Assert.IsFalse(Dg5fPicknPlaceSpec.IsLiftComplete(nan));
+            Assert.IsFalse(Dg5fPicknPlaceSpec.IsTopDownAligned(nan));
         }
     }
 }

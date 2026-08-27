@@ -122,22 +122,26 @@ mlagents-learn training\config\dg5f_grasp_lift.yaml --run-id=<이름>
   [`README.md`](../README.md) Python 절 참고).
 - 모니터링: `tensorboard --logdir training/results` 실행 후 `http://localhost:6006/`.
 
-## DG5F Pick + Place (`DG5FPicknPlace`)
+## DG5F Grasp + Place 인프라, 현재는 Grasp + Lift (`DG5FPicknPlace`)
 
-UR16e + DG-5F-M-R 오른손으로 **큐브를 바닥의 랜덤 위치에서 집어, FOUP 형태
-(몸체+상단 손잡이)의 고정 플랫폼 위 랜덤 지점에 정확히 내려놓는** behavior.
-접근·파지 단계는 GraspLift의 검증된 보상/판정 아키텍처를 큐브에 그대로
-포팅했고, 그 뒤 운반·배치 단계가 새로 추가됐다. FOUP 플랫폼은 이제 잡는
-대상이 아니라 **고정된 배치 목표물**이다. 설계 근거는
-[`docs/DG5F_PICKNPLACE.md`](../docs/DG5F_PICKNPLACE.md).
+UR16e + DG-5F-M-R **오른손**으로 큐브를 바닥의 랜덤 위치에서 집어 들어올리는
+behavior. GraspLift(UR5e + 왼손)의 검증된 접근·파지·리프트 보상/판정
+아키텍처를 확정된 하드웨어(UR16e + 오른손)로 그대로 포팅한 것 — 동일한 12cm
+사각기둥(0.035×0.12×0.035 m) 목표물, 동일한 커리큘럼 구조.
 
-- Behavior/spec: `DG5FPicknPlace` / `2.0.0`
-- observations/actions: `63/7` (팔 6축 + 손 closure 1축; place 관련 상태를
-  추가하며 GraspLift 계열의 57에서 늘어남)
-- 픽 대상: GraspLift 블록과 동일한 큐브(0.035×0.12×0.035 m) — 검증된 파지
-  아퍼처를 그대로 재사용
-- 배치 목표: FOUP 형태 고정 플랫폼(몸체 0.30×0.25×0.30 m + 장식용 손잡이),
-  매 에피소드 플랫폼 윗면의 랜덤 지점(마커)에 배치해야 함
+> 2026-08-26에 이 behavior는 잠깐 place(운반+배치) 단계까지 포함하는 진짜
+> pick-and-place로 확장됐었다(플랫폼+마커 추가). 웨이퍼 스펙 도착 전 place
+> 보상 셰이핑을 미리 연습해두려는 시도였는데, 하루 만에 되돌렸다 — 확정
+> 하드웨어(UR16e+오른손) 위에서 grasp+lift부터 먼저 다지는 편이 지금 시점에
+> 더 값지다고 판단해서다. place 설계 기록은
+> [`docs/DG5F_PICKNPLACE.md`](../docs/DG5F_PICKNPLACE.md)와 git 이력에
+> 남아있다.
+
+- Behavior/spec: `DG5FPicknPlace` / `3.0.0`
+- observations/actions: `57/7` (팔 6축 + 손 closure 1축) — GraspLift와 동일한
+  슬롯 구성
+- 대상: GraspLift 블록과 완전히 동일한 큐브(0.035×0.12×0.035 m) — 검증된
+  파지 아퍼처를 그대로 재사용
 - config: `config/dg5f_picknplace.yaml`
 - Linux player: `builds/DG5FPicknPlace/DG5FPicknPlace.x86_64`
 

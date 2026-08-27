@@ -6,13 +6,11 @@ namespace KDT.PicknPlaceTraining
     /// <summary>
     /// Tracks contact between one grasp contact point (fingertip 0..4, or the palm
     /// at index <see cref="Dg5fPicknPlaceSpec.PalmContactIndex"/>) and a single
-    /// target collider.
+    /// target collider (the grasped cube).
     ///
     /// Unlike GraspLift's GraspLiftObjectContactSensor (which matches any collider
-    /// under the target Rigidbody), this checks a specific <see cref="targetCollider"/>.
-    /// The FOUP target is a compound rigidbody (body + handle), and only the handle
-    /// is meant to be grasped — matching on the whole rigidbody would also count
-    /// fingers merely resting on the body's top face as "contact".
+    /// under the target Rigidbody), this checks a specific <see cref="targetCollider"/>
+    /// directly — functionally equivalent for a plain single-collider cube.
     /// </summary>
     public sealed class PicknPlaceObjectContactSensor : MonoBehaviour
     {

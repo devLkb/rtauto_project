@@ -1,0 +1,41 @@
+{
+    "grasp_stage": {
+        "lesson_num": 0
+    },
+    "DG5FGraspLift": {
+        "checkpoints": [
+            {
+                "steps": 8020,
+                "file_path": "results\\test2\\DG5FGraspLift\\DG5FGraspLift-8020.onnx",
+                "reward": -0.9647736623883247,
+                "creation_time": 1787730853.6389463,
+                "auxillary_file_paths": [
+                    "results\\test2\\DG5FGraspLift\\DG5FGraspLift-8020.pt"
+                ]
+            },
+            {
+                "steps": 32080,
+                "file_path": "results\\test2\\DG5FGraspLift\\DG5FGraspLift-32080.onnx",
+                "reward": null,
+                "creation_time": 1787731074.8413458,
+                "auxillary_file_paths": [
+                    "results\\test2\\DG5FGraspLift\\DG5FGraspLift-32080.pt"
+                ]
+            }
+        ],
+        "final_checkpoint": {
+            "steps": 32080,
+            "file_path": "results\\test2\\DG5FGraspLift.onnx",
+            "reward": null,
+            "creation_time": 1787731074.8413458,
+            "auxillary_file_paths": [
+                "results\\test2\\DG5FGraspLift\\DG5FGraspLift-32080.pt"
+            ]
+        }
+    },
+    "metadata": {
+        "stats_format_version": "0.3.0",
+        "mlagents_version": "1.2.0.dev0",
+        "torch_version": "2.1.1+cu121"
+    }
+}

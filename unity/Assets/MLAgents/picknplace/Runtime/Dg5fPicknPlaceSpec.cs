@@ -5,34 +5,26 @@ using UnityEngine;
 namespace KDT.PicknPlaceTraining
 {
     /// <summary>
-    /// Policy shape and task contract for DG5F pick-AND-place on a UR16e: grasp a
-    /// cube spawned at a random floor position, carry it over to a fixed
-    /// FOUP-shaped landing platform, and set it down on a randomly chosen point on
-    /// the platform's top face.
+    /// Policy shape and task contract for DG5F grasp + lift on a UR16e (right hand).
     ///
     /// Design notes (see docs/DG5F_PICKNPLACE.md):
-    /// * The approach/grasp half of this task (slots 0-48 of the observation,
-    ///   the approach/top-down/grip/contact math below) is a near-verbatim port of
-    ///   KDT.GraspLiftTraining.Dg5fGraspLiftSpec, now grasping a cube identical in
-    ///   geometry to GraspLift's block (see Cube* constants) instead of a FOUP
-    ///   handle. That half is proven through real training runs; only the
-    ///   transport+place half below is new.
-    /// * The FOUP-shaped object from this behavior's first iteration is now the
-    ///   PLACE target: a fixed, static (no Rigidbody) landing platform. It is
-    ///   never grasped, so it needs no mass/COM/curriculum — just a footprint the
-    ///   spawn logic must avoid and a top face the marker randomizes over.
-    /// * Placement uses the same continuous grip-closure action as before — there
-    ///   is no separate "release" action. Success requires the policy to actually
-    ///   open its hand while the cube rests at the target, not just hold it there.
+    /// * This is a near-verbatim port of KDT.GraspLiftTraining.Dg5fGraspLiftSpec onto
+    ///   the confirmed hardware (UR16e + DG-5F-M-R right hand) instead of GraspLift's
+    ///   UR5e + left hand. GraspLift's approach/grasp/lift math, curriculum shape, and
+    ///   cube geometry (0.035 x 0.12 m, identical to GraspLift's default block) all
+    ///   carry over unchanged; only the hand pose (RightFistDeg, mirror-reconstructed)
+    ///   and joint-name lookups differ.
+    /// * This behavior briefly grew a carry+place phase (see git history / the 2026-
+    ///   08-26 update in docs/DG5F_PICKNPLACE.md) to practice place reward shaping
+    ///   ahead of the wafer-carrier spec. That was reverted the next day: grasp+lift
+    ///   on the correct hardware is the more valuable near-term target, and place
+    ///   shaping is deferred to Phase 4 once the real FOUP spec lands.
     /// </summary>
     public static class Dg5fPicknPlaceSpec
     {
-        public const string SpecVersion = "2.0.0";
+        public const string SpecVersion = "3.0.0";
         public const string BehaviorName = "DG5FPicknPlace";
-        // See the CollectObservations slot map in Dg5fPicknPlaceAgent.cs — this
-        // must match the number of AddObservation calls exactly or ML-Agents
-        // throws a shape-mismatch error at runtime.
-        public const int ObservationSize = 63;
+        public const int ObservationSize = 57;
         public const int ActionSize = 7;
         public const int ArmJointCount = 6;
         public const int HandJointCount = 20;
@@ -41,9 +33,7 @@ namespace KDT.PicknPlaceTraining
         public const int PalmContactIndex = FingerCount;
 
         // --- episode ------------------------------------------------------------
-        // Longer than GraspLift's 20 s / pick-only PicknPlace's 25 s: this task
-        // adds a transport-then-place phase after the grasp.
-        public const float EpisodeTimeoutSeconds = 35f;
+        public const float EpisodeTimeoutSeconds = 20f;
         public const float DecisionTimePenalty = -0.001f;
 
         // --- workspace ------------------------------------------------------------
@@ -53,11 +43,11 @@ namespace KDT.PicknPlaceTraining
         public const float SupportTopHeight = 0f;
         public const float MaximumObjectDistance = 0.90f;
 
-        // --- cube geometry (the picked object) -------------------------------------
+        // --- cube geometry (the grasped object) ------------------------------------
         // Identical to Dg5fGraspLiftSpec's Block* defaults — this is the exact
         // geometry GraspLiftHandGeometryProbe validated the closed-fist aperture
         // against (3.1-3.6 cm opposition), so the proven grasp contract transfers
-        // unchanged.
+        // unchanged. 0.12 m height is the requested 12 cm square pillar.
         public const float CubeWidth = 0.035f;
         public const float CubeHeight = 0.12f;
         public const float MinimumCubeWidth = 0.025f;
@@ -133,158 +123,12 @@ namespace KDT.PicknPlaceTraining
         public static float CurrentGraspTargetHeightOffset =>
             GraspTargetHeightOffset + (CurrentCubeHeight - CubeHeight) * 0.5f;
 
-        // --- platform geometry (the fixed, static place target) --------------------
-        // Still FOUP-shaped (box body + carry handle) so the visual target reads
-        // as "a FOUP", per the original brief — it is just no longer the grasped
-        // object. Placeholder dimensions pending the real spec (see
-        // docs/DG5F_PICKNPLACE.md).
-        public const float PlatformWidth = 0.30f;
-        public const float PlatformDepth = 0.30f;
-        public const float PlatformHeight = 0.25f;
-        public const float PlatformHalfHeight = PlatformHeight * 0.5f;
-        // Purely decorative now (no grasp contract depends on it): a horizontal
-        // bar on top so the platform still reads as a FOUP silhouette.
-        public const float PlatformHandleDiameter = 0.035f;
-        public const float PlatformHandleLength = 0.13f;
-        public const float PlatformHandleClearanceAboveBody = 0.045f;
-
-        // Fixed position within each training area, robot-base local. Radius 0.60 m
-        // sits well inside the 0.90 m reach with margin for the platform's own
-        // footprint. The cube spawn annulus (below) and this position are chosen so
-        // neither footprint needs the other's exclusion check to be very tight.
-        public static readonly Vector3 PlatformLocalPosition =
-            new Vector3(0.60f, SupportTopHeight + PlatformHalfHeight, 0f);
-
-        /// Height (robot-base local Y, i.e. above the panel top) of the platform's
-        /// top face — where a placed cube's base should rest.
-        public const float PlatformTopHeight = SupportTopHeight + PlatformHeight;
-
-        /// Cube spawns must clear this horizontal radius from the platform centre
-        /// (footprint half-diagonal ~0.21 m + cube half-width + margin).
-        public const float PlatformExclusionRadius = 0.30f;
-
-        // --- place marker (randomized per episode) ----------------------------------
-        // Inset from the platform edges by enough that a cube centred on the
-        // marker never hangs off the platform.
-        public const float MarkerEdgeMargin = 0.05f;
-        public const float MarkerRangeMeters = PlatformWidth * 0.5f - MarkerEdgeMargin;
-        // Curriculum-narrowed placement precision (see place_stage below).
-        public const float MinimumMarkerRangeMeters = 0.02f;
-
-        public const string PlaceStageParameterName = "place_stage";
-        public const int FirstPlaceStage = 1;
-        public const int FinalPlaceStage = 3;
-
-        static int _placeStage = FirstPlaceStage;
-
-        public static int CurrentPlaceStage => _placeStage;
-
-        public static void RefreshPlaceStage()
-        {
-            SetPlaceStage(Academy.Instance.EnvironmentParameters.GetWithDefault(
-                PlaceStageParameterName, FinalPlaceStage));
-        }
-
-        public static void SetPlaceStage(float stage)
-        {
-            _placeStage = IsFinite(stage)
-                ? Mathf.Clamp(Mathf.RoundToInt(stage), FirstPlaceStage, FinalPlaceStage)
-                : FirstPlaceStage;
-        }
-
-        /// How far from the platform centre the marker may land this episode.
-        /// Stage 1 keeps it near the centre (easy, generous placement tolerance
-        /// effectively); later stages widen toward the full inset range.
-        public static float CurrentMarkerRangeMeters
-        {
-            get
-            {
-                switch (_placeStage)
-                {
-                    case 1: return Mathf.Min(0.03f, MarkerRangeMeters);
-                    case 2: return Mathf.Min(0.07f, MarkerRangeMeters);
-                    default: return MarkerRangeMeters;
-                }
-            }
-        }
-
-        /// Position tolerance for a successful placement. Widened in early stages
-        /// so the precision requirement ramps up alongside the marker range.
-        public static float CurrentPlacePositionToleranceMeters
-        {
-            get
-            {
-                switch (_placeStage)
-                {
-                    case 1: return 0.06f;
-                    case 2: return 0.045f;
-                    default: return PlacePositionToleranceMeters;
-                }
-            }
-        }
-
-        public static Vector3 MarkerLocalOffset(float unitX, float unitZ)
-        {
-            float range = CurrentMarkerRangeMeters;
-            return new Vector3(
-                Mathf.Lerp(-range, range, Mathf.Clamp01(unitX)),
-                0f,
-                Mathf.Lerp(-range, range, Mathf.Clamp01(unitZ)));
-        }
-
-        // --- cube spawn (pick side) -------------------------------------------------
-        // Identical annulus to Dg5fGraspLiftSpec's proven 0.35..0.55 m-class
-        // range, expressed for the confirmed UR16e 0.90 m reach the same way
-        // GraspLift derived it (see that file's MinimumSpawnRadius comment).
+        // --- cube spawn --------------------------------------------------------
+        // Identical annulus to Dg5fGraspLiftSpec's proven range, expressed for the
+        // confirmed UR16e 0.90 m reach the same way GraspLift derived it (see that
+        // file's MinimumSpawnRadius comment).
         public const float MinimumSpawnRadius = 0.37f;
         public const float MaximumSpawnRadius = 0.58f;
-
-        public const string PickStageParameterName = "pick_stage";
-        public const int FirstPickStage = 1;
-        public const int FinalPickStage = 3;
-
-        static int _pickStage = FirstPickStage;
-
-        public static int CurrentPickStage => _pickStage;
-
-        public static void RefreshPickStage()
-        {
-            SetPickStage(Academy.Instance.EnvironmentParameters.GetWithDefault(
-                PickStageParameterName, FinalPickStage));
-        }
-
-        public static void SetPickStage(float stage)
-        {
-            _pickStage = IsFinite(stage)
-                ? Mathf.Clamp(Mathf.RoundToInt(stage), FirstPickStage, FinalPickStage)
-                : FirstPickStage;
-        }
-
-        public static float CurrentMinimumSpawnRadius
-        {
-            get
-            {
-                switch (_pickStage)
-                {
-                    case 1: return 0.40f;
-                    case 2: return 0.38f;
-                    default: return MinimumSpawnRadius;
-                }
-            }
-        }
-
-        public static float CurrentMaximumSpawnRadius
-        {
-            get
-            {
-                switch (_pickStage)
-                {
-                    case 1: return 0.50f;
-                    case 2: return 0.52f;
-                    default: return MaximumSpawnRadius;
-                }
-            }
-        }
 
         // --- approach shaping (unchanged from GraspLift) ---------------------------
         public const float ApproachPotentialMaximum = 1.0f;
@@ -313,38 +157,15 @@ namespace KDT.PicknPlaceTraining
         public const float GraspConfirmSeconds = 0.30f;
         public const float GraspConfirmReward = 1.0f;
 
-        // --- lift-clearance milestone (new, small — the real goal is placement) ----
-        // One-shot bonus for having genuinely lifted the cube clear of the floor,
-        // separate from (and much smaller than) the final placement reward.
-        public const float LiftClearanceHeightMeters = 0.15f;
-        public const float LiftClearanceReward = 1.0f;
-
-        // --- transport shaping (new) -------------------------------------------------
-        // The cube's flight target while carrying: fly at (marker.xz, hover
-        // height) until horizontally aligned with the marker, then the target
-        // height drops to the platform's top face for the final descent. This
-        // keeps a loaded cube from being dragged sideways into the platform's
-        // side wall instead of lifted over it.
-        public const float TransportClearanceHeight = 0.08f;
-        public const float TransportPotentialMaximum = 2.0f;
-        public const float ArrivalXZToleranceMeters = 0.05f;
-        public const float ArrivalHeightSlackMeters = 0.05f;
-        // Physics contacts flicker during a re-grip; allow a short loss of
-        // contact before declaring the cube dropped (identical rationale/value to
-        // GraspLift's SlipGraceSeconds).
+        // --- lift (ported from GraspLift) -------------------------------------------
+        public const float LiftTargetHeight = 0.10f;
+        public const float LiftPotentialMaximum = 2.0f;
+        public const float LiftHoldSeconds = 0.50f;
+        public const float LiftMaximumSpeed = 0.50f;
+        public const float LiftSuccessReward = 5.0f;
+        // Physics contacts flicker during a re-grip; allow a short loss of contact
+        // before declaring the object dropped.
         public const float SlipGraceSeconds = 0.20f;
-
-        public static float HoverHeight => PlatformTopHeight + TransportClearanceHeight;
-
-        // --- placement success --------------------------------------------------------
-        public const float PlacePositionToleranceMeters = 0.03f;
-        public const float PlaceHeightToleranceMeters = 0.02f;
-        public const float PlaceMaximumSpeed = 0.15f;
-        // Generic cube, not fragile cargo, so this is more forgiving than a real
-        // wafer-carrier tolerance would be.
-        public const float PlaceUprightToleranceDegrees = 20f;
-        public const float PlaceSettleSeconds = 0.5f;
-        public const float PlaceSuccessReward = 6.0f;
 
         // --- penalties (values match GraspLift's proven cube-scale defaults) -------
         public const float DropPenalty = -1.0f;
@@ -469,8 +290,8 @@ namespace KDT.PicknPlaceTraining
         public static readonly float[] ArmSafeMinDeg = { -180f, -120f, 20f, -180f, -150f, -180f };
         public static readonly float[] ArmSafeMaxDeg = { 180f, -20f, 140f, 0f, -30f, 180f };
 
-        // See Dg5fPicknPlaceAgent's earlier revision history / docs/DG5F_PICKNPLACE.md
-        // for the mirror-reconstruction rationale.
+        // Validated DG5F closed-hand pose for the right hand, mirror-reconstructed
+        // from GraspLift's LeftFistDeg (see docs/DG5F_PICKNPLACE.md).
         public static readonly float[] RightFistDeg =
         {
              40f, -80f,  60f,  60f,
@@ -479,6 +300,82 @@ namespace KDT.PicknPlaceTraining
               0f,  95f,  80f,  70f,
               0f,   0f,  80f,  70f
         };
+
+        // --- curriculum -----------------------------------------------------------
+        // Unified grasp curriculum (spawn annulus + lift target/hold), identical
+        // shape to Dg5fGraspLiftSpec's grasp_stage.
+        public const string GraspStageParameterName = "grasp_stage";
+        public const int FirstGraspStage = 1;
+        public const int FinalGraspStage = 3;
+
+        static int _graspStage = FirstGraspStage;
+
+        public static int CurrentGraspStage => _graspStage;
+
+        public static void RefreshGraspStage()
+        {
+            SetGraspStage(Academy.Instance.EnvironmentParameters.GetWithDefault(
+                GraspStageParameterName, FinalGraspStage));
+        }
+
+        public static void SetGraspStage(float stage)
+        {
+            _graspStage = IsFinite(stage)
+                ? Mathf.Clamp(Mathf.RoundToInt(stage), FirstGraspStage, FinalGraspStage)
+                : FirstGraspStage;
+        }
+
+        public static float CurrentMinimumSpawnRadius
+        {
+            get
+            {
+                switch (_graspStage)
+                {
+                    case 1: return 0.40f;
+                    case 2: return 0.38f;
+                    default: return MinimumSpawnRadius;
+                }
+            }
+        }
+
+        public static float CurrentMaximumSpawnRadius
+        {
+            get
+            {
+                switch (_graspStage)
+                {
+                    case 1: return 0.50f;
+                    case 2: return 0.52f;
+                    default: return MaximumSpawnRadius;
+                }
+            }
+        }
+
+        public static float CurrentLiftTargetHeight
+        {
+            get
+            {
+                switch (_graspStage)
+                {
+                    case 1: return 0.05f;
+                    case 2: return 0.08f;
+                    default: return LiftTargetHeight;
+                }
+            }
+        }
+
+        public static float CurrentLiftHoldSeconds
+        {
+            get
+            {
+                switch (_graspStage)
+                {
+                    case 1: return 0.25f;
+                    case 2: return 0.35f;
+                    default: return LiftHoldSeconds;
+                }
+            }
+        }
 
         // --- shared math (ported unchanged from Dg5fGraspLiftSpec) ------------------
 
@@ -656,6 +553,42 @@ namespace KDT.PicknPlaceTraining
             return IsFinite(graspSeconds) && graspSeconds >= GraspConfirmSeconds - 1e-5f;
         }
 
+        public static float LiftHeight(float objectY, float spawnY)
+        {
+            if (!IsFinite(objectY) || !IsFinite(spawnY)) return 0f;
+            return objectY - spawnY;
+        }
+
+        public static float LiftProgress(float liftHeight)
+        {
+            if (!IsFinite(liftHeight)) return 0f;
+            return Mathf.Clamp01(Mathf.Max(0f, liftHeight) / CurrentLiftTargetHeight);
+        }
+
+        /// Not a new-best potential: the agent has to keep the cube up. Letting it
+        /// sink refunds the shaping, which is exactly the gradient a drop deserves.
+        public static float LiftPotential(float liftHeight)
+        {
+            return LiftPotentialMaximum * LiftProgress(liftHeight);
+        }
+
+        public static bool IsLiftHeightReached(float liftHeight)
+        {
+            return IsFinite(liftHeight) && liftHeight >= CurrentLiftTargetHeight - 1e-5f;
+        }
+
+        public static bool IsStableLift(float liftHeight, float objectSpeed)
+        {
+            return IsLiftHeightReached(liftHeight)
+                && IsFinite(objectSpeed)
+                && objectSpeed <= LiftMaximumSpeed;
+        }
+
+        public static bool IsLiftComplete(float liftHoldSeconds)
+        {
+            return IsFinite(liftHoldSeconds) && liftHoldSeconds >= CurrentLiftHoldSeconds - 1e-5f;
+        }
+
         public static bool IsClosedHandAscent(
             float graspPointHeightAbovePanel, float closure, bool graspConfirmed)
         {
@@ -725,68 +658,20 @@ namespace KDT.PicknPlaceTraining
         }
 
         /// True when a candidate cube spawn is inside the pick annulus, inside the
-        /// panel, resting flush on the floor, and clear of the platform footprint.
+        /// panel, and resting flush on the floor.
         public static bool IsValidCubeSpawn(Vector3 localPosition, float cubeWidth, float cubeHeight)
         {
             if (!IsFinite(localPosition)) return false;
             float horizontalRadius = new Vector2(localPosition.x, localPosition.z).magnitude;
             float halfWidth = Mathf.Max(0f, cubeWidth) * 0.5f;
             float restingHeight = localPosition.y - Mathf.Max(0f, cubeHeight) * 0.5f;
-            float distanceFromPlatform = Vector2.Distance(
-                new Vector2(localPosition.x, localPosition.z),
-                new Vector2(PlatformLocalPosition.x, PlatformLocalPosition.z));
 
             return horizontalRadius >= CurrentMinimumSpawnRadius - 1e-6f
                 && horizontalRadius <= CurrentMaximumSpawnRadius + 1e-6f
                 && Mathf.Abs(localPosition.x) + halfWidth <= PanelWidth * 0.5f
                 && Mathf.Abs(localPosition.z) + halfWidth <= PanelDepth * 0.5f
                 && Mathf.Abs(restingHeight - SupportTopHeight) <= 1e-5f
-                && localPosition.magnitude <= MaximumObjectDistance
-                && distanceFromPlatform >= PlatformExclusionRadius;
-        }
-
-        // --- transport / place -------------------------------------------------------
-
-        /// The point the carried cube should currently be flying toward: above the
-        /// marker at hover height until horizontally aligned, then the marker's
-        /// own resting height for the final descent. markerWorldPosition.y is
-        /// assumed to already be the resting (platform-top) height.
-        public static Vector3 TransportTargetPosition(
-            Vector3 markerWorldPosition, Vector3 robotUp, bool hasArrivedAboveMarker)
-        {
-            float targetHeightOffset = hasArrivedAboveMarker ? 0f : TransportClearanceHeight;
-            return markerWorldPosition + robotUp.normalized * targetHeightOffset;
-        }
-
-        public static float TransportPotential(float distanceToTransportTarget)
-        {
-            if (!IsFinite(distanceToTransportTarget)) return 0f;
-            return TransportPotentialMaximum
-                * (1f - Mathf.Clamp01(Mathf.Max(0f, distanceToTransportTarget) / MaximumObjectDistance));
-        }
-
-        public static bool HasArrivedAboveMarker(float xzDistanceToMarker, float heightAbovePanel)
-        {
-            if (!IsFinite(xzDistanceToMarker) || !IsFinite(heightAbovePanel)) return false;
-            return xzDistanceToMarker <= ArrivalXZToleranceMeters
-                && heightAbovePanel >= HoverHeight - ArrivalHeightSlackMeters;
-        }
-
-        public static bool IsAtRestOnTarget(
-            float xzDistanceToMarker, float heightAbovePanel, float speed, float tiltDegrees)
-        {
-            if (!IsFinite(xzDistanceToMarker) || !IsFinite(heightAbovePanel)
-                || !IsFinite(speed) || !IsFinite(tiltDegrees))
-                return false;
-            return xzDistanceToMarker <= CurrentPlacePositionToleranceMeters
-                && Mathf.Abs(heightAbovePanel - PlatformTopHeight) <= PlaceHeightToleranceMeters
-                && speed <= PlaceMaximumSpeed
-                && tiltDegrees <= PlaceUprightToleranceDegrees;
-        }
-
-        public static bool IsPlaceComplete(float settleSeconds)
-        {
-            return IsFinite(settleSeconds) && settleSeconds >= PlaceSettleSeconds - 1e-5f;
+                && localPosition.magnitude <= MaximumObjectDistance;
         }
 
         // --- termination --------------------------------------------------------

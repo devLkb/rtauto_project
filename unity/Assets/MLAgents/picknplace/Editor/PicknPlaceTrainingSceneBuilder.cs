@@ -14,13 +14,13 @@ using UnityEngine.SceneManagement;
 namespace KDT.PicknPlaceTraining.Editor
 {
     /// <summary>
-    /// Regenerates the DG5F pick-and-place training scene from the robot prefab.
+    /// Regenerates the DG5F grasp + lift training scene from the robot prefab.
     /// The scene is a build artefact: never hand-edit it, re-run this menu item.
     ///
-    /// Each training area contains: the robot, the floor panel, a cube spawned at
-    /// a random floor position (the pick object), and a fixed FOUP-shaped landing
-    /// platform with a randomized marker on its top face (the place target). See
-    /// docs/DG5F_PICKNPLACE.md for the full design rationale.
+    /// Each training area contains: the robot, the floor panel, and a cube spawned
+    /// at a random floor position (the grasp object) — a near-verbatim port of
+    /// GraspLift's scene layout onto the confirmed UR16e + right-hand hardware.
+    /// See docs/DG5F_PICKNPLACE.md for the full design rationale.
     /// </summary>
     public static class PicknPlaceTrainingSceneBuilder
     {
@@ -30,12 +30,8 @@ namespace KDT.PicknPlaceTraining.Editor
         const string TrainingScenePath = TrainingRoot + "/DG5F_PicknPlaceTraining.unity";
         const string DeployedModelPath = TrainingRoot + "/Models/DG5FPicknPlace.onnx";
         const string CubeMaterialPath = TrainingRoot + "/PicknPlaceCube.mat";
-        const string PlatformBodyMaterialPath = TrainingRoot + "/PicknPlacePlatformBody.mat";
-        const string PlatformHandleMaterialPath = TrainingRoot + "/PicknPlacePlatformHandle.mat";
-        const string MarkerMaterialPath = TrainingRoot + "/PicknPlaceMarker.mat";
         const string PanelPhysicsMaterialPath = TrainingRoot + "/PicknPlacePanel.physicMaterial";
         const string CubePhysicsMaterialPath = TrainingRoot + "/PicknPlaceCube.physicMaterial";
-        const string PlatformPhysicsMaterialPath = TrainingRoot + "/PicknPlacePlatform.physicMaterial";
         const int TrainingAreaCount = 20;
         const int TrainingAreaColumns = 4;
         const float TrainingAreaSpacing = 3f;
@@ -79,8 +75,6 @@ namespace KDT.PicknPlaceTraining.Editor
 
             GameObject pedestal = CreatePanel(area.transform, GetOrCreatePanelPhysicsMaterial());
             Rigidbody cube = CreateCube(area.transform, GetOrCreateCubePhysicsMaterial());
-            GameObject platformRoot = CreatePlatform(area.transform, GetOrCreatePlatformPhysicsMaterial());
-            Transform marker = CreatePlaceMarker(area.transform);
 
             Transform palm = FindTransform(robot, "rl_dg_palm");
             var tips = new Transform[Dg5fPicknPlaceSpec.FingerCount];
@@ -94,16 +88,13 @@ namespace KDT.PicknPlaceTraining.Editor
             agent.cubeCollider = cube.GetComponent<Collider>();
             agent.pedestal = pedestal.transform;
             agent.pedestalCollider = pedestal.GetComponent<Collider>();
-            agent.platform = platformRoot.transform;
-            agent.platformCollider = platformRoot.GetComponentInChildren<BoxCollider>();
-            agent.placeMarkerVisual = marker;
             agent.robotBase = robot.transform;
             agent.palm = palm;
             agent.graspPoint = graspPoint;
             agent.fingerTips = tips;
             agent.contactSensors = ConfigureObjectContactSensors(palm, tips, agent.cubeCollider);
             Collider panelCollider = pedestal.GetComponent<Collider>();
-            var unsafeSurfaces = new[] { panelCollider, agent.platformCollider };
+            var unsafeSurfaces = new[] { panelCollider };
             agent.safetySensors = ConfigureSafetySensors(robot, unsafeSurfaces, agent);
             agent.handSurfaceSensors = ConfigureHandSurfaceSensors(robot, panelCollider);
             agent.MaxStep = 0;
@@ -364,7 +355,7 @@ namespace KDT.PicknPlaceTraining.Editor
             cube.name = "PicknPlaceCube";
             cube.transform.SetParent(parent, false);
             // Placeholder initial pose; Dg5fPicknPlaceAgent samples a fresh random
-            // spawn (clear of the platform) at every episode reset.
+            // spawn at every episode reset.
             cube.transform.localPosition = new Vector3(
                 -0.40f,
                 Dg5fPicknPlaceSpec.PanelThickness + Dg5fPicknPlaceSpec.CurrentCubeHalfHeight,
@@ -383,69 +374,6 @@ namespace KDT.PicknPlaceTraining.Editor
             body.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
             body.interpolation = RigidbodyInterpolation.None;
             return body;
-        }
-
-        /// The place target: a fixed, static (no Rigidbody) FOUP-shaped landing
-        /// platform — box body + a purely decorative handle bar. Never moves
-        /// during an episode; only the marker on top of it is randomized.
-        static GameObject CreatePlatform(Transform parent, PhysicsMaterial material)
-        {
-            var root = new GameObject("PicknPlacePlatform");
-            root.transform.SetParent(parent, false);
-            root.transform.localPosition = Dg5fPicknPlaceSpec.PlatformLocalPosition;
-
-            var body = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            body.name = "PlatformBody";
-            body.transform.SetParent(root.transform, false);
-            body.transform.localPosition = Vector3.zero;
-            body.transform.localScale = new Vector3(
-                Dg5fPicknPlaceSpec.PlatformWidth,
-                Dg5fPicknPlaceSpec.PlatformHeight,
-                Dg5fPicknPlaceSpec.PlatformDepth);
-            body.GetComponent<Collider>().material = material;
-            body.GetComponent<Renderer>().sharedMaterial = GetOrCreatePlatformBodyMaterial();
-
-            float handleCenterLocalY = Dg5fPicknPlaceSpec.PlatformHalfHeight
-                + Dg5fPicknPlaceSpec.PlatformHandleClearanceAboveBody
-                + Dg5fPicknPlaceSpec.PlatformHandleDiameter * 0.5f;
-
-            var handleGO = new GameObject("PlatformHandle");
-            handleGO.transform.SetParent(root.transform, false);
-            handleGO.transform.localPosition = new Vector3(0f, handleCenterLocalY, 0f);
-            var capsule = handleGO.AddComponent<CapsuleCollider>();
-            capsule.direction = 0; // X axis: the bar spans across the body.
-            capsule.radius = Dg5fPicknPlaceSpec.PlatformHandleDiameter * 0.5f;
-            capsule.height = Dg5fPicknPlaceSpec.PlatformHandleLength;
-            capsule.material = material;
-
-            var handleVisual = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-            handleVisual.name = "Visual";
-            UnityEngine.Object.DestroyImmediate(handleVisual.GetComponent<Collider>());
-            handleVisual.transform.SetParent(handleGO.transform, false);
-            handleVisual.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);
-            handleVisual.transform.localScale = new Vector3(
-                Dg5fPicknPlaceSpec.PlatformHandleDiameter,
-                Dg5fPicknPlaceSpec.PlatformHandleLength * 0.5f,
-                Dg5fPicknPlaceSpec.PlatformHandleDiameter);
-            handleVisual.GetComponent<Renderer>().sharedMaterial = GetOrCreatePlatformHandleMaterial();
-
-            return root;
-        }
-
-        /// Purely visual: a thin flat disc with no collider. Dg5fPicknPlaceAgent
-        /// repositions it every episode to the freshly randomized marker point.
-        static Transform CreatePlaceMarker(Transform parent)
-        {
-            var marker = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-            marker.name = "PlaceMarker";
-            UnityEngine.Object.DestroyImmediate(marker.GetComponent<Collider>());
-            marker.transform.SetParent(parent, false);
-            marker.transform.localScale = new Vector3(
-                Dg5fPicknPlaceSpec.CurrentPlacePositionToleranceMeters * 2f,
-                0.002f,
-                Dg5fPicknPlaceSpec.CurrentPlacePositionToleranceMeters * 2f);
-            marker.GetComponent<Renderer>().sharedMaterial = GetOrCreateMarkerMaterial();
-            return marker.transform;
         }
 
         static Transform CreateGraspPoint(Transform palm)
@@ -502,22 +430,6 @@ namespace KDT.PicknPlaceTraining.Editor
             return material;
         }
 
-        static PhysicsMaterial GetOrCreatePlatformPhysicsMaterial()
-        {
-            var material = AssetDatabase.LoadAssetAtPath<PhysicsMaterial>(PlatformPhysicsMaterialPath);
-            if (material != null) return material;
-            material = new PhysicsMaterial("PicknPlacePlatform")
-            {
-                dynamicFriction = 0.8f,
-                staticFriction = 0.8f,
-                bounciness = 0f,
-                frictionCombine = PhysicsMaterialCombine.Average,
-                bounceCombine = PhysicsMaterialCombine.Minimum
-            };
-            AssetDatabase.CreateAsset(material, PlatformPhysicsMaterialPath);
-            return material;
-        }
-
         static Material GetOrCreateCubeMaterial()
         {
             var material = AssetDatabase.LoadAssetAtPath<Material>(CubeMaterialPath);
@@ -525,44 +437,6 @@ namespace KDT.PicknPlaceTraining.Editor
             Shader shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
             material = new Material(shader) { name = "PicknPlaceCube", color = Color.red };
             AssetDatabase.CreateAsset(material, CubeMaterialPath);
-            return material;
-        }
-
-        static Material GetOrCreatePlatformBodyMaterial()
-        {
-            var material = AssetDatabase.LoadAssetAtPath<Material>(PlatformBodyMaterialPath);
-            if (material != null) return material;
-            Shader shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
-            material = new Material(shader)
-            {
-                name = "PicknPlacePlatformBody",
-                color = new Color(0.85f, 0.85f, 0.9f)
-            };
-            AssetDatabase.CreateAsset(material, PlatformBodyMaterialPath);
-            return material;
-        }
-
-        static Material GetOrCreatePlatformHandleMaterial()
-        {
-            var material = AssetDatabase.LoadAssetAtPath<Material>(PlatformHandleMaterialPath);
-            if (material != null) return material;
-            Shader shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
-            material = new Material(shader)
-            {
-                name = "PicknPlacePlatformHandle",
-                color = new Color(0.5f, 0.5f, 0.55f)
-            };
-            AssetDatabase.CreateAsset(material, PlatformHandleMaterialPath);
-            return material;
-        }
-
-        static Material GetOrCreateMarkerMaterial()
-        {
-            var material = AssetDatabase.LoadAssetAtPath<Material>(MarkerMaterialPath);
-            if (material != null) return material;
-            Shader shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
-            material = new Material(shader) { name = "PicknPlaceMarker", color = Color.green };
-            AssetDatabase.CreateAsset(material, MarkerMaterialPath);
             return material;
         }
 

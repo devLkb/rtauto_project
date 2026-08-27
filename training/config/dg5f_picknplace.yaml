@@ -2,9 +2,9 @@ behaviors:
   DG5FPicknPlace:
     trainer_type: ppo
     hyperparameters:
-      # 20 parallel training areas x ~300+ decisions per episode (35 s episodes
-      # at a 0.1 s decision period, longer than pick-only tasks since this one
-      # adds a transport-then-place phase after the grasp).
+      # 20 parallel training areas x ~200 decisions per episode (20 s episodes at
+      # a 0.1 s decision period) — identical shape to dg5f_grasp_lift.yaml, this
+      # behavior is a grasp+lift port onto the UR16e right-hand hardware.
       batch_size: 2048
       buffer_size: 20480
       learning_rate: 0.0003
@@ -21,13 +21,13 @@ behaviors:
       vis_encode_type: simple
     reward_signals:
       extrinsic:
-        # The placement payoff arrives well after the grasp that earned it —
-        # same long-horizon reasoning as GraspLift/pick-only PicknPlace.
+        # The lift payoff arrives up to ~10 s after the grasp that earned it, so
+        # the discount horizon has to be long (same as GraspLift).
         gamma: 0.995
         strength: 1.0
     keep_checkpoints: 20
     checkpoint_interval: 200000
-    max_steps: 8000000
+    max_steps: 5000000
     time_horizon: 256
     summary_freq: 5000
     threaded: false
@@ -39,66 +39,33 @@ torch_settings:
   device: cuda
 
 environment_parameters:
-  # Pick-stage curriculum: spawn annulus, same widen-outward shape as
+  # Grasp curriculum: spawn annulus + lift target/hold, identical shape to
   # GraspLift's grasp_stage (reused verbatim — same cube geometry).
-  pick_stage:
+  grasp_stage:
     curriculum:
-      - name: pick_near
+      - name: lift_5cm_near
         completion_criteria:
           measure: progress
           behavior: DG5FPicknPlace
-          threshold: 0.2
+          threshold: 0.25
           min_lesson_length: 1000
           signal_smoothing: true
         value:
           sampler_type: constant
           sampler_parameters:
             value: 1.0
-      - name: pick_wider
+      - name: lift_8cm
         completion_criteria:
           measure: progress
           behavior: DG5FPicknPlace
-          threshold: 0.45
+          threshold: 0.55
           min_lesson_length: 1000
           signal_smoothing: true
         value:
           sampler_type: constant
           sampler_parameters:
             value: 2.0
-      - name: pick_full_annulus
-        value:
-          sampler_type: constant
-          sampler_parameters:
-            value: 3.0
-  # Place-stage curriculum: how far the marker is randomized over the platform
-  # top, and how tight the placement tolerance is. Gated later than pick_stage
-  # (higher thresholds) so the policy has a working pick before precision
-  # placement is asked of it.
-  place_stage:
-    curriculum:
-      - name: place_near_center
-        completion_criteria:
-          measure: progress
-          behavior: DG5FPicknPlace
-          threshold: 0.5
-          min_lesson_length: 1000
-          signal_smoothing: true
-        value:
-          sampler_type: constant
-          sampler_parameters:
-            value: 1.0
-      - name: place_wider
-        completion_criteria:
-          measure: progress
-          behavior: DG5FPicknPlace
-          threshold: 0.75
-          min_lesson_length: 1000
-          signal_smoothing: true
-        value:
-          sampler_type: constant
-          sampler_parameters:
-            value: 2.0
-      - name: place_full_precision
+      - name: lift_10cm_target
         value:
           sampler_type: constant
           sampler_parameters:

@@ -8,18 +8,19 @@ using UnityEngine;
 namespace KDT.PicknPlaceTraining
 {
     /// <summary>
-    /// PPO agent for DG5F pick-and-place on a UR16e: grasp a cube spawned at a
-    /// random floor position, carry it over a fixed FOUP-shaped landing platform,
-    /// and set it down on a randomly chosen point on the platform's top face.
+    /// PPO agent for the DG5F grasp + lift stage on a UR16e (right hand).
     ///
-    /// The approach/grasp phase (ResolveReferences through UpdateGraspProgress) is
-    /// a near-verbatim port of KDT.GraspLiftTraining.Dg5fGraspLiftAgent, grasping
-    /// a cube instead of a FOUP handle. The carry/place phase
-    /// (UpdateCarryAndPlace) is new — see docs/DG5F_PICKNPLACE.md.
+    /// Near-verbatim port of KDT.GraspLiftTraining.Dg5fGraspLiftAgent onto the
+    /// confirmed hardware (UR16e + DG-5F-M-R right hand) instead of GraspLift's
+    /// UR5e + left hand. The policy commands the 6 arm joints and a single
+    /// hand-closure scalar that interpolates all 20 DG5F finger joints between the
+    /// prefab's open pose and the validated <see cref="Dg5fPicknPlaceSpec.RightFistDeg"/>
+    /// power-grasp pose. This component is the sole xDrive writer in the training
+    /// scene.
     ///
-    /// There is no separate "release" action: placement succeeds only once the
-    /// policy actually opens its grip (the same continuous closure action used
-    /// throughout) while the cube rests at the target.
+    /// The episode is a single continuous task (no scripted lift phase): the policy
+    /// must approach, close on the cube, satisfy a geometric grasp contract, and then
+    /// raise the cube itself.
     /// </summary>
     public sealed class Dg5fPicknPlaceAgent : Agent
     {
@@ -28,11 +29,6 @@ namespace KDT.PicknPlaceTraining
         public Collider cubeCollider;
         public Transform pedestal;
         public Collider pedestalCollider;
-        // Fixed FOUP-shaped landing platform. Never grasped, never moved during
-        // an episode — only the marker on top of it is randomized.
-        public Transform platform;
-        public Collider platformCollider;
-        public Transform placeMarkerVisual;
         public Transform robotBase;
         public Transform palm;
         public Transform graspPoint;
@@ -47,7 +43,7 @@ namespace KDT.PicknPlaceTraining
         [Header("Episode")]
         public bool useDeterministicSpawns;
         public int spawnSeed = 12345;
-        [Tooltip("Training resets on a successful placement. A live demo instead freezes the arm/hand in place.")]
+        [Tooltip("Training resets on a successful lift. A live demo instead freezes the arm/hand in place.")]
         public bool endEpisodeOnSuccess = true;
 
         [Header("Control")]
@@ -68,19 +64,18 @@ namespace KDT.PicknPlaceTraining
         float _episodeSeconds;
         float _spawnObjectHeight;
         Vector3 _spawnObjectLocalPosition;
-        Vector3 _markerLocalPosition;
 
         float _previousApproachPotential;
         float _bestTopDownPotential;
         float _bestClosurePotential;
         float _bestContactPotential;
         float _bestGraspPotential;
-        float _previousTransportPotential;
+        float _previousLiftPotential;
 
         float _graspSeconds;
+        float _liftHoldSeconds;
         float _slipSeconds;
-        float _settleSeconds;
-        float _bestClearanceHeight;
+        float _bestLiftHeight;
         float _maxObjectTiltDeg;
         float _handSurfaceContactSeconds;
         float _handSurfaceContactSecondsSinceDecision;
@@ -96,8 +91,6 @@ namespace KDT.PicknPlaceTraining
         bool _hasPreviousArmAction;
         bool _episodeActive;
         bool _graspConfirmed;
-        bool _hasArrivedAboveMarker;
-        bool _liftClearanceAwarded;
         bool _unsafeSurfaceContact;
         bool _resolved;
 
@@ -109,6 +102,8 @@ namespace KDT.PicknPlaceTraining
         public bool IsGraspConfirmed => _graspConfirmed;
         public float CurrentGraspSeconds => _graspSeconds;
         public int CurrentContactCount => _contactCount;
+        public float CurrentLiftHeight => LiftHeight();
+        public float BestLiftHeight => _bestLiftHeight;
         public bool IsEpisodeActive => _episodeActive;
         public Vector3 CurrentObjectLocalPosition =>
             robotBase != null && cubeTarget != null
@@ -116,6 +111,8 @@ namespace KDT.PicknPlaceTraining
                 : Vector3.zero;
         public string LastTerminationReason { get; private set; } = "None";
 
+        /// Freezes the arm/hand exactly like a successful lift would (see FinishEpisode),
+        /// but on demand — used when the operator flips the live demo to manual teleop.
         public void PauseForManualControl()
         {
             _episodeActive = false;
@@ -244,11 +241,11 @@ namespace KDT.PicknPlaceTraining
         void ValidateConfiguration()
         {
             if (cubeTarget == null || cubeCollider == null || pedestal == null
-                || pedestalCollider == null || platform == null || platformCollider == null
-                || robotBase == null || palm == null || graspPoint == null)
+                || pedestalCollider == null || robotBase == null || palm == null
+                || graspPoint == null)
             {
                 throw new InvalidOperationException(
-                    "[Dg5fPicknPlaceAgent] Missing cubeTarget/cubeCollider/pedestal/platform/robotBase/palm/graspPoint reference.");
+                    "[Dg5fPicknPlaceAgent] Missing cubeTarget/cubeCollider/pedestal/robotBase/palm/graspPoint reference.");
             }
             for (int i = 0; i < _armJoints.Length; i++)
                 if (_armJoints[i] == null)
@@ -290,8 +287,7 @@ namespace KDT.PicknPlaceTraining
         {
             EnsureResolved();
             _episodeActive = false;
-            Dg5fPicknPlaceSpec.RefreshPickStage();
-            Dg5fPicknPlaceSpec.RefreshPlaceStage();
+            Dg5fPicknPlaceSpec.RefreshGraspStage();
             Dg5fPicknPlaceSpec.RefreshCubeWidth();
             Dg5fPicknPlaceSpec.RefreshCubeHeight();
             Dg5fPicknPlaceSpec.RefreshCubeComHeightFraction();
@@ -304,9 +300,9 @@ namespace KDT.PicknPlaceTraining
             _closure = 0f;
             _episodeSeconds = 0f;
             _graspSeconds = 0f;
+            _liftHoldSeconds = 0f;
             _slipSeconds = 0f;
-            _settleSeconds = 0f;
-            _bestClearanceHeight = 0f;
+            _bestLiftHeight = 0f;
             _maxObjectTiltDeg = 0f;
             _handSurfaceContactSeconds = 0f;
             _handSurfaceContactSecondsSinceDecision = 0f;
@@ -317,19 +313,16 @@ namespace KDT.PicknPlaceTraining
             Array.Clear(_previousArmActions, 0, _previousArmActions.Length);
             _hasPreviousArmAction = false;
             _graspConfirmed = false;
-            _hasArrivedAboveMarker = false;
-            _liftClearanceAwarded = false;
             _unsafeSurfaceContact = false;
             _contactCount = 0;
             _contactCentroid = Vector3.zero;
             _bestClosurePotential = 0f;
             _bestContactPotential = 0f;
             _bestGraspPotential = 0f;
-            _previousTransportPotential = 0f;
+            _previousLiftPotential = 0f;
             LastTerminationReason = "None";
 
             ResetRobot();
-            ResetMarker();
             ResetCubeTarget();
             foreach (var sensor in contactSensors)
                 if (sensor != null) sensor.ResetContacts();
@@ -375,19 +368,6 @@ namespace KDT.PicknPlaceTraining
             ApplyGripTargets();
         }
 
-        /// Picks a new randomized point on the platform's top face and moves the
-        /// (purely visual/logical) marker there. The platform itself never moves.
-        void ResetMarker()
-        {
-            Vector3 offset = Dg5fPicknPlaceSpec.MarkerLocalOffset(Next01(), Next01());
-            _markerLocalPosition = new Vector3(
-                Dg5fPicknPlaceSpec.PlatformLocalPosition.x + offset.x,
-                Dg5fPicknPlaceSpec.PlatformTopHeight,
-                Dg5fPicknPlaceSpec.PlatformLocalPosition.z + offset.z);
-            if (placeMarkerVisual != null)
-                placeMarkerVisual.position = robotBase.TransformPoint(_markerLocalPosition);
-        }
-
         void ResetCubeTarget()
         {
             Vector3 localPosition = Vector3.zero;
@@ -412,22 +392,30 @@ namespace KDT.PicknPlaceTraining
             }
             cubeTarget.isKinematic = true;
             cubeTarget.useGravity = false;
+            // Resize while kinematic and still parked away from the hand: rescaling a
+            // live Rigidbody that is touching the fingers makes the solver explode.
             ApplyCubeSize();
             cubeTarget.position = robotBase.TransformPoint(localPosition);
+            // Yaw only: the cube must always start upright so "lift" is measured
+            // against a repeatable pose.
             cubeTarget.rotation = robotBase.rotation * Quaternion.AngleAxis(Next01() * 360f, Vector3.up);
             Physics.SyncTransforms();
 
             _spawnObjectLocalPosition = localPosition;
             _spawnObjectHeight = cubeTarget.position.y;
+            // Articulation collider transforms lag direct jointPosition writes by one
+            // physics step. Keep the cube kinematic for that step, then release it.
             _objectReleaseFixedSteps = 2;
         }
 
+        /// Applies the current cube-size lesson to the cube's scale and mass.
         void ApplyCubeSize()
         {
             float width = Dg5fPicknPlaceSpec.CurrentCubeWidth;
             cubeTarget.transform.localScale =
                 new Vector3(width, Dg5fPicknPlaceSpec.CurrentCubeHeight, width);
             cubeTarget.mass = Dg5fPicknPlaceSpec.CurrentCubeMass;
+            // Rigidbody COM uses the unit cube's unscaled local space.
             cubeTarget.centerOfMass = Dg5fPicknPlaceSpec.CurrentCubeCenterOfMassLocal;
         }
 
@@ -437,11 +425,14 @@ namespace KDT.PicknPlaceTraining
             cubeTarget.useGravity = true;
             cubeTarget.linearVelocity = Vector3.zero;
             cubeTarget.angularVelocity = Vector3.zero;
+            // Re-latch every baseline after the settle step so the two throwaway
+            // physics frames cannot leak shaping reward into the episode.
             _spawnObjectHeight = cubeTarget.position.y;
             _spawnObjectLocalPosition = robotBase.InverseTransformPoint(cubeTarget.position);
             _previousApproachPotential = Dg5fPicknPlaceSpec.DirectionalApproachPotential(
                 GraspDistance(), PalmFacingAlignment());
             _bestTopDownPotential = TopDownAlignmentPotential();
+            _previousLiftPotential = 0f;
         }
 
         float Next01()
@@ -479,8 +470,8 @@ namespace KDT.PicknPlaceTraining
             // 12: hand closure, centred on zero.
             sensor.AddObservation(_closure * 2f - 1f);
 
-            // 13..21: cube state in robot-base coordinates, relative to the point
-            // the palm should actually reach.
+            // 13..21: cube state in robot-base coordinates. The offset is measured to
+            // the grasp target, i.e. the point the palm should actually reach.
             AddClampedVector(
                 sensor,
                 robotBase.InverseTransformDirection(GraspTargetPosition() - graspPoint.position),
@@ -490,9 +481,9 @@ namespace KDT.PicknPlaceTraining
             AddClampedVector(
                 sensor, robotBase.InverseTransformDirection(cubeTarget.angularVelocity), 10f);
 
-            // 22: height above the floor, normalized by the transport hover height.
+            // 22: vertical displacement from the spawn pose (the raw lift signal).
             sensor.AddObservation(
-                Mathf.Clamp(CubeHeightAbovePanel() / Dg5fPicknPlaceSpec.HoverHeight, -1f, 1f));
+                Mathf.Clamp((cubeTarget.position.y - _spawnObjectHeight) / 0.2f, -1f, 1f));
 
             // 23..37: each fingertip relative to the cube, in palm coordinates.
             for (int i = 0; i < fingerTips.Length; i++)
@@ -510,30 +501,19 @@ namespace KDT.PicknPlaceTraining
                 sensor.AddObservation(Dg5fPicknPlaceSpec.NormalizeJoint(
                     _armTargetDeg[i], Dg5fPicknPlaceSpec.ArmSafeMinDeg[i], Dg5fPicknPlaceSpec.ArmSafeMaxDeg[i]));
 
-            // 49..62: grasp/carry/place task state.
-            Vector3 markerWorld = MarkerWorldPosition();
-            float xzDistanceToMarker = Dg5fPicknPlaceSpec.PlanarDistance(cubeTarget.position, markerWorld);
-            float heightAbovePanel = CubeHeightAbovePanel();
-            bool atRest = Dg5fPicknPlaceSpec.IsAtRestOnTarget(
-                xzDistanceToMarker, heightAbovePanel, cubeTarget.linearVelocity.magnitude,
-                ObjectTiltDegrees());
-
-            sensor.AddObservation(IsContactActive(Dg5fPicknPlaceSpec.PalmContactIndex) ? 1f : 0f);
+            // 49..56: grasp/lift task state.
+            sensor.AddObservation(
+                IsContactActive(Dg5fPicknPlaceSpec.PalmContactIndex) ? 1f : 0f);
             sensor.AddObservation(_contactCount / (float)Dg5fPicknPlaceSpec.ContactPointCount);
             sensor.AddObservation(Dg5fPicknPlaceSpec.GraspProgress(_graspSeconds));
             sensor.AddObservation(_graspConfirmed ? 1f : 0f);
-            AddClampedVector(
-                sensor, robotBase.InverseTransformDirection(markerWorld - cubeTarget.position), 1f);
-            sensor.AddObservation(
-                1f - Mathf.Clamp01(xzDistanceToMarker / Dg5fPicknPlaceSpec.MaximumObjectDistance));
-            sensor.AddObservation(Mathf.Clamp01(heightAbovePanel / Dg5fPicknPlaceSpec.HoverHeight));
-            sensor.AddObservation(_hasArrivedAboveMarker ? 1f : 0f);
-            sensor.AddObservation(atRest ? 1f : 0f);
-            sensor.AddObservation(Mathf.Clamp01(_settleSeconds / Dg5fPicknPlaceSpec.PlaceSettleSeconds));
-            sensor.AddObservation(
-                Mathf.Clamp01(GraspDistance() / Dg5fPicknPlaceSpec.MaximumObjectDistance));
-            sensor.AddObservation(
-                Mathf.Clamp01(_episodeSeconds / Dg5fPicknPlaceSpec.EpisodeTimeoutSeconds));
+            sensor.AddObservation(Dg5fPicknPlaceSpec.LiftProgress(LiftHeight()));
+            sensor.AddObservation(Mathf.Clamp01(
+                _liftHoldSeconds / Dg5fPicknPlaceSpec.CurrentLiftHoldSeconds));
+            sensor.AddObservation(Mathf.Clamp01(
+                GraspDistance() / Dg5fPicknPlaceSpec.MaximumObjectDistance));
+            sensor.AddObservation(Mathf.Clamp01(
+                _episodeSeconds / Dg5fPicknPlaceSpec.EpisodeTimeoutSeconds));
         }
 
         static void AddClampedVector(VectorSensor sensor, Vector3 value, float scale)
@@ -607,6 +587,8 @@ namespace KDT.PicknPlaceTraining
                 AddReward(Dg5fPicknPlaceSpec.NearObjectActionPenalty(sumSquaredArmActions));
             ApplyArmTargets();
 
+            // Grip: closing pays only within GraspReadyDistance of the cube, and only
+            // as a new-best potential so the fingers cannot be pumped for reward.
             float delta = Mathf.Clamp(continuous[6], -1f, 1f) * gripDeltaPerDecision;
             float newClosure = Mathf.Clamp01(_closure + delta);
             bool readyToGrasp = IsReadyToGrasp();
@@ -657,6 +639,9 @@ namespace KDT.PicknPlaceTraining
         {
             if (!_resolved)
             {
+                // A ForcedFullReset can invoke OnEpisodeBegin before the robot
+                // hierarchy is fully built. Retry every tick; once resolved, start the
+                // episode OnEpisodeBegin could not complete earlier.
                 EnsureResolved();
                 if (!_resolved) return;
                 OnEpisodeBegin();
@@ -701,6 +686,7 @@ namespace KDT.PicknPlaceTraining
 
             float objectTiltDeg = ObjectTiltDegrees();
             _maxObjectTiltDeg = Mathf.Max(_maxObjectTiltDeg, objectTiltDeg);
+            // A toppled cube is unliftable and used to be a profitable dead end.
             if (Dg5fPicknPlaceSpec.IsToppled(objectTiltDeg, _graspConfirmed))
             {
                 FinishEpisode(false, "ObjectToppled");
@@ -717,7 +703,7 @@ namespace KDT.PicknPlaceTraining
 
             if (!_graspConfirmed)
                 UpdateGraspProgress();
-            else if (UpdateCarryAndPlace())
+            else if (UpdateLiftProgress())
                 return;
 
             if (Dg5fPicknPlaceSpec.ReachedEpisodeTimeout(_episodeSeconds))
@@ -762,16 +748,23 @@ namespace KDT.PicknPlaceTraining
 
             if (!candidate)
             {
+                // A grasp has to be continuous. Any frame that breaks the contract
+                // restarts the dwell so contact flicker cannot accumulate into a
+                // confirmed grasp.
                 _graspSeconds = 0f;
                 return;
             }
 
+            // Dense credit for the number of fingers on the cube. New-best only, so
+            // repeatedly tapping the cube cannot farm reward.
             float contactPotential = Dg5fPicknPlaceSpec.ContactPotential(_contactCount);
             AddReward(Dg5fPicknPlaceSpec.NewBestPotentialDelta(_bestContactPotential, contactPotential));
             _bestContactPotential = Mathf.Max(_bestContactPotential, contactPotential);
 
             _graspSeconds += Time.fixedDeltaTime;
 
+            // Partial credit for holding a valid grasp, again new-best so the total
+            // paid for reaching a confirmed grasp is exactly GraspConfirmReward.
             float graspPotential =
                 Dg5fPicknPlaceSpec.GraspConfirmReward * Dg5fPicknPlaceSpec.GraspProgress(_graspSeconds);
             AddReward(Dg5fPicknPlaceSpec.NewBestPotentialDelta(_bestGraspPotential, graspPotential));
@@ -781,88 +774,45 @@ namespace KDT.PicknPlaceTraining
             {
                 _graspConfirmed = true;
                 _slipSeconds = 0f;
-                _settleSeconds = 0f;
-
-                float heightAbovePanel = CubeHeightAbovePanel();
-                _bestClearanceHeight = Mathf.Max(_bestClearanceHeight, heightAbovePanel);
-                Vector3 markerWorld = MarkerWorldPosition();
-                float xzDistanceToMarker =
-                    Dg5fPicknPlaceSpec.PlanarDistance(cubeTarget.position, markerWorld);
-                _hasArrivedAboveMarker =
-                    Dg5fPicknPlaceSpec.HasArrivedAboveMarker(xzDistanceToMarker, heightAbovePanel);
-                Vector3 transportTarget = Dg5fPicknPlaceSpec.TransportTargetPosition(
-                    markerWorld, robotBase.up, _hasArrivedAboveMarker);
-                _previousTransportPotential = Dg5fPicknPlaceSpec.TransportPotential(
-                    Vector3.Distance(cubeTarget.position, transportTarget));
+                _liftHoldSeconds = 0f;
+                _previousLiftPotential = Dg5fPicknPlaceSpec.LiftPotential(LiftHeight());
             }
         }
 
-        /// Runs while the grasp contract has been confirmed at least once this
-        /// episode: shapes the carry toward a point above the marker, then the
-        /// final descent onto it, and detects both drop failure and successful
-        /// placement (contract released while resting at the target). Returns
-        /// true when the episode ended inside this call.
-        bool UpdateCarryAndPlace()
+        /// Returns true when the episode ended inside this call.
+        bool UpdateLiftProgress()
         {
-            float heightAbovePanel = CubeHeightAbovePanel();
-            _bestClearanceHeight = Mathf.Max(_bestClearanceHeight, heightAbovePanel);
+            float liftHeight = LiftHeight();
+            _bestLiftHeight = Mathf.Max(_bestLiftHeight, liftHeight);
 
-            if (!_liftClearanceAwarded && heightAbovePanel >= Dg5fPicknPlaceSpec.LiftClearanceHeightMeters)
-            {
-                AddReward(Dg5fPicknPlaceSpec.LiftClearanceReward);
-                _liftClearanceAwarded = true;
-            }
-
-            Vector3 markerWorld = MarkerWorldPosition();
-            float xzDistanceToMarker = Dg5fPicknPlaceSpec.PlanarDistance(cubeTarget.position, markerWorld);
-            if (Dg5fPicknPlaceSpec.HasArrivedAboveMarker(xzDistanceToMarker, heightAbovePanel))
-                _hasArrivedAboveMarker = true;
-
-            Vector3 transportTarget = Dg5fPicknPlaceSpec.TransportTargetPosition(
-                markerWorld, robotBase.up, _hasArrivedAboveMarker);
-            float transportPotential = Dg5fPicknPlaceSpec.TransportPotential(
-                Vector3.Distance(cubeTarget.position, transportTarget));
-            AddReward(Dg5fPicknPlaceSpec.PotentialDelta(_previousTransportPotential, transportPotential));
-            _previousTransportPotential = transportPotential;
+            // Plain (not new-best) potential: the cube has to stay up. Letting it
+            // sink hands the shaping back, which is the gradient a drop deserves.
+            float liftPotential = Dg5fPicknPlaceSpec.LiftPotential(liftHeight);
+            AddReward(Dg5fPicknPlaceSpec.PotentialDelta(_previousLiftPotential, liftPotential));
+            _previousLiftPotential = liftPotential;
 
             bool stillGrasped = Dg5fPicknPlaceSpec.IsGraspCandidate(
                 _contactCount, _contactDirections, cubeTarget.position, _contactCentroid, _closure);
-            bool atRest = Dg5fPicknPlaceSpec.IsAtRestOnTarget(
-                xzDistanceToMarker, heightAbovePanel, cubeTarget.linearVelocity.magnitude,
-                ObjectTiltDegrees());
+            _slipSeconds = stillGrasped ? 0f : _slipSeconds + Time.fixedDeltaTime;
 
-            if (!stillGrasped && atRest)
-            {
-                // The hand has let go and the cube is sitting at the target —
-                // exactly what a real place should look like.
-                _slipSeconds = 0f;
-                _settleSeconds += Time.fixedDeltaTime;
-                if (Dg5fPicknPlaceSpec.IsPlaceComplete(_settleSeconds))
-                {
-                    FinishEpisode(true, "Success", endEpisodeOnSuccess);
-                    return true;
-                }
-                return false;
-            }
-
-            _settleSeconds = 0f;
-
-            if (stillGrasped)
-            {
-                _slipSeconds = 0f;
-                return false;
-            }
-
-            // Grip lost somewhere that is not a valid placement — a genuine slip
-            // or drop. Same grace-then-height-regression contract as GraspLift's
-            // Dropped check, just measured against absolute clearance height
-            // instead of height-above-spawn (the cube's destination height is not
-            // its spawn height in this task).
-            _slipSeconds += Time.fixedDeltaTime;
+            // Dropped: contact lost past the grace window AND the cube has fallen
+            // back toward the table. Losing contact while the cube is still up is a
+            // re-grip, not a drop.
             if (_slipSeconds > Dg5fPicknPlaceSpec.SlipGraceSeconds
-                && heightAbovePanel < _bestClearanceHeight * 0.5f)
+                && liftHeight < _bestLiftHeight * 0.3f)
             {
                 FinishEpisode(false, "Dropped");
+                return true;
+            }
+
+            float objectSpeed = cubeTarget.linearVelocity.magnitude;
+            _liftHoldSeconds = Dg5fPicknPlaceSpec.IsStableLift(liftHeight, objectSpeed)
+                ? _liftHoldSeconds + Time.fixedDeltaTime
+                : 0f;
+
+            if (Dg5fPicknPlaceSpec.IsLiftComplete(_liftHoldSeconds))
+            {
+                FinishEpisode(true, "Success", endEpisodeOnSuccess);
                 return true;
             }
             return false;
@@ -870,6 +820,8 @@ namespace KDT.PicknPlaceTraining
 
         void ScoreApproachProgress()
         {
+            // Once the cube is grasped the hand is supposed to carry it away from
+            // where it started, so the approach terms are frozen at that point.
             if (_graspConfirmed) return;
 
             float currentApproach = Dg5fPicknPlaceSpec.DirectionalApproachPotential(
@@ -919,12 +871,9 @@ namespace KDT.PicknPlaceTraining
             return false;
         }
 
-        /// Called by a safety sensor when an arm-link collider touches a
-        /// registered unsafe surface (the floor panel or the platform).
         public void NotifyUnsafeSurfaceContact(Collider surface)
         {
-            if (surface == pedestalCollider || surface == platformCollider)
-                _unsafeSurfaceContact = true;
+            if (surface == pedestalCollider) _unsafeSurfaceContact = true;
         }
 
         void FinishEpisode(bool success, string reason, bool endEpisode = true)
@@ -934,7 +883,7 @@ namespace KDT.PicknPlaceTraining
             ScoreApproachProgress();
 
             if (success)
-                AddReward(Dg5fPicknPlaceSpec.PlaceSuccessReward);
+                AddReward(Dg5fPicknPlaceSpec.LiftSuccessReward);
             else
                 AddReward(Dg5fPicknPlaceSpec.FailurePenalty(reason));
 
@@ -947,22 +896,16 @@ namespace KDT.PicknPlaceTraining
             LastTerminationReason = reason;
             if (_stats == null) return;
 
-            float xzDistanceToMarker =
-                Dg5fPicknPlaceSpec.PlanarDistance(cubeTarget.position, MarkerWorldPosition());
-
             _stats.Add("PicknPlace/Success", success ? 1f : 0f, StatAggregationMethod.Average);
             _stats.Add("PicknPlace/GraspConfirmed", _graspConfirmed ? 1f : 0f, StatAggregationMethod.Average);
-            _stats.Add("PicknPlace/ArrivedAboveMarker", _hasArrivedAboveMarker ? 1f : 0f,
-                StatAggregationMethod.Average);
             _stats.Add("PicknPlace/GraspSeconds", _graspSeconds, StatAggregationMethod.Average);
             _stats.Add("PicknPlace/ContactCount", _contactCount, StatAggregationMethod.Average);
             _stats.Add("PicknPlace/FinalDistanceMeters", GraspDistance(), StatAggregationMethod.Average);
-            _stats.Add("PicknPlace/FinalPlacementErrorMeters", xzDistanceToMarker,
-                StatAggregationMethod.Average);
-            _stats.Add("PicknPlace/BestClearanceHeight", _bestClearanceHeight, StatAggregationMethod.Average);
+            _stats.Add("PicknPlace/BestLiftHeight", _bestLiftHeight, StatAggregationMethod.Average);
+            _stats.Add("PicknPlace/FinalLiftHeight", LiftHeight(), StatAggregationMethod.Average);
             _stats.Add("PicknPlace/ObjectTiltDegrees", ObjectTiltDegrees(), StatAggregationMethod.Average);
             _stats.Add("PicknPlace/MaxObjectTiltDegrees", _maxObjectTiltDeg, StatAggregationMethod.Average);
-            _stats.Add("PicknPlace/SettleSeconds", _settleSeconds, StatAggregationMethod.Average);
+            _stats.Add("PicknPlace/LiftHoldSeconds", _liftHoldSeconds, StatAggregationMethod.Average);
             _stats.Add("PicknPlace/CompletionSeconds", _episodeSeconds, StatAggregationMethod.Average);
             _stats.Add("PicknPlace/FinalClosure", _closure, StatAggregationMethod.Average);
             _stats.Add("PicknPlace/HandSurfaceContactSeconds", _handSurfaceContactSeconds,
@@ -983,9 +926,11 @@ namespace KDT.PicknPlaceTraining
                     ? _sumSquaredArmActionDeltas / _armActionDecisionCount
                     : 0f,
                 StatAggregationMethod.Average);
-            _stats.Add("Curriculum/PickStage", Dg5fPicknPlaceSpec.CurrentPickStage,
+            _stats.Add("Curriculum/GraspStage", Dg5fPicknPlaceSpec.CurrentGraspStage,
                 StatAggregationMethod.Average);
-            _stats.Add("Curriculum/PlaceStage", Dg5fPicknPlaceSpec.CurrentPlaceStage,
+            _stats.Add("Curriculum/CubeWidth", Dg5fPicknPlaceSpec.CurrentCubeWidth,
+                StatAggregationMethod.Average);
+            _stats.Add("Curriculum/CubeHeight", Dg5fPicknPlaceSpec.CurrentCubeHeight,
                 StatAggregationMethod.Average);
             if (!success)
                 _stats.Add($"Failure/{reason}", 1f, StatAggregationMethod.Sum);
@@ -993,6 +938,8 @@ namespace KDT.PicknPlaceTraining
 
         // ------------------------------------------------------------------ geometry
 
+        /// Where the palm grasp volume should end up: on the cube axis, 2.0 cm below
+        /// its top face rather than at its geometric centre (see the spec constant).
         Vector3 GraspTargetPosition()
         {
             if (cubeTarget == null) return Vector3.zero;
@@ -1006,19 +953,10 @@ namespace KDT.PicknPlaceTraining
             return Vector3.Distance(graspPoint.position, GraspTargetPosition());
         }
 
-        Vector3 MarkerWorldPosition()
+        float LiftHeight()
         {
-            return robotBase != null
-                ? robotBase.TransformPoint(_markerLocalPosition)
-                : _markerLocalPosition;
-        }
-
-        /// Height of the cube's own centre above the floor panel, expressed in
-        /// robot-base local Y (SupportTopHeight is 0 in that frame).
-        float CubeHeightAbovePanel()
-        {
-            if (cubeTarget == null || robotBase == null) return 0f;
-            return robotBase.InverseTransformPoint(cubeTarget.position).y;
+            if (cubeTarget == null) return 0f;
+            return Dg5fPicknPlaceSpec.LiftHeight(cubeTarget.position.y, _spawnObjectHeight);
         }
 
         float ObjectTiltDegrees()

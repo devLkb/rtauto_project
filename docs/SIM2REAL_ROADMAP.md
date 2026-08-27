@@ -349,6 +349,18 @@ ROS-TCP-Connector/Endpoint로 ROS2와 직접 통신하며, 매니퓰레이션 �
 > pick-and-place는 그 결정과 별개로 place 보상 구조를 미리 검증해두는
 > 기반 작업이다. 큐브/플랫폼 치수는 여전히 잠정값. 설계 근거·상수 전체 목록은
 > [`docs/DG5F_PICKNPLACE.md`](DG5F_PICKNPLACE.md) 참고.
+>
+> **place 단계 되돌림 (2026-08-27).** 위 place 확장을 하루 만에 다시 뺐다.
+> `DG5FPicknPlace`는 이제 GraspLift의 "파지+들어올려 유지" 태스크를 확정
+> 하드웨어(UR16e+오른손)로 그대로 포팅한 것뿐이다 — 플랫폼·마커·운반·배치
+> 로직은 전부 제거했고, observation/action shape도 GraspLift와 동일한
+> 57/7로 되돌아갔다. 큐브는 여전히 GraspLift 블록과 동일한 12cm 사각기둥
+> (0.035×0.12×0.035 m). 이유: place 보상 셰이핑을 미리 연습해두는 것보다,
+> 확정 하드웨어 위에서 grasp+lift부터 먼저 검증해두는 편이 지금 시점에 더
+> 값지다고 판단했다. place는 실제 웨이퍼 스펙이 도착했을 때 다시 설계해
+> 붙인다 — 이번에 지웠던 설계(플랫폼/마커/운반/배치 판정)는 git 이력에
+> 남아있지만, 그대로 되살리기보다는 실제 스펙에 맞춰 재설계해야 한다.
+> 갱신된 설계 근거는 [`docs/DG5F_PICKNPLACE.md`](DG5F_PICKNPLACE.md) 참고.
 
 ## 9. Phase 5 — 자율주행 (Nav2) + ROS2 통합 (구 §7 Gazebo 검증 흡수)
 
