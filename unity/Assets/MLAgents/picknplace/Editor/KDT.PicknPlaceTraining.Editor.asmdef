@@ -6,8 +6,7 @@
     "Unity.ML-Agents",
     "Unity.InferenceEngine",
     "KDT.MLAgents.Editor",
-    "KDT.RobotScripts",
-    "Cinemachine"
+    "KDT.RobotScripts"
   ],
   "includePlatforms": ["Editor"],
   "autoReferenced": true

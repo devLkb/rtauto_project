@@ -4,7 +4,7 @@
   "references": [
     "Unity.ML-Agents",
     "KDT.RobotScripts",
-    "Cinemachine"
+    "Unity.InputSystem"
   ],
   "autoReferenced": true
 }

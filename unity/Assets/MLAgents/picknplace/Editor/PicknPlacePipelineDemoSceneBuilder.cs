@@ -1,6 +1,5 @@
 using System;
 using System.Linq;
-using Cinemachine;
 using KDT.PicknPlaceTraining;
 using Unity.MLAgents;
 using Unity.MLAgents.Policies;
@@ -39,8 +38,8 @@ namespace KDT.PicknPlaceTraining.Editor
     /// button so a held grasp cannot immediately fight the reset back closed.
     /// A Dg5fFistButton (top-right OnGUI) additionally lets the operator force the
     /// right-hand fist pose (Dg5fPicknPlaceSpec.RightFistDeg) without a webcam/MediaPipe running. The
-    /// Main Camera gets an overview/close-up Cinemachine camera pair
-    /// (switchable via PicknPlaceDemoCameraSwitcher) so the grasp is visible up close with a zoom slider.
+    /// Main Camera is a single free-fly viewpoint (PicknPlaceFreeFlyCamera — WASD move + right-drag
+    /// look, Scene-view-style), starting close to the grasp point instead of a fixed overview.
     ///
     /// Auto mode runs whatever ONNX model is currently assigned on the training area's
     /// BehaviorParameters (Assets/MLAgents/picknplace/Models/DG5FPicknPlace.onnx, dropped in once
@@ -55,17 +54,10 @@ namespace KDT.PicknPlaceTraining.Editor
         public const string DemoScenePath = "Assets/Scenes/Pipeline_Demo_GraspLift.unity";
         const string HandRootName = "rl_dg_palm";
         const string WrongHandRootName = "ll_dg_palm";
-        const string OverviewCameraName = "OverviewCamera";
-        const string CloseUpCameraName = "PicknPlaceCloseUpCamera";
-        const float CloseUpCameraFieldOfView = 32f;
-        const float MinZoomFieldOfView = 15f;
-        const float MaxZoomFieldOfView = 120f;
-        // Close-up camera starts live, matching the reach/GraspLift demo convention.
-        const int DefaultLiveCameraIndex = 0;
 
-        // World-space offset (Transposer BindingMode.WorldSpace) so the close-up camera
-        // doesn't spin with the wrist as the arm rotates into the grasp.
-        static readonly Vector3 CloseUpCameraFollowOffset = new Vector3(0.4f, 0.3f, -0.4f);
+        // Offset from the palm the free-fly camera starts at (same vantage the old close-up
+        // camera used) so the operator begins near the grasp instead of a distant overview.
+        static readonly Vector3 FreeFlyCameraStartOffset = new Vector3(0.4f, 0.3f, -0.4f);
 
         [MenuItem("Tools/ML-Agents/Build PicknPlace Pipeline Demo Scene")]
         public static void Build()
@@ -244,10 +236,9 @@ namespace KDT.PicknPlaceTraining.Editor
             if (requester != null) requester.enabled = false;
         }
 
-        /// 기존 Main Camera에 CinemachineBrain을 붙이고, 그 자리를 물려받는 정적 OverviewCamera와
-        /// palm을 따라다니며 graspPoint를 바라보는 PicknPlaceCloseUpCamera 두 개의
-        /// CinemachineVirtualCamera를 추가한 뒤 PicknPlaceDemoCameraSwitcher(OnGUI 버튼+줌 슬라이더)로
-        /// 전환할 수 있게 한다 — GraspLift 데모의 ConfigureCamera와 동일한 패턴.
+        /// Main Camera 자체에 PicknPlaceFreeFlyCamera를 붙여 그 transform을 직접 조작하게 한다(우클릭
+        /// 드래그 회전 + WASD 이동) — 더 이상 여러 카메라를 전환할 일이 없어 Cinemachine은 걷어내고,
+        /// 시작 위치만 palm 근처(과거 클로즈업 카메라와 같은 오프셋)로 옮겨 가까운 곳에서 시작한다.
         static void ConfigureCamera(Scene demoScene, Dg5fPicknPlaceAgent agent)
         {
             Transform followTarget = agent.palm != null ? agent.palm : agent.robotBase;
@@ -259,53 +250,13 @@ namespace KDT.PicknPlaceTraining.Editor
                 throw new InvalidOperationException(
                     "[PicknPlacePipelineDemoSceneBuilder] Missing Main Camera in demo scene.");
 
-            if (mainCameraObject.GetComponent<CinemachineBrain>() == null)
-                mainCameraObject.AddComponent<CinemachineBrain>();
+            Vector3 startPosition = followTarget.position + FreeFlyCameraStartOffset;
+            Quaternion startRotation = Quaternion.LookRotation(
+                (lookTarget.position - startPosition).normalized, Vector3.up);
+            mainCameraObject.transform.SetPositionAndRotation(startPosition, startRotation);
 
-            Transform originalCameraTransform = mainCameraObject.transform;
-            CinemachineVirtualCamera overviewCamera = CreateStaticVirtualCamera(
-                demoScene,
-                OverviewCameraName,
-                originalCameraTransform.position,
-                originalCameraTransform.rotation);
-            CinemachineVirtualCamera closeUpCamera = CreateCloseUpVirtualCamera(demoScene, followTarget, lookTarget);
-
-            PicknPlaceDemoCameraSwitcher switcher = agent.gameObject.GetComponent<PicknPlaceDemoCameraSwitcher>();
-            if (switcher == null) switcher = agent.gameObject.AddComponent<PicknPlaceDemoCameraSwitcher>();
-            switcher.cameras = new[] { overviewCamera, closeUpCamera };
-            switcher.cameraLabels = new[] { "전체 보기", "클로즈업" };
-            switcher.defaultCameraIndex = DefaultLiveCameraIndex;
-            switcher.minFieldOfView = MinZoomFieldOfView;
-            switcher.maxFieldOfView = MaxZoomFieldOfView;
-            switcher.SetActiveCamera(DefaultLiveCameraIndex);
-        }
-
-        static CinemachineVirtualCamera CreateStaticVirtualCamera(
-            Scene scene, string name, Vector3 position, Quaternion rotation)
-        {
-            var cameraObject = new GameObject(name);
-            SceneManager.MoveGameObjectToScene(cameraObject, scene);
-            cameraObject.transform.SetPositionAndRotation(position, rotation);
-            return cameraObject.AddComponent<CinemachineVirtualCamera>();
-        }
-
-        static CinemachineVirtualCamera CreateCloseUpVirtualCamera(
-            Scene scene, Transform followTarget, Transform lookTarget)
-        {
-            var cameraObject = new GameObject(CloseUpCameraName);
-            SceneManager.MoveGameObjectToScene(cameraObject, scene);
-
-            var vcam = cameraObject.AddComponent<CinemachineVirtualCamera>();
-            vcam.Follow = followTarget;
-            vcam.LookAt = lookTarget;
-            vcam.m_Lens.FieldOfView = CloseUpCameraFieldOfView;
-
-            var body = vcam.AddCinemachineComponent<CinemachineTransposer>();
-            body.m_BindingMode = CinemachineTransposer.BindingMode.WorldSpace;
-            body.m_FollowOffset = CloseUpCameraFollowOffset;
-
-            vcam.AddCinemachineComponent<CinemachineComposer>();
-            return vcam;
+            if (mainCameraObject.GetComponent<PicknPlaceFreeFlyCamera>() == null)
+                mainCameraObject.AddComponent<PicknPlaceFreeFlyCamera>();
         }
 
         static void SetInferenceOnly(GameObject area)

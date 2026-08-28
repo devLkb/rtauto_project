@@ -9,9 +9,7 @@ namespace KDT.PicknPlaceTraining
     /// 직접 지정한다. 슬라이더 범위는 각 ArticulationBody의 실제 xDrive 한계(URDF 임포트 시
     /// 설정된 물리 관절 한계, UR e-series 전 기종 ±360° — docs/SIM2REAL_ROADMAP.md 참고) 그대로다.
     /// Dg5fPicknPlaceSpec.ArmSafeMinDeg/MaxDeg는 RL 정책 학습용으로 손튜닝된 훨씬 좁은 "그럴듯한
-    /// 자세" 봉투라 사람이 직접 조작할 때 굳이 그 안으로 제한할 이유가 없다 — 대신 그 봉투 밖으로
-    /// 나가면 슬라이더 라벨을 주황색으로 바꿔 "이 구간은 RL 검증 밖(패널을 뚫고 내려가는 코너가
-    /// 있다고 알려짐, 로드맵 참고)"이라는 경고만 준다.
+    /// 자세" 봉투라 사람이 직접 조작할 때 굳이 그 안으로 제한할 이유가 없다.
     /// PicknPlaceControlModeSwitcher가 이 패널과 PicknPlaceTeleopNudge 중 하나만 활성화해
     /// 같은 xDrive.target을 두 곳에서 동시에 쓰지 않게 한다.
     /// </summary>
@@ -21,8 +19,6 @@ namespace KDT.PicknPlaceTraining
         {
             "Shoulder Pan", "Shoulder Lift", "Elbow", "Wrist 1", "Wrist 2", "Wrist 3"
         };
-
-        static readonly Color WarningColor = new Color(1f, 0.65f, 0f);
 
         public Dg5fPicknPlaceAgent agent;
         [Tooltip("완전 초기화 시 함께 풀어줄 주먹쥐기 버튼(있으면). 비워두면 손 포즈는 " +
@@ -161,16 +157,7 @@ namespace KDT.PicknPlaceTraining
             for (int i = 0; i < _joints.Length; i++)
             {
                 if (_joints[i] == null) continue;
-                bool outsideTrainedEnvelope = _targetDeg[i] < Dg5fPicknPlaceSpec.ArmSafeMinDeg[i]
-                    || _targetDeg[i] > Dg5fPicknPlaceSpec.ArmSafeMaxDeg[i];
-
-                Color previous = GUI.color;
-                if (outsideTrainedEnvelope) GUI.color = WarningColor;
-                GUILayout.Label(outsideTrainedEnvelope
-                    ? $"{JointLabels[i]}: {_targetDeg[i]:F0}° (검증 밖)"
-                    : $"{JointLabels[i]}: {_targetDeg[i]:F0}°");
-                GUI.color = previous;
-
+                GUILayout.Label($"{JointLabels[i]}: {_targetDeg[i]:F0}°");
                 _targetDeg[i] = GUILayout.HorizontalSlider(_targetDeg[i], _lowerLimitDeg[i], _upperLimitDeg[i]);
             }
             GUILayout.EndScrollView();

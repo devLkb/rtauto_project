@@ -99,8 +99,8 @@ namespace KDT.PicknPlaceTraining
         void OnGUI()
         {
             if (!showUI) return;
-            // 우상단 — 좌상단(PicknPlaceControlModeSwitcher), 좌하단(PicknPlaceDemoCameraSwitcher),
-            // 우하단(PicknPlaceTeleopNudge)과 겹치지 않는 유일한 모서리.
+            // 우상단 — 좌상단(PicknPlaceControlModeSwitcher), 우하단(PicknPlaceTeleopNudge)과
+            // 겹치지 않는 모서리.
             GUILayout.BeginArea(new Rect(Screen.width - 250, 10, 240, 50), GUI.skin.box);
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("주먹 쥐기")) SetFist(true);
