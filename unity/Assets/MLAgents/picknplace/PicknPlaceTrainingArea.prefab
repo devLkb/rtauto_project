@@ -410,6 +410,14 @@ PrefabInstance:
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 1499218221257683587, guid: 32069105cbbc4444ab639250cf90e543, type: 3}
+      propertyPath: m_XDrive.damping
+      value: 200
+      objectReference: {fileID: 0}
+    - target: {fileID: 1499218221257683587, guid: 32069105cbbc4444ab639250cf90e543, type: 3}
+      propertyPath: m_XDrive.stiffness
+      value: 10000
+      objectReference: {fileID: 0}
+    - target: {fileID: 1499218221257683587, guid: 32069105cbbc4444ab639250cf90e543, type: 3}
       propertyPath: m_XDrive.forceLimit
       value: 28
       objectReference: {fileID: 0}
@@ -464,6 +472,14 @@ PrefabInstance:
     - target: {fileID: 2216212612056570697, guid: 32069105cbbc4444ab639250cf90e543, type: 3}
       propertyPath: m_UseGravity
       value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 2216212612056570697, guid: 32069105cbbc4444ab639250cf90e543, type: 3}
+      propertyPath: m_XDrive.damping
+      value: 200
+      objectReference: {fileID: 0}
+    - target: {fileID: 2216212612056570697, guid: 32069105cbbc4444ab639250cf90e543, type: 3}
+      propertyPath: m_XDrive.stiffness
+      value: 10000
       objectReference: {fileID: 0}
     - target: {fileID: 2216212612056570697, guid: 32069105cbbc4444ab639250cf90e543, type: 3}
       propertyPath: m_XDrive.forceLimit
@@ -528,6 +544,14 @@ PrefabInstance:
     - target: {fileID: 2532669979981808021, guid: 32069105cbbc4444ab639250cf90e543, type: 3}
       propertyPath: m_UseGravity
       value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 2532669979981808021, guid: 32069105cbbc4444ab639250cf90e543, type: 3}
+      propertyPath: m_XDrive.damping
+      value: 200
+      objectReference: {fileID: 0}
+    - target: {fileID: 2532669979981808021, guid: 32069105cbbc4444ab639250cf90e543, type: 3}
+      propertyPath: m_XDrive.stiffness
+      value: 10000
       objectReference: {fileID: 0}
     - target: {fileID: 2532669979981808021, guid: 32069105cbbc4444ab639250cf90e543, type: 3}
       propertyPath: m_XDrive.forceLimit
@@ -610,6 +634,14 @@ PrefabInstance:
       value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 5967746382219615304, guid: 32069105cbbc4444ab639250cf90e543, type: 3}
+      propertyPath: m_XDrive.damping
+      value: 200
+      objectReference: {fileID: 0}
+    - target: {fileID: 5967746382219615304, guid: 32069105cbbc4444ab639250cf90e543, type: 3}
+      propertyPath: m_XDrive.stiffness
+      value: 10000
+      objectReference: {fileID: 0}
+    - target: {fileID: 5967746382219615304, guid: 32069105cbbc4444ab639250cf90e543, type: 3}
       propertyPath: m_XDrive.forceLimit
       value: 150
       objectReference: {fileID: 0}
@@ -649,6 +681,14 @@ PrefabInstance:
       propertyPath: m_UseGravity
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 7414119408105939081, guid: 32069105cbbc4444ab639250cf90e543, type: 3}
+      propertyPath: m_XDrive.damping
+      value: 200
+      objectReference: {fileID: 0}
+    - target: {fileID: 7414119408105939081, guid: 32069105cbbc4444ab639250cf90e543, type: 3}
+      propertyPath: m_XDrive.stiffness
+      value: 10000
+      objectReference: {fileID: 0}
     - target: {fileID: 7547914877855683168, guid: 32069105cbbc4444ab639250cf90e543, type: 3}
       propertyPath: m_UseGravity
       value: 0
@@ -668,6 +708,14 @@ PrefabInstance:
     - target: {fileID: 8027358107952589660, guid: 32069105cbbc4444ab639250cf90e543, type: 3}
       propertyPath: m_UseGravity
       value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 8027358107952589660, guid: 32069105cbbc4444ab639250cf90e543, type: 3}
+      propertyPath: m_XDrive.damping
+      value: 200
+      objectReference: {fileID: 0}
+    - target: {fileID: 8027358107952589660, guid: 32069105cbbc4444ab639250cf90e543, type: 3}
+      propertyPath: m_XDrive.stiffness
+      value: 10000
       objectReference: {fileID: 0}
     - target: {fileID: 8027358107952589660, guid: 32069105cbbc4444ab639250cf90e543, type: 3}
       propertyPath: m_XDrive.forceLimit

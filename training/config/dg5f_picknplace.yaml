@@ -43,6 +43,25 @@ torch_settings:
   device: cuda
 
 environment_parameters:
+  # Thumb-down constraint, rebalanced (2026-08-28). Dg5fPicknPlaceSpec's code
+  # default is -0.10 per decision. That default was never checked against the
+  # episode's reward budget: DecisionRequester.DecisionPeriod is 5 (0.1 s) and
+  # EpisodeTimeoutSeconds is 20, so an episode is ~200 decisions and a fully
+  # thumb-down posture costs up to -0.10 * 200 = -20.0 — against a maximum
+  # attainable positive total of about +12.2 (approach 2.5 + top-down 0.3 +
+  # closure 1.0 + contact 0.4 + grasp 1.0 + lift potential 2.0 + success 5.0).
+  # A shaping term that can outweigh every reward in the task combined does not
+  # shape the posture, it makes standing still (and, worse, self-terminating on
+  # the -2.0 safety penalties) the profitable policy — which is exactly the
+  # "converged to near-zero movement, ContactCount flat over 2M+ steps" symptom
+  # recorded in Dg5fPicknPlaceAgent's 2026-08-27 diagnostic comment.
+  # -0.01 caps the term at -2.0 per episode: same order as the terminal safety
+  # penalties, still a real cost, no longer able to dominate the task reward.
+  # The constraint itself is unchanged (still on by default, same 60 deg
+  # threshold) — only its weight. The code default is deliberately left alone so
+  # this stays a sweepable knob rather than a second hardcoded constant.
+  thumb_down_penalty_scale: -0.01
+
   # Grasp curriculum: spawn annulus + lift target/hold, identical shape to
   # GraspLift's grasp_stage (reused verbatim — same cube geometry).
   grasp_stage:

@@ -6,6 +6,9 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
+    path: Assets/Scenes/Pipeline_Demo_GraspLift.unity
+    guid: 5a1661fd426a9c54187b65a4d1033de4
+  - enabled: 1
     path: Assets/MLAgents/GraspLift/DG5F_GraspLiftTraining.unity
     guid: b8ebd854cafb9d9d783c876d0c5a123b
   - enabled: 1

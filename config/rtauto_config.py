@@ -9,9 +9,17 @@
 다른 파일에서는 import해서 쓴다 (숫자를 다시 타이핑하지 않는다).
 """
 import os
+import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+# PyInstaller로 얼린 실행파일(예: vision_node_dg5f.exe)에서는 __file__이 압축 해제된
+# 임시 폴더(sys._MEIPASS)를 가리켜 실제 배포 폴더와 무관해진다. 그 경우 exe 파일이
+# 실제로 놓인 디렉터리를 기준으로 삼는다 — Unity 쪽 RtautoConfig.cs가 빌드된
+# .exe 옆(Application.dataPath 기준)에서 .env를 찾는 것과 같은 관례를 맞춘 것.
+if getattr(sys, "frozen", False):
+    REPO_ROOT = Path(sys.executable).resolve().parent
+else:
+    REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _load_dotenv():
@@ -85,6 +93,25 @@ UR_DESCRIPTION = _env("RTAUTO_UR_DESCRIPTION", "")
 # 머신마다 다른 경로라 기본값 없음 — 없으면 각 스크립트가 --logs-dir/--urdf-dir 요구로 명확히 에러.
 DG5F_UNITY_LOGS = _env("DG5F_UNITY_LOGS", "")
 DG5F_URDF_DIR = _env("DG5F_URDF_DIR", "")
+
+def _repo_path(name, default_relative):
+    """저장소 상대 기본값을 갖는 경로. .env에서 절대경로로 덮어쓸 수 있다."""
+    value = _env(name, default_relative).strip() or default_relative
+    path = Path(value)
+    return path if path.is_absolute() else (REPO_ROOT / path)
+
+
+# ---------------- ML-Agents 학습 산출물 경로 ----------------
+# 다른 경로들과 달리 저장소 상대 기본값이 있다 — 머신마다 다른 값이 아니라 리포 레이아웃이라서다.
+# 학습 산출물이 커져 다른 디스크로 빼야 하면 .env에서 절대경로로 덮어쓴다.
+# failure/legacy는 results 아래로 파생시킨다: 숫자·경로를 두 번 타이핑하지 않는다(원칙 1).
+#   results/<run-id>          진행 중이거나 아직 판정하지 않은 런
+#   results/failure/<run-id>  실패로 판정해 격리한 런 (training/scripts/archive_run.py가 옮긴다)
+#   results/legacy/<run-id>   과거 behavior의 런 — 참고용 보존, 재개 대상 아님
+# 각 런의 판정 근거는 docs/TRAINING_RUN_LEDGER.md가 정본이다.
+TRAINING_RESULTS_DIR = _repo_path("RTAUTO_TRAINING_RESULTS_DIR", "training/results")
+TRAINING_FAILURE_DIR = TRAINING_RESULTS_DIR / "failure"
+TRAINING_LEGACY_DIR = TRAINING_RESULTS_DIR / "legacy"
 
 # ---------------- 로봇 구성 (하드웨어 스펙, 2026-08-25 확정) ----------------
 # 스펙 변동 가능성이 통보돼 있어 코드에 박지 않고 여기서 바꾼다.

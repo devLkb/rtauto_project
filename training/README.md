@@ -184,6 +184,80 @@ mlagents-learn training/config/dg5f_picknplace.yaml --run-id=<이름>
   동일한 이유 — [`README.md`](../README.md) Python 절 참고).
 - 모니터링: `tensorboard --logdir training/results` 실행 후 `http://localhost:6006/`.
 
+### headless 학습 (실제 장시간 학습은 이 경로로)
+
+Editor에 붙이는 위 방식은 확인용이다. 장시간 학습은 **빌드된 플레이어**를
+`--no-graphics`로 띄운다 — Editor를 점유하지 않고, 렌더링을 안 해 처리량이 높다.
+
+**1) 플레이어 빌드** (씬이나 스크립트를 고쳤을 때마다). Editor를 **닫고** 실행한다 —
+Unity는 한 프로젝트를 두 번 열지 못해 Editor가 떠 있으면 batchmode가 즉시 실패한다.
+
+```powershell
+& "C:/Program Files/Unity/Hub/Editor/6000.4.0f1/Editor/Unity.exe" -batchmode -quit -nographics `
+    -projectPath unity `
+    -executeMethod KDT.PicknPlaceTraining.Editor.PicknPlaceTrainingBuild.BuildWindowsPlayer `
+    -logFile unity_batch_logs/build_windows_player.log
+```
+
+```bash
+"$UNITY_EDITOR" -batchmode -quit -nographics \
+    -projectPath unity \
+    -executeMethod KDT.PicknPlaceTraining.Editor.PicknPlaceTrainingBuild.BuildLinuxPlayer \
+    -logFile unity_batch_logs/build_linux_player.log
+```
+
+Editor 메뉴에도 같은 항목이 있다(**Tools > ML-Agents > Build DG5F PicknPlace
+Windows Player** / **... Linux Player**). 이 메뉴는 씬 재생성
+(`PicknPlaceTrainingSceneBuilder.Build()`)을 **먼저 자동 실행**하므로 씬 빌드
+메뉴를 따로 돌릴 필요가 없다. 출력 경로·실행파일명은 `.env`
+(`DG5F_PICKNPLACE_WINDOWS_BUILD_OUTPUT` / `..._PLAYER_NAME`)에서 온다 — 코드에
+경로가 박혀 있지 않다(원칙 1).
+
+**2) 학습 실행**
+
+```powershell
+.\vision\.vision\Scripts\Activate.ps1
+mlagents-learn training/config/dg5f_picknplace.yaml --run-id=<이름> `
+    --env=training/builds/DG5FPicknPlaceWindows/DG5FPicknPlace.exe `
+    --results-dir=training/results --no-graphics
+```
+
+```bash
+source vision/.vision/bin/activate
+mlagents-learn training/config/dg5f_picknplace.yaml --run-id=<이름> \
+    --env=training/builds/DG5FPicknPlace/DG5FPicknPlace.x86_64 \
+    --results-dir=training/results --no-graphics
+```
+
+- `--results-dir=training/results`를 **빼먹지 말 것.** mlagents-learn의 기본값은
+  저장소 루트의 `results/`인데, `.gitignore`가 무시하는 건 `training/results/`뿐이라
+  기본값으로 돌리면 체크포인트가 git에 딸려 들어간다.
+- 이어서 시작: 같은 `--run-id`에 `--resume`. 같은 이름으로 처음부터 다시 시작:
+  `--force`(기존 결과를 덮어쓴다 — 지우기 전에 아래 격리 절차를 먼저 밟을 것).
+
+**3) 모니터링과 판정**
+
+```powershell
+python training/scripts/picknplace_monitor.py --run-id <이름>
+python training/scripts/picknplace_monitor.py --run-id <이름> --gate   # 게이트만, 실패 시 종료코드 1
+```
+
+`PicknPlace/*` 태그를 읽어 진행 상황과 단계 게이트(G1 접근 → G2 접촉 → G3 파지 →
+G4 성공)를 판정한다. 게이트 임계값의 근거는
+[`docs/TRAINING_RUN_LEDGER.md`](../docs/TRAINING_RUN_LEDGER.md).
+(`grasp_metrics.py`·`show_dg5f_metrics.py`는 폐기된 behavior의 `Reach/*` 태그
+전용이라 이 behavior에는 쓸 수 없다.)
+
+**4) 끝난 런 격리** — 실패한 정책을 `training/results/`에 쌓아두지 않는다.
+
+```powershell
+python training/scripts/archive_run.py --run-id <이름> --to failure `
+    --reason "G2 접촉 게이트 실패: 80만 스텝 ContactCount 0.00"
+```
+
+디렉터리 규칙(`failure/`·`legacy/`)과 판정 이력의 정본은
+[`docs/TRAINING_RUN_LEDGER.md`](../docs/TRAINING_RUN_LEDGER.md)다.
+
 > `docs/SIM2REAL_ROADMAP.md`의 "파지는 RL, 이송·배치는 결정적 플래너" 분업은
 > **실제 FOUP 이송**(모바일 매니퓰레이터가 FOUP 자체를 옮기는 것)에 대한 결정이고
 > 지금도 유효하다. 이 behavior는 그것과 다른 목적 — **place 보상 셰이핑 자체를
