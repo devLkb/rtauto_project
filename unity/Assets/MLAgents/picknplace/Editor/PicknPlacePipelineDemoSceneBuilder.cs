@@ -29,7 +29,9 @@ namespace KDT.PicknPlaceTraining.Editor
     /// run with no arguments). Unlike GraspLift's shared ur5e_dg5f_left.prefab, ur16e_dg5f_right.prefab
     /// does not ship these teleop components (CreateUr16eDg5fRightPrefab strips even the preview-only
     /// HandSliderUI), so this builder adds them fresh on the robot root instead of just enabling
-    /// pre-existing ones. The Main Camera gets an overview/close-up Cinemachine camera pair
+    /// pre-existing ones. A Dg5fFistButton (top-right OnGUI) additionally lets the operator force the
+    /// right-hand fist pose (Dg5fPicknPlaceSpec.RightFistDeg) without a webcam/MediaPipe running. The
+    /// Main Camera gets an overview/close-up Cinemachine camera pair
     /// (switchable via PicknPlaceDemoCameraSwitcher) so the grasp is visible up close with a zoom slider.
     ///
     /// Auto mode runs whatever ONNX model is currently assigned on the training area's
@@ -207,6 +209,16 @@ namespace KDT.PicknPlaceTraining.Editor
             nudge.maxHeightOffset = 0.2f;
             nudge.maxHorizontalOffset = 0.25f;
             nudge.horizontalMoveSpeed = 0.12f;
+
+            // Webcam-free manual grasp: lets the operator force the validated right-hand
+            // fist pose without MediaPipe running (unlike GraspLift's left-hand demo, which
+            // has no equivalent — Dg5fGraspLiftSpec.LeftFistDeg is only ever driven by the
+            // trained policy there).
+            Dg5fFistButton fistButton = robot.GetComponent<Dg5fFistButton>();
+            if (fistButton == null) fistButton = robot.AddComponent<Dg5fFistButton>();
+            fistButton.agent = agent;
+            fistButton.handDriver = driver;
+            fistButton.handReceiver = receiver;
 
             agent.enabled = false;
             DecisionRequester requester = robot.GetComponent<DecisionRequester>();
