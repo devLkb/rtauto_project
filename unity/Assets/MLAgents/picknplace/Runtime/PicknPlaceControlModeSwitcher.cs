@@ -14,6 +14,7 @@ namespace KDT.PicknPlaceTraining
     {
         public Dg5fPicknPlaceAgent agent;
         public PicknPlaceTeleopNudge armNudge;
+        public PicknPlaceArmJointPanel armJointPanel;
         public Dg5fReceiver handReceiver;
         public Dg5fHandDriver handDriver;
 
@@ -25,8 +26,10 @@ namespace KDT.PicknPlaceTraining
         public bool handOnlyManualMode = false;
 
         bool _isManual;
+        bool _armJointMode; // false = PicknPlaceTeleopNudge(조이스틱, 작업공간), true = PicknPlaceArmJointPanel(관절 직접)
 
         public bool IsManual => _isManual;
+        public bool IsArmJointMode => _armJointMode;
 
         void Start()
         {
@@ -71,13 +74,22 @@ namespace KDT.PicknPlaceTraining
             if (manual)
             {
                 if (agent != null) agent.PauseForManualControl();
-                if (armNudge != null) armNudge.SetActive(!handOnlyManualMode);
+                if (handOnlyManualMode)
+                {
+                    if (armNudge != null) armNudge.SetActive(false);
+                    if (armJointPanel != null) armJointPanel.SetActive(false);
+                }
+                else
+                {
+                    ApplyArmControlMode();
+                }
                 if (handReceiver != null) handReceiver.enabled = true;
                 if (handDriver != null) handDriver.enabled = true;
             }
             else
             {
                 if (armNudge != null) armNudge.SetActive(false);
+                if (armJointPanel != null) armJointPanel.SetActive(false);
                 if (handReceiver != null) handReceiver.enabled = false;
                 if (handDriver != null) handDriver.enabled = false;
                 // 사람이 임의로 옮겨놓은 자세에서 정책을 재개시키는 건 학습 분포 밖이라 위험하다 —
@@ -86,11 +98,29 @@ namespace KDT.PicknPlaceTraining
             }
         }
 
+        /// 수동 모드 중 팔 조작 방식(조이스틱 IK ↔ 관절 직접)을 전환한다. handOnlyManualMode에서는
+        /// 팔 조작 자체가 꺼져 있으므로 무시한다.
+        public void SetArmControlMode(bool jointMode)
+        {
+            if (handOnlyManualMode) return;
+            if (jointMode == _armJointMode) return;
+            _armJointMode = jointMode;
+            if (_isManual) ApplyArmControlMode();
+        }
+
+        void ApplyArmControlMode()
+        {
+            if (armNudge != null) armNudge.SetActive(!_armJointMode);
+            if (armJointPanel != null) armJointPanel.SetActive(_armJointMode);
+        }
+
         void OnGUI()
         {
             if (!showModeUI) return;
 
-            GUILayout.BeginArea(new Rect(10, 10, 240, 96), GUI.skin.box);
+            // 내용물이 늘어날 때(예: 수동 모드의 조이스틱/관절직접 행) 고정 높이로 잘리는 걸
+            // 막기 위해 실제로 그릴 줄 수에서 높이를 역산한다.
+            GUILayout.BeginArea(new Rect(10, 10, 240, ComputePanelHeight()), GUI.skin.box);
             GUILayout.Label("제어 모드");
             if (handOnlyManualMode)
             {
@@ -103,8 +133,38 @@ namespace KDT.PicknPlaceTraining
             if (GUILayout.Button(!_isManual ? "[자동]" : "자동")) SetManualMode(false);
             if (GUILayout.Button(_isManual ? "[수동]" : "수동")) SetManualMode(true);
             GUILayout.EndHorizontal();
+            if (_isManual)
+            {
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button(!_armJointMode ? "[조이스틱]" : "조이스틱")) SetArmControlMode(false);
+                if (GUILayout.Button(_armJointMode ? "[관절직접]" : "관절직접")) SetArmControlMode(true);
+                GUILayout.EndHorizontal();
+            }
             DrawHandTrackingStatus();
             GUILayout.EndArea();
+        }
+
+        float ComputePanelHeight()
+        {
+            int rows = 1; // "제어 모드" 제목
+            if (handOnlyManualMode)
+            {
+                rows += 1; // "[MediaPipe 오른손 미러]"
+            }
+            else
+            {
+                rows += 1; // 자동/수동
+                if (_isManual) rows += 1; // 조이스틱/관절직접
+            }
+            rows += HandTrackingStatusLineCount();
+            return rows * 26f + 20f;
+        }
+
+        int HandTrackingStatusLineCount()
+        {
+            if (handReceiver == null) return 0;
+            bool live = handReceiver.enabled && handReceiver.secondsSinceLastPacket < 0.5f;
+            return live ? 1 : 2;
         }
 
         /// 웹캠만 꽂고 바로 시연하는 흐름에서, 손이 안 움직일 때 원인이 "파이썬 미실행"인지

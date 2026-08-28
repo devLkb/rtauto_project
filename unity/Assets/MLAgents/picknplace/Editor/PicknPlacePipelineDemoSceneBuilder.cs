@@ -29,7 +29,15 @@ namespace KDT.PicknPlaceTraining.Editor
     /// run with no arguments). Unlike GraspLift's shared ur5e_dg5f_left.prefab, ur16e_dg5f_right.prefab
     /// does not ship these teleop components (CreateUr16eDg5fRightPrefab strips even the preview-only
     /// HandSliderUI), so this builder adds them fresh on the robot root instead of just enabling
-    /// pre-existing ones. A Dg5fFistButton (top-right OnGUI) additionally lets the operator force the
+    /// pre-existing ones. A second arm-control mode, PicknPlaceArmJointPanel, lets the operator drag
+    /// each of the 6 joints directly instead of nudging the end effector — the control mode switcher's
+    /// "조이스틱/관절직접" toggle picks one at a time so they never fight over the same xDrive.target.
+    /// That panel's "초기화" button teleports the arm and cube back to whatever PicknPlaceArmJointPanel
+    /// captured in its own Start() — i.e. the pose actually on screen when Play began, not
+    /// Dg5fPicknPlaceAgent.OnEpisodeBegin()'s HomeArmDeg/random cube spawn (which never runs
+    /// automatically here since agent.enabled is permanently false) — and also releases the fist
+    /// button so a held grasp cannot immediately fight the reset back closed.
+    /// A Dg5fFistButton (top-right OnGUI) additionally lets the operator force the
     /// right-hand fist pose (Dg5fPicknPlaceSpec.RightFistDeg) without a webcam/MediaPipe running. The
     /// Main Camera gets an overview/close-up Cinemachine camera pair
     /// (switchable via PicknPlaceDemoCameraSwitcher) so the grasp is visible up close with a zoom slider.
@@ -195,11 +203,18 @@ namespace KDT.PicknPlaceTraining.Editor
             nudge.armIK = armIK;
             nudge.armSliderUI = sliderUI;
 
+            // Joint-space alternative to PicknPlaceTeleopNudge's Cartesian IK — lets the operator
+            // drag each of the 6 UR16e joints directly instead of nudging the end effector.
+            PicknPlaceArmJointPanel jointPanel = robot.GetComponent<PicknPlaceArmJointPanel>();
+            if (jointPanel == null) jointPanel = robot.AddComponent<PicknPlaceArmJointPanel>();
+            jointPanel.agent = agent;
+
             PicknPlaceControlModeSwitcher switcher =
                 robot.GetComponent<PicknPlaceControlModeSwitcher>();
             if (switcher == null) switcher = robot.AddComponent<PicknPlaceControlModeSwitcher>();
             switcher.agent = agent;
             switcher.armNudge = nudge;
+            switcher.armJointPanel = jointPanel;
             switcher.handReceiver = receiver;
             switcher.handDriver = driver;
             switcher.startInManualMode = true;
@@ -219,6 +234,10 @@ namespace KDT.PicknPlaceTraining.Editor
             fistButton.agent = agent;
             fistButton.handDriver = driver;
             fistButton.handReceiver = receiver;
+
+            // Full-reset button on the joint panel needs to release a held fist too,
+            // otherwise Dg5fFistButton keeps driving the hand closed right through the reset.
+            jointPanel.fistButton = fistButton;
 
             agent.enabled = false;
             DecisionRequester requester = robot.GetComponent<DecisionRequester>();

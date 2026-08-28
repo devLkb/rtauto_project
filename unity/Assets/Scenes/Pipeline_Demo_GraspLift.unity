@@ -11707,6 +11707,7 @@ GameObject:
   - component: {fileID: 854382491}
   - component: {fileID: 854382490}
   - component: {fileID: 854382503}
+  - component: {fileID: 854382504}
   m_Layer: 0
   m_Name: UR16e_DG5F_PicknPlaceAgent
   m_TagString: robot
@@ -11767,6 +11768,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: KDT.PicknPlaceTraining::KDT.PicknPlaceTraining.PicknPlaceControlModeSwitcher
   agent: {fileID: 854382498}
   armNudge: {fileID: 854382492}
+  armJointPanel: {fileID: 854382504}
   handReceiver: {fileID: 854382496}
   handDriver: {fileID: 854382495}
   showModeUI: 1
@@ -12285,6 +12287,22 @@ MonoBehaviour:
   handDriver: {fileID: 854382495}
   handReceiver: {fileID: 854382496}
   closeSpeed: 6
+  showUI: 1
+--- !u!114 &854382504
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 854382488}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8ee0701dc5f79d4498889b2d3ba8b937, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: KDT.PicknPlaceTraining::KDT.PicknPlaceTraining.PicknPlaceArmJointPanel
+  agent: {fileID: 854382498}
+  fistButton: {fileID: 854382503}
+  lerpSpeed: 8
   showUI: 1
 --- !u!1 &863359459
 GameObject:
