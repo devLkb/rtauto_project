@@ -80,6 +80,20 @@ namespace KDT.MLAgents.Editor
             return fileName;
         }
 
+        /// Optional integer setting. Returns <paramref name="fallback"/> when the
+        /// key is absent, and throws when it is present but not a positive
+        /// integer — a typo in .env must not silently fall back to a different
+        /// training scale than the one the operator wrote down.
+        public int GetPositiveInt(int fallback, params string[] keys)
+        {
+            if (!TryGetValue(out string raw, keys))
+                return fallback;
+            if (!int.TryParse(raw, out int value) || value <= 0)
+                throw new InvalidOperationException(
+                    $"{keys[0]} must be a positive integer, got: {raw}");
+            return value;
+        }
+
         string GetValue(params string[] keys)
         {
             if (TryGetValue(out string value, keys))

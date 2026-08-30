@@ -1,3 +1,26 @@
+# Inference-only probe: WHY does the trained policy carry the pillar ~15 deg off
+# vertical instead of inside the 10 deg free band of lift_tilt_penalty_scale?
+#
+# Two competing explanations, and this pair of configs separates them. The grasp
+# point sits 10 cm up a 12 cm pillar whose centre of mass is at 2.4 cm
+# (cube_com_height_fraction 0.20), i.e. 7.6 cm of mass hangs BELOW the grip - a
+# pendulum. The alternative is contact compliance: Unity's defaults here are a
+# 0.02 s fixed timestep with 6 solver iterations and improved patch friction off,
+# which is coarse for contact-rich manipulation.
+#
+# com050 moves the centre of mass to mid-height, shortening the lever arm from
+# 7.6 cm to 4.0 cm while changing nothing else. com020 is the control (the exact
+# condition the policy trained under).
+#   tilt drops sharply at com050  -> geometry/lever arm dominates; move the grasp
+#                                    point down toward the COM.
+#   tilt barely moves             -> grip compliance dominates; raise physics
+#                                    fidelity (timestep, solver iterations,
+#                                    improved patch friction).
+#
+# No learning occurs (--inference), so the reward terms below are inert and are
+# kept identical to the training config only so --initialize-from can restore the
+# 20M-step checkpoint (network_settings must match exactly).
+
 behaviors:
   DG5FPicknPlace:
     trainer_type: ppo
@@ -47,9 +70,9 @@ behaviors:
     # (2026-08-30). 5M steps at buffer_size 40960 is only ~122 PPO updates, which
     # was already thin for a grasp curriculum; 20M brings it to ~488 while still
     # being hours, not days, of wall clock on this host.
-    max_steps: 20000000
+    max_steps: 150000
     time_horizon: 256
-    summary_freq: 5000
+    summary_freq: 2000
     threaded: false
 
 torch_settings:
@@ -59,58 +82,8 @@ torch_settings:
   device: cuda
 
 environment_parameters:
-  # Thumb posture requirement (task brief, 2026-08-30): the thumb must never be
-  # the part of the hand aimed at the work surface, so that the grasp transfers
-  # to a later pick-and-place phase where the hand has to release next to a
-  # platform. Scored by Dg5fPicknPlaceSpec.ThumbDownPenalty as the depth of the
-  # thumb tip below the lowest other fingertip. Stated explicitly here (it is
-  # also the code default) so the run record carries the requirement rather than
-  # leaving it implicit -- and so it can be swept without a rebuild.
-  thumb_down_penalty_scale:
-    sampler_type: constant
-    sampler_parameters:
-      value: -0.05
-
-  # Stable-lift requirement (2026-08-30). Nothing charged for carrying the
-  # pillar cocked over: IsToppled stops applying once the grasp is confirmed and
-  # the lift success test ignores attitude, so mean tilt was drifting up (27 ->
-  # 29 deg by 6M steps). Graded per-decision cost while the object is held, free
-  # under 10 deg. Introduced mid-run and applied with --resume, so the reward
-  # changes from that step onward; the success-rate definition was deliberately
-  # left alone so its curve stays comparable across the whole run.
-  lift_tilt_penalty_scale:
-    sampler_type: constant
-    sampler_parameters:
-      value: -0.02
-
-  # Grasp curriculum: spawn annulus + lift target/hold, identical shape to
-  # GraspLift's grasp_stage (reused verbatim — same cube geometry).
-  grasp_stage:
-    curriculum:
-      - name: lift_5cm_near
-        completion_criteria:
-          measure: progress
-          behavior: DG5FPicknPlace
-          threshold: 0.25
-          min_lesson_length: 1000
-          signal_smoothing: true
-        value:
-          sampler_type: constant
-          sampler_parameters:
-            value: 1.0
-      - name: lift_8cm
-        completion_criteria:
-          measure: progress
-          behavior: DG5FPicknPlace
-          threshold: 0.55
-          min_lesson_length: 1000
-          signal_smoothing: true
-        value:
-          sampler_type: constant
-          sampler_parameters:
-            value: 2.0
-      - name: lift_10cm_target
-        value:
-          sampler_type: constant
-          sampler_parameters:
-            value: 3.0
+  # Hardest curriculum lesson - the condition the reported 99.21% was measured in.
+  grasp_stage: 3.0
+  cube_com_height_fraction: 0.50
+  thumb_down_penalty_scale: -0.05
+  lift_tilt_penalty_scale: -0.02

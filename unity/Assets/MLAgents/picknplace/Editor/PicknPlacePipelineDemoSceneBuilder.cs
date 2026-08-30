@@ -65,9 +65,17 @@ namespace KDT.PicknPlaceTraining.Editor
                     "[PicknPlacePipelineDemoSceneBuilder] Stop Play mode before building the demo scene "
                     + "(EditorSceneManager.OpenScene cannot run while playing).");
 
+            // Single, not Additive. Additive leaves whatever was already loaded in
+            // place, and in batchmode that is Unity's startup untitled scene --
+            // NewScene(..., Additive) below then refuses with "Cannot create a new
+            // scene additively with an untitled scene unsaved", so this menu item
+            // could only ever be run by hand from the Editor. Opening Single
+            // replaces the untitled scene; the source scene still stays loaded
+            // until the area copy has been moved out of it, which is the ordering
+            // the rest of this method depends on.
             Scene sourceScene = EditorSceneManager.OpenScene(
                 SourceScenePath,
-                OpenSceneMode.Additive);
+                OpenSceneMode.Single);
 
             GameObject sourceArea = sourceScene.GetRootGameObjects()
                 .FirstOrDefault(go => go.name == SourceAreaName);

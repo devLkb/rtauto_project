@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using KDT.MLAgents.Editor;
 using KDT.PicknPlaceTraining;
 using Unity.InferenceEngine;
 using Unity.MLAgents;
@@ -32,15 +33,30 @@ namespace KDT.PicknPlaceTraining.Editor
         const string CubeMaterialPath = TrainingRoot + "/PicknPlaceCube.mat";
         const string PanelPhysicsMaterialPath = TrainingRoot + "/PicknPlacePanel.physicMaterial";
         const string CubePhysicsMaterialPath = TrainingRoot + "/PicknPlaceCube.physicMaterial";
-        // Raised from 20 (2026-08-27): the RTX 2080 was sitting at ~17% GPU
-        // utilization with 20 areas — environment throughput (CPU-bound Unity
-        // physics), not the PPO update, was the bottleneck. More parallel areas
-        // feed more experience per second into the same GPU update, without
-        // changing the learning algorithm itself. 12 WSL2 CPU cores had ample
-        // headroom at 20 areas.
-        const int TrainingAreaCount = 40;
-        const int TrainingAreaColumns = 8;
+        // Areas per scene. Raised from 20 to 40 on 2026-08-27 (the RTX 2080 was
+        // sitting at ~17% GPU utilization with 20 areas — environment throughput,
+        // CPU-bound Unity physics, was the bottleneck, not the PPO update), then
+        // made configurable on 2026-08-30: the total agent count that saturates a
+        // machine is `areas x mlagents-learn --num-envs`, and both halves of that
+        // product are machine-dependent, so the area count belongs in .env next to
+        // the player paths rather than as a literal here (CLAUDE.md principle 1).
+        // The default keeps the proven 40. Layout columns follow the area count so
+        // the grid stays roughly square whatever it is set to.
+        const string TrainingAreaCountKey = "DG5F_PICKNPLACE_TRAINING_AREAS";
+        const int DefaultTrainingAreaCount = 40;
         const float TrainingAreaSpacing = 3f;
+
+        // Cached because BuildEnvironment.Load() re-reads .env/.env.example from
+        // disk on every call and the layout helpers below ask per area. Build()
+        // clears it so an edit to .env takes effect on the next menu invocation
+        // without needing a domain reload.
+        static int? _trainingAreaCount;
+
+        static int TrainingAreaCount =>
+            _trainingAreaCount ??= BuildEnvironment.Load().GetPositiveInt(
+                DefaultTrainingAreaCount, TrainingAreaCountKey);
+
+        static int TrainingAreaColumns => Mathf.CeilToInt(Mathf.Sqrt(TrainingAreaCount));
 
         static readonly HashSet<string> CompetingDriverTypes = new HashSet<string>
         {
@@ -69,6 +85,7 @@ namespace KDT.PicknPlaceTraining.Editor
         [MenuItem("Tools/ML-Agents/Build DG5F PicknPlace Training Scene")]
         public static void Build()
         {
+            _trainingAreaCount = null;
             EnsureFolder(TrainingRoot);
             var sourceRobot = AssetDatabase.LoadAssetAtPath<GameObject>(SourceRobotPath);
             if (sourceRobot == null)

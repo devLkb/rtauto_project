@@ -21,6 +21,7 @@ namespace KDT.PicknPlaceTraining.Tests
                 Dg5fPicknPlaceSpec.HandSurfacePenaltyPerSecond);
             Dg5fPicknPlaceSpec.SetGraspPosturePenaltyScale(Dg5fPicknPlaceSpec.GraspPosturePenaltyScale);
             Dg5fPicknPlaceSpec.SetThumbDownPenaltyScale(Dg5fPicknPlaceSpec.ThumbDownPenaltyScale);
+            Dg5fPicknPlaceSpec.SetLiftTiltPenaltyScale(Dg5fPicknPlaceSpec.LiftTiltPenaltyScale);
         }
 
         // --- cube geometry parameters ------------------------------------------
@@ -285,25 +286,46 @@ namespace KDT.PicknPlaceTraining.Tests
                 Dg5fPicknPlaceSpec.FailurePenalty("SelfCollision"));
         }
 
-        // --- thumb orientation --------------------------------------------------
+        // --- thumb posture ------------------------------------------------------
 
         [Test]
-        public void ThumbDownPenaltyGrowsAsTheThumbApproachesStraightDown()
+        public void ThumbDownPenaltyGrowsAsTheThumbDropsBelowTheOtherFingertips()
         {
             Dg5fPicknPlaceSpec.SetThumbDownPenaltyScale(-0.5f);
-            Assert.AreEqual(0f, Dg5fPicknPlaceSpec.ThumbDownPenalty(180f), 1e-6f,
-                "thumb pointing straight up must be free");
-            Assert.AreEqual(0f,
-                Dg5fPicknPlaceSpec.ThumbDownPenalty(Dg5fPicknPlaceSpec.ThumbDownSafeAngleDegrees), 1e-6f,
-                "exactly at the safe boundary must still be free");
-            Assert.AreEqual(-0.5f, Dg5fPicknPlaceSpec.ThumbDownPenalty(0f), 1e-6f,
-                "thumb pointing straight down must pay the full scale");
+            Assert.AreEqual(0f, Dg5fPicknPlaceSpec.ThumbDownPenalty(-0.05f), 1e-6f,
+                "a thumb held above the other fingertips must be free");
+            Assert.AreEqual(0f, Dg5fPicknPlaceSpec.ThumbDownPenalty(0f), 1e-6f,
+                "exactly level with the lowest other fingertip must still be free");
+            Assert.AreEqual(-0.5f,
+                Dg5fPicknPlaceSpec.ThumbDownPenalty(
+                    Dg5fPicknPlaceSpec.ThumbLowestSaturationMeters), 1e-6f,
+                "at the saturation depth the full scale is charged");
+            Assert.AreEqual(-0.5f,
+                Dg5fPicknPlaceSpec.ThumbDownPenalty(
+                    Dg5fPicknPlaceSpec.ThumbLowestSaturationMeters * 10f), 1e-6f,
+                "deeper than saturation must not keep growing");
             Assert.Greater(
-                Dg5fPicknPlaceSpec.ThumbDownPenalty(30f),
-                Dg5fPicknPlaceSpec.ThumbDownPenalty(10f),
-                "30 deg from straight-down is less severe than 10 deg, so it must cost less "
+                Dg5fPicknPlaceSpec.ThumbDownPenalty(0.002f),
+                Dg5fPicknPlaceSpec.ThumbDownPenalty(0.010f),
+                "2 mm below is less severe than 10 mm below, so it must cost less "
                     + "(penalties are negative, so 'greater' is closer to zero)");
             Assert.AreEqual(0f, Dg5fPicknPlaceSpec.ThumbDownPenalty(float.NaN), 1e-6f);
+        }
+
+        [Test]
+        public void ThumbDownPenaltyStaysSurvivableAgainstTheLiftPayoff()
+        {
+            // The measured worst case is the thumb ~7 mm below the other tips
+            // (Tools > ML-Agents > Diagnose PicknPlace Thumb Orientation, closure
+            // 0.75). Held for a whole 200-decision episode that must stay well
+            // under LiftSuccessReward, or the policy's best move is to stop
+            // grasping -- which is what the previous angle-based reading did.
+            Dg5fPicknPlaceSpec.SetThumbDownPenaltyScale(Dg5fPicknPlaceSpec.ThumbDownPenaltyScale);
+            float worstCaseEpisodeCost =
+                Dg5fPicknPlaceSpec.ThumbDownPenalty(0.007f)
+                * (Dg5fPicknPlaceSpec.EpisodeTimeoutSeconds / 0.1f);
+            Assert.Less(Mathf.Abs(worstCaseEpisodeCost), Dg5fPicknPlaceSpec.LiftSuccessReward,
+                "a fully-penalised episode must still cost less than one successful lift pays");
         }
 
         [Test]
@@ -313,6 +335,65 @@ namespace KDT.PicknPlaceTraining.Tests
             // sweep), this constraint was requested as a hard requirement for the
             // current training run, so it must be active out of the box.
             Assert.Less(Dg5fPicknPlaceSpec.ThumbDownPenaltyScale, 0f);
+        }
+
+        // --- carried-object attitude --------------------------------------------
+
+        [Test]
+        public void LiftTiltPenaltyOnlyChargesAHeldObjectAndGrowsWithTilt()
+        {
+            Dg5fPicknPlaceSpec.SetLiftTiltPenaltyScale(-0.5f);
+            Assert.AreEqual(0f, Dg5fPicknPlaceSpec.LiftTiltPenalty(40f, false), 1e-6f,
+                "before the grasp is confirmed a tilting cube is IsToppled's business, not this");
+            Assert.AreEqual(0f,
+                Dg5fPicknPlaceSpec.LiftTiltPenalty(
+                    Dg5fPicknPlaceSpec.LiftTiltFreeAngleDegrees, true), 1e-6f,
+                "real grasps sway; the free band must cost nothing");
+            Assert.AreEqual(-0.5f,
+                Dg5fPicknPlaceSpec.LiftTiltPenalty(
+                    Dg5fPicknPlaceSpec.LiftTiltSaturationAngleDegrees, true), 1e-6f,
+                "at the saturation angle the full scale is charged");
+            Assert.AreEqual(-0.5f,
+                Dg5fPicknPlaceSpec.LiftTiltPenalty(
+                    Dg5fPicknPlaceSpec.LiftTiltSaturationAngleDegrees * 3f, true), 1e-6f,
+                "past saturation it must not keep growing");
+            Assert.Greater(
+                Dg5fPicknPlaceSpec.LiftTiltPenalty(15f, true),
+                Dg5fPicknPlaceSpec.LiftTiltPenalty(25f, true),
+                "15 deg off vertical must cost less than 25 (penalties are negative)");
+            Assert.AreEqual(0f, Dg5fPicknPlaceSpec.LiftTiltPenalty(float.NaN, true), 1e-6f);
+        }
+
+        [Test]
+        public void LiftTiltPenaltyStaysBelowTheLiftPayoff()
+        {
+            // The point is to make an upright lift preferable, never to make
+            // lifting itself unprofitable. Worst case: fully cocked for every
+            // post-grasp decision of an episode.
+            Dg5fPicknPlaceSpec.SetLiftTiltPenaltyScale(Dg5fPicknPlaceSpec.LiftTiltPenaltyScale);
+            float decisionsPerEpisode = Dg5fPicknPlaceSpec.EpisodeTimeoutSeconds / 0.1f;
+            float worstCase = Dg5fPicknPlaceSpec.LiftTiltPenalty(
+                Dg5fPicknPlaceSpec.LiftTiltSaturationAngleDegrees, true) * decisionsPerEpisode;
+            Assert.Less(Mathf.Abs(worstCase), Dg5fPicknPlaceSpec.LiftSuccessReward,
+                "a whole episode held cocked must still cost less than one lift pays, "
+                    + "or grasping at all becomes the worse option");
+        }
+
+        [Test]
+        public void LiftTiltPenaltyScaleClampsAndRejectsNonFinite()
+        {
+            Dg5fPicknPlaceSpec.SetLiftTiltPenaltyScale(-2f);
+            Assert.AreEqual(
+                Dg5fPicknPlaceSpec.MinimumLiftTiltPenaltyScale,
+                Dg5fPicknPlaceSpec.CurrentLiftTiltPenaltyScale, 1e-6f);
+            Dg5fPicknPlaceSpec.SetLiftTiltPenaltyScale(1f);
+            Assert.AreEqual(
+                Dg5fPicknPlaceSpec.MaximumLiftTiltPenaltyScale,
+                Dg5fPicknPlaceSpec.CurrentLiftTiltPenaltyScale, 1e-6f);
+            Dg5fPicknPlaceSpec.SetLiftTiltPenaltyScale(float.NaN);
+            Assert.AreEqual(
+                Dg5fPicknPlaceSpec.LiftTiltPenaltyScale,
+                Dg5fPicknPlaceSpec.CurrentLiftTiltPenaltyScale, 1e-6f);
         }
 
         [Test]

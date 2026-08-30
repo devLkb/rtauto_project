@@ -63,6 +63,11 @@ PORT_DG5F_SIM = int(_env("RTAUTO_PORT_DG5F_SIM", "5006"))        # → Unity Dg5
 PORT_ZED_TARGET = int(_env("RTAUTO_PORT_ZED_TARGET", "5007"))    # → Unity CameraTargetReceiver (ZED 객체 좌표)
 PORT_DG5F_BRIDGE = int(_env("RTAUTO_PORT_DG5F_BRIDGE", "5008"))  # vision_node --bridge → dg5f_sdk_bridge.py (실물 SDK)
 
+# ML-Agents 트레이너 <-> Unity 플레이어 gRPC 포트의 시작값. --num-envs N이면
+# BASE..BASE+N-1을 쓴다. 위 UDP 레지스트리(5005~5008)와 겹치지 않게 5100부터 잡았다 —
+# 프로토콜이 달라 충돌하진 않지만, 포트 하나를 두 용도로 문서화하면 다음 사람이 헷갈린다.
+PORT_MLAGENTS_BASE = int(_env("RTAUTO_PORT_MLAGENTS_BASE", "5100"))
+
 # ---------------- MediaPipe 카메라 ----------------
 # 카메라 열거 순서와 지원 모드는 PC/드라이버마다 다르므로 vision 스크립트에 고정하지 않는다.
 VISION_CAMERA_INDEX = int(_env("RTAUTO_VISION_CAMERA_INDEX", "0"))
@@ -85,6 +90,42 @@ UR_DESCRIPTION = _env("RTAUTO_UR_DESCRIPTION", "")
 # 머신마다 다른 경로라 기본값 없음 — 없으면 각 스크립트가 --logs-dir/--urdf-dir 요구로 명확히 에러.
 DG5F_UNITY_LOGS = _env("DG5F_UNITY_LOGS", "")
 DG5F_URDF_DIR = _env("DG5F_URDF_DIR", "")
+
+# ---------------- ML-Agents 학습 (DG5FPicknPlace) ----------------
+# Unity 쪽 BuildEnvironment.cs가 읽는 것과 "같은" .env 키를 여기서도 읽는다.
+# 빌드가 어디에 산출물을 두는지와 학습 런처가 어디서 플레이어를 찾는지가 갈라지면
+# 새 PC에서 조용히 어긋나므로, 키 이름을 두 번째 파일에 다시 타이핑하지 않는다.
+import sys as _sys
+
+_IS_WINDOWS = _sys.platform.startswith("win")
+
+PICKNPLACE_BUILD_OUTPUT = _env(
+    "DG5F_PICKNPLACE_WINDOWS_BUILD_OUTPUT" if _IS_WINDOWS else "DG5F_PICKNPLACE_BUILD_OUTPUT",
+    "")
+PICKNPLACE_PLAYER_NAME = _env(
+    "DG5F_PICKNPLACE_WINDOWS_PLAYER_NAME" if _IS_WINDOWS else "DG5F_PICKNPLACE_PLAYER_NAME",
+    "")
+
+# 학습 씬에 구워지는 병렬 영역 수와 mlagents-learn이 띄우는 플레이어 프로세스 수.
+# 총 에이전트 수 = TRAIN_AREAS x TRAIN_NUM_ENVS. 둘 다 머신 사양(코어/RAM)에 묶인
+# 값이라 코드가 아니라 .env에서 바꾼다.
+TRAIN_AREAS = int(_env("DG5F_PICKNPLACE_TRAINING_AREAS", "40"))
+TRAIN_NUM_ENVS = int(_env("RTAUTO_TRAIN_NUM_ENVS", "1"))
+
+
+def picknplace_player_path():
+    """빌드된 DG5FPicknPlace 플레이어의 절대경로 (없으면 None).
+
+    mlagents-learn --env에 넘길 값. 상대경로는 저장소 루트 기준으로 해석한다 —
+    Unity BuildEnvironment.ResolvePath와 같은 규칙.
+    """
+    if not PICKNPLACE_BUILD_OUTPUT or not PICKNPLACE_PLAYER_NAME:
+        return None
+    output = Path(PICKNPLACE_BUILD_OUTPUT)
+    if not output.is_absolute():
+        output = REPO_ROOT / output
+    return (output / PICKNPLACE_PLAYER_NAME).resolve()
+
 
 # ---------------- 로봇 구성 (하드웨어 스펙, 2026-08-25 확정) ----------------
 # 스펙 변동 가능성이 통보돼 있어 코드에 박지 않고 여기서 바꾼다.

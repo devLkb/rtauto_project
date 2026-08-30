@@ -201,28 +201,80 @@ namespace KDT.PicknPlaceTraining
         public const float MaximumGraspPosturePenaltyScale = 0f;
         public const string GraspPosturePenaltyScaleParameterName = "grasp_posture_penalty_scale";
 
-        // A top-down power grasp opposes the four fingers with the thumb held
-        // roughly level or upward, not pointing at the floor — a thumb pointing
-        // down is either a degenerate grasp or the hand about to jam a digit into
-        // the table. Modeled as a continuous per-decision cost like
-        // GraspPosturePenalty (a graded posture concern, not a discrete safety
-        // event the way floor contact or self-collision are), but unlike that
-        // penalty this one defaults ON (non-zero): it encodes a hard requirement
-        // from the task brief for this run, not an optional experimental sweep.
-        // The 60 deg threshold and default scale are initial estimates — like
-        // most shaping constants in this file, expect to retune against the
-        // first training curves.
-        public const float ThumbDownSafeAngleDegrees = 60f;
-        public const float ThumbDownPenaltyScale = -0.10f;
+        // "The thumb must not point at the floor" (task brief, 2026-08-30), scored
+        // as depth: how far the thumb tip hangs BELOW the lowest of the other four
+        // fingertips. Positive means the thumb is the part of the hand nearest the
+        // work surface -- the posture that scrapes a FOUP or jams a digit into the
+        // table, and the one that will not transfer to a place/release phase.
+        //
+        // This replaced an angle-based reading (thumb base->tip vs straight-down,
+        // penalised below 60 deg) after measuring the actual kinematics with
+        // Tools > ML-Agents > Diagnose PicknPlace Thumb Orientation. At one fixed
+        // top-down arm pose (palm 30 deg off vertical, the closest the safe joint
+        // ranges allow) that angle swung 71.5 -> 45.1 -> 20.9 -> 6.8 -> 16.5 deg
+        // purely as grip closure went 0 -> 0.25 -> 0.5 -> 0.75 -> 1.0, while the
+        // thumb's proximal segment held a constant 30.0 deg. The angle was
+        // therefore measuring how closed the hand was, not where the thumb
+        // pointed: at EffectiveGripClosure (0.75) it charged -0.089/decision,
+        // about -17.7 over a 200-decision episode, against a total positive reward
+        // budget near +12. Training under it converges on never closing the hand.
+        //
+        // Depth below the other fingertips is the same concern stated in a way the
+        // policy can actually satisfy: measured, it is true only in a narrow band
+        // (closure >= 0.75 at wrist_3 near 0 or -60..-30) and by only 5-7 mm, and
+        // wrist roll escapes it without giving up the grasp.
+        //
+        // Saturation depth: 2 cm below the other tips is unambiguously "the thumb
+        // leads into the surface"; the measured worst case is ~0.7 cm, so ordinary
+        // grasps pay a fraction of the scale rather than the whole thing.
+        public const float ThumbLowestSaturationMeters = 0.02f;
+        public const float ThumbDownPenaltyScale = -0.05f;
         public const float MinimumThumbDownPenaltyScale = -1f;
         public const float MaximumThumbDownPenaltyScale = 0f;
         public const string ThumbDownPenaltyScaleParameterName = "thumb_down_penalty_scale";
+
+        // --- carried-object attitude (stable lift) ------------------------------
+        // IsToppled deliberately stops applying the moment the grasp is confirmed
+        // (a cube held at an angle is not "toppled on the table"), and
+        // IsLiftSuccessful checks height, speed and hold time but never attitude.
+        // Between those two, a policy that hoists the pillar cocked over at 40 deg
+        // scores exactly the same as one that lifts it straight up -- and the
+        // 2026-08-30 run drifted that way: mean tilt 27 -> 29 deg with a 33.6 deg
+        // peak by 6M steps, purely because nothing charged for it.
+        //
+        // Stated priority (2026-08-30): a stable lift that reads as unremarkable
+        // to a non-expert matters more than a textbook top-down palm angle. So
+        // attitude gets a graded per-decision cost WHILE THE OBJECT IS HELD: free
+        // below LiftTiltFreeAngleDegrees (real grasps sway), rising to the full
+        // scale at the topple limit.
+        //
+        // Sizing, the same rule the thumb penalty follows: an episode spent
+        // entirely at full cost must still be cheaper than one successful lift is
+        // worth, or "grasp and hold" becomes worse than never grasping. 200
+        // decisions per episode x -0.02 = -4.0 against LiftSuccessReward (+5.0).
+        //
+        // Saturation at 30 deg rather than at the topple limit, for two reasons:
+        // it puts the whole gradient across the band the policy actually occupies
+        // (measured 27-34 deg), and the topple limit is a swept environment
+        // parameter, so anchoring to it would silently reshape this cost whenever
+        // that sweep moved.
+        //
+        // Deliberately NOT folded into the lift success test - the success rate is
+        // the number being tracked across this run, and redefining it mid-run
+        // would make the curve incomparable to its own history.
+        public const float LiftTiltFreeAngleDegrees = 10f;
+        public const float LiftTiltSaturationAngleDegrees = 30f;
+        public const float LiftTiltPenaltyScale = -0.02f;
+        public const float MinimumLiftTiltPenaltyScale = -1f;
+        public const float MaximumLiftTiltPenaltyScale = 0f;
+        public const string LiftTiltPenaltyScaleParameterName = "lift_tilt_penalty_scale";
 
         static float _topDownAlignmentPotentialMax = TopDownAlignmentPotentialMax;
         static float _actionRatePenaltyScale = ActionRatePenaltyScale;
         static float _handSurfacePenaltyPerSecond = HandSurfacePenaltyPerSecond;
         static float _graspPosturePenaltyScale = GraspPosturePenaltyScale;
         static float _thumbDownPenaltyScale = ThumbDownPenaltyScale;
+        static float _liftTiltPenaltyScale = LiftTiltPenaltyScale;
         static float _toppleLimitDeg = ToppleLimitDegrees;
 
         public static float CurrentTopDownAlignmentPotentialMax => _topDownAlignmentPotentialMax;
@@ -302,18 +354,44 @@ namespace KDT.PicknPlaceTraining
                 : ThumbDownPenaltyScale;
         }
 
-        /// Per-decision cost that grows as the thumb approaches pointing straight
-        /// down. thumbDownAngleDegrees is measured from straight-down (0 deg =
-        /// thumb points at the floor, 180 deg = thumb points straight up) — the
-        /// same convention as TopDownAngleDegrees, so callers can reuse
-        /// TopDownAlignment/TopDownAngleDegrees against the thumb's own pointing
-        /// direction instead of the grasp axis.
-        public static float ThumbDownPenalty(float thumbDownAngleDegrees)
+        /// Per-decision cost for the thumb tip hanging below the other fingertips.
+        /// thumbBelowOtherTipsMeters is measured along -robotBase.up: 0 or less
+        /// means some other fingertip is at least as low as the thumb (free),
+        /// ThumbLowestSaturationMeters or more pays the full scale.
+        public static float ThumbDownPenalty(float thumbBelowOtherTipsMeters)
         {
-            if (!IsFinite(thumbDownAngleDegrees)) return 0f;
+            if (!IsFinite(thumbBelowOtherTipsMeters)) return 0f;
             float progress = Mathf.Clamp01(
-                (ThumbDownSafeAngleDegrees - thumbDownAngleDegrees) / ThumbDownSafeAngleDegrees);
+                thumbBelowOtherTipsMeters / ThumbLowestSaturationMeters);
             return _thumbDownPenaltyScale * progress;
+        }
+
+        public static float CurrentLiftTiltPenaltyScale => _liftTiltPenaltyScale;
+
+        public static void RefreshLiftTiltPenaltyScale()
+        {
+            SetLiftTiltPenaltyScale(Academy.Instance.EnvironmentParameters.GetWithDefault(
+                LiftTiltPenaltyScaleParameterName, LiftTiltPenaltyScale));
+        }
+
+        public static void SetLiftTiltPenaltyScale(float scale)
+        {
+            _liftTiltPenaltyScale = IsFinite(scale)
+                ? Mathf.Clamp(scale, MinimumLiftTiltPenaltyScale, MaximumLiftTiltPenaltyScale)
+                : LiftTiltPenaltyScale;
+        }
+
+        /// Per-decision cost for holding the grasped object off-vertical. Only
+        /// charged once the grasp is confirmed: before that, a tilting cube is the
+        /// agent knocking it over, which IsToppled already ends the episode for.
+        /// Free at or below LiftTiltFreeAngleDegrees, full scale at
+        /// LiftTiltSaturationAngleDegrees and beyond.
+        public static float LiftTiltPenalty(float tiltDegrees, bool graspConfirmed)
+        {
+            if (!graspConfirmed || !IsFinite(tiltDegrees)) return 0f;
+            const float span = LiftTiltSaturationAngleDegrees - LiftTiltFreeAngleDegrees;
+            float progress = Mathf.Clamp01((tiltDegrees - LiftTiltFreeAngleDegrees) / span);
+            return _liftTiltPenaltyScale * progress;
         }
 
         public static float CurrentToppleLimitDegrees => _toppleLimitDeg;

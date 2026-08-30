@@ -6,7 +6,9 @@ Gazebo를 검증 단계로 추가).
 개정 2026-08-26 (v4 — **Gazebo 검증 단계 폐기**, ROS2 통합을
 [Unity-Robotics-Hub](https://github.com/Unity-Technologies/Unity-Robotics-Hub)
 (ROS-TCP-Connector/Endpoint)로 일원화 — 아래 "Gazebo 폐기 경위" 참고).
-1인 풀타임·로컬 단독 머신(RTX 2080, Windows) 체제.
+개정 2026-08-30 (v5 — 학습 머신 교체(RTX 4070 Ti), **headless 병렬 학습 인프라** 구축,
+엄지 자세 제약 측정·재정의. §6 Phase 2 참고).
+1인 풀타임·로컬 단독 머신(**RTX 4070 Ti 12 GB / 32 GB RAM / Ryzen 7 7800X3D**, Windows) 체제.
 
 정책 계약 상세는 [`DG5F_GRASP_LIFT.md`](DG5F_GRASP_LIFT.md), SDK 실측 근거는
 [`TESOLLO_SDK_기술부채_조사.md`](docs2/TESOLLO_SDK_기술부채_조사.md)를 우선한다.
@@ -317,6 +319,49 @@ UR16e+오른손 조합에도 필요한지 Phase 2 착수 시 재확인.
 기존 Unity PhysX 학습 경로(`training/scripts/*` 중 GraspLift 계열,
 `unity/Assets/MLAgents/GraspLift`)는 **레거시로 동결하고 삭제하지 않는다** —
 위 포트 검증 게이트의 비교 기준(99.75%)이기 때문이다.
+
+### headless 병렬 학습 인프라 (2026-08-30)
+
+4번 항목("긴 blind run 금지")의 전제였던 "단일 GPU라 한 번에 하나씩 느리게"는
+더 이상 사실이 아니다. 학습 머신이 RTX 4070 Ti / 32 GB / 7800X3D(8C16T)로 바뀌었고,
+`mlagents-learn --num-envs`로 **빌드된 headless 플레이어를 여러 개** 띄워 하나의
+PPO 업데이트에 경험을 몰아주는 경로를 뚫었다. 실행은
+[`training/scripts/train_picknplace.py`](../training/scripts/train_picknplace.py),
+절차는 [`training/README.md`](../training/README.md).
+
+병렬 수는 머신 사양에 묶이므로 코드가 아니라 `.env`(`RTAUTO_TRAIN_NUM_ENVS`)에 두고,
+값은 측정해서 정한다. 이 머신 실측(300k step, 40 areas/env 고정):
+
+| `--num-envs` | 총 에이전트 | 처리량 |
+|---|---|---|
+| 4 | 160 | 1643 step/s |
+| 6 | 240 | 1932 step/s |
+| 8 | 320 | 2206 step/s |
+| **10** | **400** | **2390 step/s** |
+| 12 | 480 | 2266 step/s |
+
+10에서 꺾인다 — 그보다 많이 띄우면 플레이어들이 트레이너와 물리코어 8개를 다툰다.
+RAM은 병목이 아니다(헤드리스 플레이어 1개당 약 390 MB). 20M step이 약 2.5시간이므로
+4번의 "짧은 주기 체크포인트 평가 후 조기 중단"은 그대로 유효하되, 한 번의 시도 비용이
+크게 낮아져 하이퍼파라미터·보상 스윕을 실제로 돌려볼 수 있게 됐다.
+
+측정 과정에서 걸린 함정 두 개를 남긴다. (1) ml-agents는 종료 시 워커 플레이어를
+자주 놓치는데, 좀비 플레이어가 다음 런의 CPU를 갉아먹어 `--num-envs` 곡선이 통째로
+뒤집혔다(8이 4보다 느려 보였다). 런처가 시작 전에 정리한다. (2) ml-agents는 설정
+yaml을 로케일 기본 인코딩으로 읽어서 한국어 Windows에서는 주석의 한글·em-dash 하나로
+죽는다 — 런처가 파이썬을 `-X utf8`로 띄운다. 둘 다 원칙 2(새 머신 부트스트랩)에
+직접 걸리는 문제였다.
+
+### 엄지 자세 제약 (2026-08-30)
+
+"엄지가 바닥을 향하면 안 된다"(pick&place 전이 대비 요구사항)를 최초에는 엄지
+기저관절→끝 벡터의 하방 각도로 구현했으나, 학습 전 실측에서 **그 각도가 엄지 방향이
+아니라 손을 얼마나 쥐었는지를 재고 있음**이 드러나 판정을 "엄지 끝이 나머지 손끝보다
+아래로 내려온 깊이"로 바꿨다. 측정치와 전환 근거는
+[`DG5F_PICKNPLACE.md`](DG5F_PICKNPLACE.md) 참고. 이 종류의 자세 제약은 Phase 4에서
+실제 FOUP 파지 자세를 정할 때 다시 검토 대상이다 — **요구사항을 코드로 옮기기 전에
+기구학으로 한 번 재보는 절차**를 그때도 그대로 쓴다.
+
 
 ## 7. Phase 3 — ~~Gazebo 검증~~ 폐기, ROS2 통합은 §9로 흡수
 

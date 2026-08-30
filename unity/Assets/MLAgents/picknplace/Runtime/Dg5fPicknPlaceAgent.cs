@@ -315,6 +315,7 @@ namespace KDT.PicknPlaceTraining
             Dg5fPicknPlaceSpec.RefreshHandSurfacePenaltyPerSecond();
             Dg5fPicknPlaceSpec.RefreshGraspPosturePenaltyScale();
             Dg5fPicknPlaceSpec.RefreshThumbDownPenaltyScale();
+            Dg5fPicknPlaceSpec.RefreshLiftTiltPenaltyScale();
 
             _closure = 0f;
             _episodeSeconds = 0f;
@@ -591,7 +592,9 @@ namespace KDT.PicknPlaceTraining
                 _sumGraspPostureAngleDegrees += graspPostureAngleDegrees;
                 _graspPostureAngleSampleCount++;
             }
-            AddReward(Dg5fPicknPlaceSpec.ThumbDownPenalty(ThumbDownAngleDegrees()));
+            AddReward(Dg5fPicknPlaceSpec.ThumbDownPenalty(ThumbBelowOtherTipsMeters()));
+            AddReward(Dg5fPicknPlaceSpec.LiftTiltPenalty(
+                ObjectTiltDegrees(), _graspConfirmed));
 
             bool nearObject = Dg5fPicknPlaceSpec.UsesNearObjectControl(graspDistance);
             float actionScale = nearObject ? Dg5fPicknPlaceSpec.NearObjectArmDeltaScale : 1f;
@@ -970,8 +973,8 @@ namespace KDT.PicknPlaceTraining
                 _maxPalmFacingAlignment,
                 StatAggregationMethod.Average);
             _stats.Add(
-                "PicknPlace/ThumbDownAngleDegrees",
-                ThumbDownAngleDegrees(),
+                "PicknPlace/ThumbBelowOtherTipsMeters",
+                ThumbBelowOtherTipsMeters(),
                 StatAggregationMethod.Average);
             _stats.Add(
                 "PicknPlace/GraspPostureAngleDegrees",
@@ -1052,23 +1055,33 @@ namespace KDT.PicknPlaceTraining
                 GraspDistance(), heightAboveObject, TopDownAlignment());
         }
 
-        /// Angle (deg) between the thumb's pointing direction and straight-down.
-        /// The thumb's own local axis convention is not known in code, so the
-        /// direction is approximated from its base joint to its tip position —
-        /// robust regardless of how the URDF importer oriented the joint frame.
-        /// Reuses TopDownAlignment/TopDownAngleDegrees since the math (dot against
-        /// -robotUp) is identical; 180 deg (safe, "points up") is the fallback for
-        /// any missing reference, matching TopDownAlignment's own invalid-input
-        /// convention.
-        float ThumbDownAngleDegrees()
+        /// How far the thumb tip hangs below the lowest of the other four
+        /// fingertips, measured along -robotBase.up (metres). Positive means the
+        /// thumb is the part of the hand nearest the work surface, which is the
+        /// posture the task brief forbids; 0 (free) is the fallback for any
+        /// missing reference.
+        ///
+        /// Depth rather than a thumb-axis angle on purpose - see the measurement
+        /// recorded on Dg5fPicknPlaceSpec.ThumbLowestSaturationMeters for why the
+        /// angle reading turned out to track grip closure instead of thumb
+        /// direction.
+        float ThumbBelowOtherTipsMeters()
         {
-            if (fingerTips == null || fingerTips.Length == 0 || fingerTips[0] == null
-                || _handJoints == null || _handJoints.Length == 0 || _handJoints[0] == null
+            if (fingerTips == null || fingerTips.Length < 2 || fingerTips[0] == null
                 || robotBase == null)
-                return 180f;
-            Vector3 thumbDirection = fingerTips[0].position - _handJoints[0].transform.position;
-            return Dg5fPicknPlaceSpec.TopDownAngleDegrees(
-                Dg5fPicknPlaceSpec.TopDownAlignment(thumbDirection, robotBase.up));
+                return 0f;
+
+            Vector3 down = -robotBase.up;
+            float thumbDepth = Vector3.Dot(fingerTips[0].position, down);
+            float lowestOtherDepth = float.NegativeInfinity;
+            for (int finger = 1; finger < fingerTips.Length; finger++)
+            {
+                if (fingerTips[finger] == null) continue;
+                lowestOtherDepth = Mathf.Max(
+                    lowestOtherDepth, Vector3.Dot(fingerTips[finger].position, down));
+            }
+            if (float.IsNegativeInfinity(lowestOtherDepth)) return 0f;
+            return thumbDepth - lowestOtherDepth;
         }
 
         // ---------------------------------------------------------------- heuristic

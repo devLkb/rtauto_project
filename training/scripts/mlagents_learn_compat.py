@@ -56,10 +56,38 @@ if _selected_device.type == "cpu":
 
 if _selected_device.type != "cpu":
     _thread_run = threading.Thread.run
+    _device_mode_warned = False
+
+    def _install_device_mode() -> None:
+        """Install the selected device as this thread's default.
+
+        NOT torch.set_default_device(): that helper first calls __exit__ on the
+        previous global DeviceContext, and the mode stack it pops from is
+        thread-local, so in a freshly started thread it is empty and the call
+        raises "trying to pop from empty mode stack". The thread then dies before
+        it ever runs. That surfaced the moment --num-envs went above 1
+        (2026-08-30): every environment worker owns a gRPC _serve thread, all
+        four died on startup, and training hung with no output at all.
+
+        Pushing the context directly is what the original call was reaching for
+        anyway - a new thread has nothing to pop by definition.
+        """
+        global _device_mode_warned
+        try:
+            from torch.utils._device import DeviceContext
+
+            DeviceContext(_selected_device).__enter__()
+        except Exception as error:  # pragma: no cover - torch internals moved
+            if not _device_mode_warned:
+                _device_mode_warned = True
+                print(
+                    "[mlagents_learn_compat] could not set the default torch device "
+                    f"for new threads ({error}); tensors created off the main thread "
+                    "will default to CPU.")
 
     @wraps(_thread_run)
     def _run_with_torch_device(self, *args, **kwargs):
-        torch.set_default_device(_selected_device)
+        _install_device_mode()
         return _thread_run(self, *args, **kwargs)
 
     threading.Thread.run = _run_with_torch_device
