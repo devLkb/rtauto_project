@@ -199,6 +199,21 @@ com050에서 성공률이 99.7%→96.6%로 떨어졌다. `cube_com_height_fracti
 아직 이 behavior에 반영되지 않았다는 구체적 증거다 — 다음 학습에서는 COM·마찰·질량을
 샘플러로 흔들어야 한다.
 
+  > **2026-08-28 재조정 — 기본 스케일이 보상 예산을 압도했다.** `DecisionPeriod`
+  > 가 5(0.1초)이고 `EpisodeTimeoutSeconds`가 20초라 에피소드는 약 200 결정이다.
+  > 즉 기본 스케일 -0.10은 에피소드당 최대 **-20.0**인데, 이 태스크가 줄 수 있는
+  > 양의 보상 총합은 최대 약 **+12.2**다(접근 2.5 + top-down 0.3 + 클로저 1.0 +
+  > 접촉 0.4 + 파지 1.0 + 리프트 포텐셜 2.0 + 성공 5.0). 셰이핑 항 하나가 태스크
+  > 보상 전체보다 크면 자세를 다듬는 게 아니라 **"가만히 있기"와 "안전
+  > 페널티(-2.0)로 자진 종료하기"가 최적 정책**이 된다 — `Dg5fPicknPlaceAgent`의
+  > 2026-08-27 진단 주석이 기록한 "움직임 거의 0으로 수렴, ContactCount 200만
+  > 스텝 내내 평탄" 증상과 정확히 맞는다. `training/config/dg5f_picknplace.yaml`의
+  > 환경 파라미터 `thumb_down_penalty_scale: -0.01`로 상한을 -2.0(종료 페널티와
+  > 같은 자릿수)까지 낮췄다. **제약 자체는 그대로다 — 가중치만 바꿨다.** C# 기본값을
+  > 안 건드린 이유는 이 값을 스윕 가능한 손잡이로 남겨두기 위해서다(같은 상수를
+  > 두 곳에 적지 않는다, 원칙 1). 이 재조정이 실제로 효과가 있었는지는
+  > [`docs/TRAINING_RUN_LEDGER.md`](TRAINING_RUN_LEDGER.md)의 런 원장에서 확인할 것.
+
 ## 커리큘럼
 
 `grasp_stage` (1..3): 큐브 스폰 annulus를 좁은 범위→전체 범위로, 리프트
@@ -225,4 +240,13 @@ Phase 4(웨이퍼 케이스 재타겟, `docs/SIM2REAL_ROADMAP.md` §8)에서 실
 
 Unity 메뉴 순서와 `mlagents-learn` 실행 명령은
 [`training/README.md`](../training/README.md)의 "DG5F Grasp + Place 인프라,
-현재는 Grasp + Lift" 절 참고.
+현재는 Grasp + Lift" 절 참고. 장시간 학습은 그 절의 **"headless 학습"**
+경로(빌드된 플레이어 + `--no-graphics`)를 쓴다 — Editor에 붙이는 방식은
+확인용이다.
+
+## 런 판정·격리
+
+학습 런의 진행 판정(게이트 G1~G4), 실패 런 격리 규칙(`training/results/failure/`,
+`.../legacy/`), 이 behavior가 지금까지 빠졌던 실패 양상 목록은
+[`docs/TRAINING_RUN_LEDGER.md`](TRAINING_RUN_LEDGER.md)가 정본이다. 새 런을
+시작하거나 끝낼 때마다 그 문서의 원장 표를 갱신한다.

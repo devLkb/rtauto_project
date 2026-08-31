@@ -33,7 +33,10 @@ import rtauto_config as cfg  # noqa: E402
 
 REPO_ROOT = cfg.REPO_ROOT
 DEFAULT_CONFIG = REPO_ROOT / "training" / "config" / "dg5f_picknplace.yaml"
-DEFAULT_RESULTS_DIR = REPO_ROOT / "training" / "results"
+# 결과 경로의 정본은 rtauto_config 하나다 — failure/legacy 격리 규약이
+# 여기서 파생되므로 경로를 두 번째 파일에 다시 적지 않는다
+# (docs/TRAINING_RUN_LEDGER.md).
+DEFAULT_RESULTS_DIR = cfg.TRAINING_RESULTS_DIR
 # mlagents-learn 대신 이 셔틀을 부른다 — 레거시 ONNX exporter 선택과 cuda 기본
 # 디바이스의 스레드 전파를 담당한다. 자세한 이유는 파일 헤더 참고.
 LEARN_ENTRYPOINT = REPO_ROOT / "training" / "scripts" / "mlagents_learn_compat.py"

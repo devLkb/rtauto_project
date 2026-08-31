@@ -13,9 +13,16 @@
 ⚠️ 새 로그를 추가할 땐 반드시 unique_log_path()를 쓸 것. 직접 strftime + open(...,"w") 금지.
 """
 import os
+import sys
 import time
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+# PyInstaller로 얼린 실행파일에서는 이 모듈이 압축 아카이브(PYZ) 안에서 임포트되므로
+# __file__ 기준 경로가 실제 디스크 위치가 아니게 된다 — exe 파일 위치를 기준으로 삼는다.
+# (config/rtauto_config.py의 REPO_ROOT와 같은 이유, 같은 처리.)
+if getattr(sys, "frozen", False):
+    _HERE = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    _HERE = os.path.dirname(os.path.abspath(__file__))
 
 # 로그는 스크립트 위치 기준 — 실행 CWD와 무관 (어디서 실행하든 같은 곳에 쌓인다)
 LOG_DIR = os.path.join(_HERE, "logs")

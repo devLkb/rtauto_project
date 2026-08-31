@@ -9,9 +9,17 @@
 다른 파일에서는 import해서 쓴다 (숫자를 다시 타이핑하지 않는다).
 """
 import os
+import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+# PyInstaller로 얼린 실행파일(예: vision_node_dg5f.exe)에서는 __file__이 압축 해제된
+# 임시 폴더(sys._MEIPASS)를 가리켜 실제 배포 폴더와 무관해진다. 그 경우 exe 파일이
+# 실제로 놓인 디렉터리를 기준으로 삼는다 — Unity 쪽 RtautoConfig.cs가 빌드된
+# .exe 옆(Application.dataPath 기준)에서 .env를 찾는 것과 같은 관례를 맞춘 것.
+if getattr(sys, "frozen", False):
+    REPO_ROOT = Path(sys.executable).resolve().parent
+else:
+    REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _load_dotenv():
@@ -55,6 +63,11 @@ def _env(name, default=""):
 # ---------------- 네트워크 (Unity ↔ Python vision 스크립트) ----------------
 UNITY_IP = _env("RTAUTO_UNITY_IP", "127.0.0.1")
 
+# Unity(Assets/Scripts/Dg5fSender.cs)가 실물 SDK 브리지로 관절각을 쏠 때의 대상 IP.
+# UNITY_IP의 반대 방향이다 — 저건 "Unity가 어디 있나", 이건 "dg5f_sdk_bridge.py가 어디 있나".
+# 보통 Unity와 브리지를 같은 PC에서 돌리므로 기본값이 로컬이다.
+DG5F_BRIDGE_IP = _env("RTAUTO_DG5F_BRIDGE_IP", "127.0.0.1")
+
 # UDP 포트 레지스트리 — 각 포트는 이 파일에서만 숫자로 정의한다. 새로 포트를 쓸 일이 생기면
 # 여기부터 확인해서 겹치지 않는 번호를 고를 것 (과거 DG5F 실물 브리지와 ZED 좌표 송신이
 # 둘 다 5007을 써서 같은 PC에서 동시 실행 시 UDP 바인드 충돌이 나는 문제가 있었다 — 2026-08-25 수정).
@@ -67,6 +80,26 @@ PORT_DG5F_BRIDGE = int(_env("RTAUTO_PORT_DG5F_BRIDGE", "5008"))  # vision_node -
 # BASE..BASE+N-1을 쓴다. 위 UDP 레지스트리(5005~5008)와 겹치지 않게 5100부터 잡았다 —
 # 프로토콜이 달라 충돌하진 않지만, 포트 하나를 두 용도로 문서화하면 다음 사람이 헷갈린다.
 PORT_MLAGENTS_BASE = int(_env("RTAUTO_PORT_MLAGENTS_BASE", "5100"))
+
+# ---------------- DG5F 손 관절 속도 한계 ----------------
+# 실물 DG-5F가 안전하게 따라올 수 있는 관절 각속도 상한[deg/s]. 두 곳이 이 값을 공유한다:
+#   1) vision/dg5f/dg5f_sdk_bridge.py — 틱당 슬루 리밋(= 이 값 / 송신 Hz)으로 환산해 실물 보호
+#   2) unity/Assets/MLAgents/picknplace/Runtime/Dg5fFistButton.cs — Unity 트윈도 같은 속도로 제한
+# 왜 Unity에도 거는가: 트윈의 목적이 "시뮬과 실물이 서로를 검증하는 것"인데, 시뮬이 실물보다
+# 빠르게 움직이면 시뮬에서 성공한 파지가 실물에서 실패하는 것을 잡아내지 못한다. 나중에 RL
+# 정책을 실물에 올릴 때도 같은 간극이 그대로 문제가 된다(로드맵 Phase 2 도메인 랜덤화 항목).
+# 근거: 하드웨어 설명서 §3.1 각 관절 무부하 속도 75 RPM = 450 deg/s. 부하·마찰·보수적 PID
+# 게인을 감안해 그 1/4 이하로 잡은 보수적 초기값이다. 실물이 튀지 않으면 조금씩 올려도 된다.
+DG5F_MAX_DEG_PER_SEC = float(_env("RTAUTO_DG5F_MAX_DEG_PER_SEC", "100"))
+
+# ---------------- DG5F 파지 자세(티칭) ----------------
+# 실물 손을 사람이 직접 원하는 파지 자세로 잡아놓고 그 관절각을 캡처해 저장하는 파일.
+#   쓰기: vision/dg5f/dg5f_readback_bridge.py --capture-pose
+#   읽기: unity/.../Dg5fFistButton.cs 의 "파지하기" 버튼
+# 주먹(Dg5fPicknPlaceSpec.RightFistDeg)은 코드에 박힌 상수지만, 파지 자세는 대상 물체마다
+# 달라지므로(종이컵/FOUP 손잡이/…) 코드가 아니라 이 파일로 뺀다. 값은 **우리 규약**
+# (URDF/Unity 기준, deg) — 실물 SDK 규약과의 부호 차이는 캡처할 때 이미 변환된다.
+DG5F_GRASP_POSE_FILE = _env("RTAUTO_DG5F_GRASP_POSE", "config/dg5f_grasp_pose.json")
 
 # ---------------- MediaPipe 카메라 ----------------
 # 카메라 열거 순서와 지원 모드는 PC/드라이버마다 다르므로 vision 스크립트에 고정하지 않는다.
@@ -126,6 +159,25 @@ def picknplace_player_path():
         output = REPO_ROOT / output
     return (output / PICKNPLACE_PLAYER_NAME).resolve()
 
+
+def _repo_path(name, default_relative):
+    """저장소 상대 기본값을 갖는 경로. .env에서 절대경로로 덮어쓸 수 있다."""
+    value = _env(name, default_relative).strip() or default_relative
+    path = Path(value)
+    return path if path.is_absolute() else (REPO_ROOT / path)
+
+
+# ---------------- ML-Agents 학습 산출물 경로 ----------------
+# 다른 경로들과 달리 저장소 상대 기본값이 있다 — 머신마다 다른 값이 아니라 리포 레이아웃이라서다.
+# 학습 산출물이 커져 다른 디스크로 빼야 하면 .env에서 절대경로로 덮어쓴다.
+# failure/legacy는 results 아래로 파생시킨다: 숫자·경로를 두 번 타이핑하지 않는다(원칙 1).
+#   results/<run-id>          진행 중이거나 아직 판정하지 않은 런
+#   results/failure/<run-id>  실패로 판정해 격리한 런 (training/scripts/archive_run.py가 옮긴다)
+#   results/legacy/<run-id>   과거 behavior의 런 — 참고용 보존, 재개 대상 아님
+# 각 런의 판정 근거는 docs/TRAINING_RUN_LEDGER.md가 정본이다.
+TRAINING_RESULTS_DIR = _repo_path("RTAUTO_TRAINING_RESULTS_DIR", "training/results")
+TRAINING_FAILURE_DIR = TRAINING_RESULTS_DIR / "failure"
+TRAINING_LEGACY_DIR = TRAINING_RESULTS_DIR / "legacy"
 
 # ---------------- 로봇 구성 (하드웨어 스펙, 2026-08-25 확정) ----------------
 # 스펙 변동 가능성이 통보돼 있어 코드에 박지 않고 여기서 바꾼다.

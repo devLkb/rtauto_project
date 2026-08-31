@@ -107,6 +107,36 @@ Unity 수동 팔 IK (UR16e)
 > 엉뚱한 게 잡히면 `.env`의 `RTAUTO_VISION_CAMERA_INDEX`를 0, 1, 2로 바꿔본다.
 > 사용자·카메라가 바뀌었으면 최초 1회 `python vision/dg5f/calibrate_dg5f.py`로 보정한다.
 
+## 다른 PC에 exe로 배포 (설치 없이 시연)
+
+현재 데모(`Pipeline_Demo_GraspLift`)는 학습된 정책이 아직 없어 **웹캠 텔레옵이 유일한
+동작 경로**다 — 즉 "설치 없이 exe만 받아서 실행"하려면 두 실행파일이 함께 필요하다.
+Unity 빌드만으로는 손이 안 움직인다(웹캠 신호가 없으므로).
+
+1. **Unity 빌드**: File > Build Settings에서 활성 씬이
+   `Assets/Scenes/Pipeline_Demo_GraspLift.unity`(인덱스 0)인지 확인 후 Windows Standalone으로
+   Build. 산출물(`KDT_robot_AI.exe` + `KDT_robot_AI_Data/`)은 그 자체로 설치 불필요 —
+   폴더째 복사하면 다른 PC에서 바로 실행된다.
+2. **웹캠 트래킹 exe화**: 비전+ML-Agents 공용 venv(3.10.11)를 활성화한 상태에서
+   ```powershell
+   .\vision\dg5f\build_demo_exe.ps1
+   ```
+   실행. `vision/dg5f/dist/vision_node_dg5f/` 폴더째가 산출물이다 — mediapipe가 모델
+   파일과 네이티브 바이너리를 들고 다녀서 `--onefile`이 아니라 폴더 배포로 만들었다.
+3. 1번과 2번의 산출물을 한 폴더에 모으고 `vision/dg5f/RunDemo.ps1`을 그 폴더에 복사해
+   넣으면(스크립트 안 폴더 구조 주석 참고) 더블클릭 한 번으로 웹캠 트래킹 + Unity가
+   함께 뜬다.
+
+> ⚠️ **PyInstaller로 mediapipe를 묶는 건 버전마다 깨지는 사례가 흔하다.** 빌드가
+> 끝났다고 끝난 게 아니다 — 산출물 폴더를 레포 밖으로 옮겨서 실제로 실행해보고 웹캠이
+> 뜨는지, 콘솔에 관절각이 찍히는지 반드시 확인할 것. 배포 대상 PC에는 웹캠 자체는
+> 있어야 한다(텔레옵이 유일한 동작 경로이므로).
+>
+> 자동(정책 기반) 모드가 준비되면 이 웹캠 의존성 자체가 사라진다 — Unity의 ONNX 추론은
+> 이미 임베디드라 Unity 빌드 하나만으로 시연이 끝난다. 현재는 `Assets/MLAgents/picknplace/`
+> 쪽 정책이 아직 학습되지 않아(`PicknPlaceControlModeSwitcher`가 기본 수동모드로 시작하는
+> 이유) 이 경로를 쓸 수 없다.
+
 ## 텔레옵 실행 (UR16e + 오른손 모델)
 
 ```bash

@@ -8,13 +8,20 @@ using UnityEngine;
 namespace KDT.PicknPlaceTraining.Editor
 {
     /// <summary>
-    /// Standalone player builds for the DG5FPicknPlace behavior.
+    /// Builds the standalone player that <c>mlagents-learn --env=...</c> drives for
+    /// headless DG5FPicknPlace training.
     ///
-    /// Two targets, same scene. The Linux player is the legacy headless-server
-    /// artefact; the Windows player exists because mlagents-learn's --num-envs
-    /// (several player processes feeding one PPO update) only works against a
-    /// built player, and the current training machine is a Windows desktop. The
-    /// Unity Editor path stays available but is limited to a single environment.
+    /// Two targets exist because the training host changed. The Linux player was
+    /// written for the (now retired) dedicated GPU Linux box; the only machine left
+    /// is a local Windows workstation (RTX 2080) — see
+    /// <c>training/archives/scripts/README.md</c>. Headless training on that machine
+    /// needs a StandaloneWindows64 player, so the target-specific parts (build
+    /// target, output/player-name keys, post-processing) are parameters of one
+    /// shared routine rather than a second copy of it.
+    ///
+    /// Both entry points are callable from batchmode:
+    ///   Unity -batchmode -quit -projectPath unity \
+    ///     -executeMethod KDT.PicknPlaceTraining.Editor.PicknPlaceTrainingBuild.BuildWindowsPlayer
     /// </summary>
     public static class PicknPlaceTrainingBuild
     {
@@ -26,7 +33,8 @@ namespace KDT.PicknPlaceTraining.Editor
             BuildPlayer(
                 BuildTarget.StandaloneLinux64,
                 "DG5F_PICKNPLACE_BUILD_OUTPUT",
-                "DG5F_PICKNPLACE_PLAYER_NAME");
+                "DG5F_PICKNPLACE_PLAYER_NAME",
+                applyLinuxPostProcess: true);
         }
 
         [MenuItem("Tools/ML-Agents/Build DG5F PicknPlace Windows Player")]
@@ -35,15 +43,20 @@ namespace KDT.PicknPlaceTraining.Editor
             BuildPlayer(
                 BuildTarget.StandaloneWindows64,
                 "DG5F_PICKNPLACE_WINDOWS_BUILD_OUTPUT",
-                "DG5F_PICKNPLACE_WINDOWS_PLAYER_NAME");
+                "DG5F_PICKNPLACE_WINDOWS_PLAYER_NAME",
+                applyLinuxPostProcess: false);
         }
 
-        static void BuildPlayer(BuildTarget target, string outputKey, string playerNameKey)
+        static void BuildPlayer(
+            BuildTarget target,
+            string outputDirectoryKey,
+            string playerNameKey,
+            bool applyLinuxPostProcess)
         {
             PicknPlaceTrainingSceneBuilder.Build();
 
             BuildEnvironment environment = BuildEnvironment.Load();
-            string outputDirectory = environment.GetPath(outputKey);
+            string outputDirectory = environment.GetPath(outputDirectoryKey);
             string playerName = environment.GetFileName(playerNameKey);
             string dataDirectoryName =
                 Path.GetFileNameWithoutExtension(playerName) + "_Data";
@@ -61,20 +74,17 @@ namespace KDT.PicknPlaceTraining.Editor
             BuildReport report = BuildPipeline.BuildPlayer(options);
             if (report.summary.result != BuildResult.Succeeded)
                 throw new InvalidOperationException(
-                    $"PicknPlace build failed: {report.summary.result}, "
+                    $"PicknPlace {target} build failed: {report.summary.result}, "
                     + $"errors={report.summary.totalErrors}");
 
-            if (target == BuildTarget.StandaloneLinux64)
-            {
+            if (applyLinuxPostProcess)
                 LinuxPlayerPostProcess.Apply(environment, outputDirectory, dataDirectoryName);
-            }
             else
-            {
-                // ML-Agents writes --timer-path output here and does not create the
-                // folder itself; same reason LinuxPlayerPostProcess creates it.
+                // The Linux post-process also creates this folder; the ML-Agents
+                // profiler writes its timer JSON here at shutdown and fails the run
+                // if the directory is missing.
                 Directory.CreateDirectory(Path.Combine(
                     outputDirectory, dataDirectoryName, "ML-Agents", "Timers"));
-            }
 
             Debug.Log($"[PicknPlaceTrainingBuild] Built {options.locationPathName}");
         }

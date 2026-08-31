@@ -59,25 +59,42 @@ torch_settings:
   device: cuda
 
 environment_parameters:
-  # Thumb posture requirement (task brief, 2026-08-30): the thumb must never be
-  # the part of the hand aimed at the work surface, so that the grasp transfers
-  # to a later pick-and-place phase where the hand has to release next to a
-  # platform. Scored by Dg5fPicknPlaceSpec.ThumbDownPenalty as the depth of the
-  # thumb tip below the lowest other fingertip. Stated explicitly here (it is
-  # also the code default) so the run record carries the requirement rather than
-  # leaving it implicit -- and so it can be swept without a rebuild.
+  # Thumb posture requirement (task brief): the thumb must never be the part of
+  # the hand aimed at the work surface, so the grasp transfers to a later
+  # pick-and-place phase where the hand has to release beside a platform.
+  #
+  # History, because the weight alone is not the interesting part. The original
+  # reading was an ANGLE (thumb base->tip vs straight down, free above 60 deg) at
+  # -0.10 per decision. On 2026-08-28 that was found to be able to outweigh the
+  # whole task: ~200 decisions per episode x -0.10 = -20.0 against a maximum
+  # attainable positive total near +12.2, and the run had converged to near-zero
+  # movement with ContactCount flat over 2M+ steps. It was rebalanced to -0.01 as
+  # a stopgap.
+  #
+  # On 2026-08-30 the kinematics were actually measured (Tools > ML-Agents >
+  # Diagnose PicknPlace Thumb Orientation) and the reading itself turned out to be
+  # wrong, not just too heavy: at one fixed arm pose that angle swung 71.5 -> 6.8
+  # deg purely as grip closure went 0 -> 0.75, while the thumb's proximal segment
+  # held a constant 30.0 deg. It was measuring how CLOSED the hand was. Weakening
+  # it to -0.01 hid the symptom but kept a signal that penalises grasping.
+  #
+  # The reading is now the DEPTH of the thumb tip below the lowest other
+  # fingertip -- the same concern stated so the policy can satisfy it. -0.05 is
+  # sized by the rule the old value violated: a whole episode at full cost must
+  # stay under one lift's payoff. See docs/DG5F_PICKNPLACE.md.
   thumb_down_penalty_scale:
     sampler_type: constant
     sampler_parameters:
       value: -0.05
 
-  # Stable-lift requirement (2026-08-30). Nothing charged for carrying the
-  # pillar cocked over: IsToppled stops applying once the grasp is confirmed and
-  # the lift success test ignores attitude, so mean tilt was drifting up (27 ->
-  # 29 deg by 6M steps). Graded per-decision cost while the object is held, free
-  # under 10 deg. Introduced mid-run and applied with --resume, so the reward
-  # changes from that step onward; the success-rate definition was deliberately
-  # left alone so its curve stays comparable across the whole run.
+  # Stable-lift requirement (2026-08-30). Nothing charged for carrying the pillar
+  # cocked over: IsToppled stops applying once the grasp is confirmed and the lift
+  # success test ignores attitude, so mean tilt was drifting up (27 -> 29 deg by
+  # 6M steps). Graded per-decision cost while the object is held, free under
+  # 10 deg. Introduced mid-run and applied with --resume, so the reward changes
+  # from that step onward; the success-rate definition was deliberately left alone
+  # so its curve stays comparable across the whole run. Measured effect:
+  # 27.5 -> 15.3 deg with success rising 98 -> 99%.
   lift_tilt_penalty_scale:
     sampler_type: constant
     sampler_parameters:
