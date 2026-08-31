@@ -63,6 +63,11 @@ def _env(name, default=""):
 # ---------------- 네트워크 (Unity ↔ Python vision 스크립트) ----------------
 UNITY_IP = _env("RTAUTO_UNITY_IP", "127.0.0.1")
 
+# Unity(Assets/Scripts/Dg5fSender.cs)가 실물 SDK 브리지로 관절각을 쏠 때의 대상 IP.
+# UNITY_IP의 반대 방향이다 — 저건 "Unity가 어디 있나", 이건 "dg5f_sdk_bridge.py가 어디 있나".
+# 보통 Unity와 브리지를 같은 PC에서 돌리므로 기본값이 로컬이다.
+DG5F_BRIDGE_IP = _env("RTAUTO_DG5F_BRIDGE_IP", "127.0.0.1")
+
 # UDP 포트 레지스트리 — 각 포트는 이 파일에서만 숫자로 정의한다. 새로 포트를 쓸 일이 생기면
 # 여기부터 확인해서 겹치지 않는 번호를 고를 것 (과거 DG5F 실물 브리지와 ZED 좌표 송신이
 # 둘 다 5007을 써서 같은 PC에서 동시 실행 시 UDP 바인드 충돌이 나는 문제가 있었다 — 2026-08-25 수정).
@@ -70,6 +75,26 @@ PORT_SVH_JOINTS = int(_env("RTAUTO_PORT_SVH_JOINTS", "5005"))    # 레거시 SVH
 PORT_DG5F_SIM = int(_env("RTAUTO_PORT_DG5F_SIM", "5006"))        # → Unity Dg5fReceiver (DG5F 손 관절 트윈)
 PORT_ZED_TARGET = int(_env("RTAUTO_PORT_ZED_TARGET", "5007"))    # → Unity CameraTargetReceiver (ZED 객체 좌표)
 PORT_DG5F_BRIDGE = int(_env("RTAUTO_PORT_DG5F_BRIDGE", "5008"))  # vision_node --bridge → dg5f_sdk_bridge.py (실물 SDK)
+
+# ---------------- DG5F 손 관절 속도 한계 ----------------
+# 실물 DG-5F가 안전하게 따라올 수 있는 관절 각속도 상한[deg/s]. 두 곳이 이 값을 공유한다:
+#   1) vision/dg5f/dg5f_sdk_bridge.py — 틱당 슬루 리밋(= 이 값 / 송신 Hz)으로 환산해 실물 보호
+#   2) unity/Assets/MLAgents/picknplace/Runtime/Dg5fFistButton.cs — Unity 트윈도 같은 속도로 제한
+# 왜 Unity에도 거는가: 트윈의 목적이 "시뮬과 실물이 서로를 검증하는 것"인데, 시뮬이 실물보다
+# 빠르게 움직이면 시뮬에서 성공한 파지가 실물에서 실패하는 것을 잡아내지 못한다. 나중에 RL
+# 정책을 실물에 올릴 때도 같은 간극이 그대로 문제가 된다(로드맵 Phase 2 도메인 랜덤화 항목).
+# 근거: 하드웨어 설명서 §3.1 각 관절 무부하 속도 75 RPM = 450 deg/s. 부하·마찰·보수적 PID
+# 게인을 감안해 그 1/4 이하로 잡은 보수적 초기값이다. 실물이 튀지 않으면 조금씩 올려도 된다.
+DG5F_MAX_DEG_PER_SEC = float(_env("RTAUTO_DG5F_MAX_DEG_PER_SEC", "100"))
+
+# ---------------- DG5F 파지 자세(티칭) ----------------
+# 실물 손을 사람이 직접 원하는 파지 자세로 잡아놓고 그 관절각을 캡처해 저장하는 파일.
+#   쓰기: vision/dg5f/dg5f_readback_bridge.py --capture-pose
+#   읽기: unity/.../Dg5fFistButton.cs 의 "파지하기" 버튼
+# 주먹(Dg5fPicknPlaceSpec.RightFistDeg)은 코드에 박힌 상수지만, 파지 자세는 대상 물체마다
+# 달라지므로(종이컵/FOUP 손잡이/…) 코드가 아니라 이 파일로 뺀다. 값은 **우리 규약**
+# (URDF/Unity 기준, deg) — 실물 SDK 규약과의 부호 차이는 캡처할 때 이미 변환된다.
+DG5F_GRASP_POSE_FILE = _env("RTAUTO_DG5F_GRASP_POSE", "config/dg5f_grasp_pose.json")
 
 # ---------------- MediaPipe 카메라 ----------------
 # 카메라 열거 순서와 지원 모드는 PC/드라이버마다 다르므로 vision 스크립트에 고정하지 않는다.

@@ -231,6 +231,31 @@ namespace KDT.PicknPlaceTraining.Editor
             // otherwise Dg5fFistButton keeps driving the hand closed right through the reset.
             jointPanel.fistButton = fistButton;
 
+            // Outbound bridge to the REAL gripper: streams these same 20 hand channels over UDP to
+            // vision/dg5f/dg5f_sdk_bridge.py, which relays them to the physical DG-5F via DGSDK.
+            // Exactly the reverse of Dg5fReceiver above, so the fist button (or any other manual
+            // control here) can drive the real hand, not just the twin.
+            // Added by the builder rather than by hand because a component the operator has to
+            // remember to attach is an undocumented manual step (CLAUDE.md 원칙 2).
+            // It stays inert until switched on: Dg5fSender.sendEnabled defaults to false and has to
+            // be toggled in its own on-screen box, so opening this scene never moves real hardware.
+            Dg5fSender sender = robot.GetComponent<Dg5fSender>();
+            if (sender == null) sender = robot.AddComponent<Dg5fSender>();
+
+            // 트윈 방향 전환 UI (좌하단): sim→real / real→sim / 연결 끊기.
+            // 두 방향을 동시에 켜면 Unity→실물→echo→Unity 되먹임 루프가 되므로, 사람이
+            // 컴포넌트 체크박스를 손으로 여닫는 대신 이 컴포넌트가 상호배타를 강제한다.
+            // 방향을 바꿀 때 구동 브리지로 제어 패킷을 보내 실물 교시 모드까지 함께 전환하므로,
+            // 파이썬은 `dg5f_sdk_bridge.py --ip <IP> --echo-to-unity` 한 번만 띄우면 된다.
+            // Sender와 같은 이유로 빌더가 붙인다 — 손으로 붙여야 하는 컴포넌트는 문서화되지
+            // 않은 수동 단계다(CLAUDE.md 원칙 2). 시작 모드는 Off라 씬을 열어도 실물은 가만있다.
+            Dg5fTwinModeSwitcher twinMode = robot.GetComponent<Dg5fTwinModeSwitcher>();
+            if (twinMode == null) twinMode = robot.AddComponent<Dg5fTwinModeSwitcher>();
+            twinMode.sender = sender;
+            twinMode.receiver = receiver;
+            twinMode.handDriver = driver;
+            twinMode.fistButton = fistButton;
+
             agent.enabled = false;
             DecisionRequester requester = robot.GetComponent<DecisionRequester>();
             if (requester != null) requester.enabled = false;

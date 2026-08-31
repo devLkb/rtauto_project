@@ -100,3 +100,7 @@ unity/MUJOCO_LOG.TXT
 
 # pytest 캐시
 .pytest_cache/
+
+# 저장소 루트 Logs/ — Unity 에디터 로그와 브리지 산출물(--track CSV 등)이 섞여 쌓이는 곳.
+# 실행할 때마다 달라지는 실측 기록이라 추적하지 않는다.
+/Logs/

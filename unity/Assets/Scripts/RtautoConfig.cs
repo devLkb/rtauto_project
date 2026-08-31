@@ -60,6 +60,24 @@ public static class RtautoConfig
         return _values != null && _values.TryGetValue(key, out string value) ? value : fallback;
     }
 
+    /// 저장소 루트 기준 상대경로를 절대경로로 바꾼다. 이미 절대경로면 그대로 돌려준다.
+    /// 루트를 못 찾으면(standalone 빌드 등) null — 호출부가 조용히 건너뛸 수 있게 예외는 안 던진다.
+    /// config/rtauto_config.py가 "상대경로는 저장소 루트 기준"으로 다루는 규칙과 같게 맞춘 것이다.
+    public static string GetRepoPath(string relativeOrAbsolute)
+    {
+        if (string.IsNullOrEmpty(relativeOrAbsolute)) return null;
+        try
+        {
+            if (Path.IsPathRooted(relativeOrAbsolute)) return relativeOrAbsolute;
+            string root = ResolveRepositoryRoot();
+            return root == null ? null : Path.Combine(root, relativeOrAbsolute);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
     static void EnsureLoaded()
     {
         if (_values != null) return;
