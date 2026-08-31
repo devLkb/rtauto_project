@@ -15,14 +15,14 @@ SDK 근거 (DGSDK.h/DGDataTypes.h, dg_python-main 공식 래퍼, 매뉴얼 9.2/1
   (OPERATOR) 모드 미지원 명령어" 목록 1번으로 GET_DATA(설정된 데이터 수신)를 명시한다.
   즉 OPERATOR 모드로는 애초에 이 읽기 자체가 불가능 — control-mode는 항상 developer.
 
-⚠️ 실물 테스트 전 확인되지 않은 것 (로컬 오프라인 네트워크에서 실측 필요):
-  **동시 접속 가능 여부** — DGManager(또는 다른 SDK 클라이언트)가 이미 그리퍼에 붙어 있는
-  상태에서, 이 스크립트가 별도 프로세스로 같은 그리퍼(Modbus TCP :502)에 **두 번째 연결**을
-  여는 것을 그리퍼 펌웨어가 허용하는지 미확인. 게다가 이 스크립트는 DEVELOPER 모드로 붙어야
-  해서, DGManager가 OPERATOR 모드로 물려 있다면 컨트롤 모드 자체가 전역 상태일 경우
-  충돌 가능성도 있음(둘 다 미확인). 안 되면 먼저 DGManager를 끄고 이 스크립트 단독으로
-  읽기가 되는지 확인한 뒤, DGManager를 같이 켜서 재시도할 것 — 이 스크립트는 실물에
-  아무것도 쓰지 않는(읽기 전용) 안전한 편이라, 실패해도 하드웨어 손상 위험은 없다.
+⚠️ **동시 접속 불가 — 2026-08-31 실물 실측으로 확인 완료.** DGManager를 사용자모드
+  (Operator, Modbus TCP)로 붙여둔 채 이 스크립트를 개발자모드(Developer)로 연결 시도했더니
+  ConnectToGripper 단계에서 타임아웃/실패했다. 즉 Operator/Developer 프로토콜이 달라도
+  안 된다 — 그리퍼가 애초에 TCP 세션 자체를 1개만 받는 것으로 보인다(응용계층 프로토콜
+  문제가 아니라 그보다 아래 단의 제약). DGManager를 켜둔 채로는 이 스크립트도,
+  dg5f_sdk_bridge.py도 연결할 수 없다 — 반드시 DGManager를 끄고 단독으로 붙일 것.
+  "실물이 누구에 의해 움직이든(DGManager 포함) 반사한다"는 이 스크립트의 원래 설계 의도는
+  DGManager와의 동시 사용 한정으로는 실현 불가능으로 확정됐다.
 
 2026-08-31 실물 1차 테스트에서 "access violation writing 0x0"으로 죽었던 원인은 매뉴얼
 10.1 ConnectToGripper 예제가 명시한 콜백 등록(InitializedCallback)을 안 해서였다 —
