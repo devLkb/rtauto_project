@@ -116,8 +116,25 @@ namespace KDT.PicknPlaceTraining
         int _releasedGroups;      // 순차 모드: 이 번호 미만 그룹이 목표를 향한다 (0 = 전부 열림)
         bool _holdPose;           // true면 버튼을 누를 때까지 현재 자세를 유지(ResyncToCurrentPose 참고)
         bool _resolved;
-        bool _handDriverWasEnabled;
-        bool _handReceiverWasEnabled;
+
+        /// <summary>
+        /// 지금 손 관절(xDrive.target)의 주인이 이 프리셋 버튼인지. false면 웹캠 트래킹
+        /// (Dg5fReceiver + Dg5fHandDriver)이 주인이고, 이 컴포넌트는 xDrive에 **전혀 쓰지 않는다.**
+        ///
+        /// 왜 필요한가 (2026-09-01 버그): 예전에는 프리셋을 누를 때 웹캠 쪽 컴포넌트의
+        /// enabled를 저장해두고 '손 펴기'에서 되돌리는 방식이었다. 세 가지로 깨졌다 —
+        ///   ① 프리셋을 연달아 누르면(주먹→파지, 주먹→주먹) 두 번째 저장값이 false라
+        ///      '손 펴기'가 false를 복원해 **웹캠 조작이 영구히 죽었다.**
+        ///   ② bool 기본값이 false라, 아무것도 안 쥔 상태에서 '손 펴기'를 **먼저** 누르면
+        ///      역시 웹캠이 꺼졌다.
+        ///   ③ 자세를 취한 뒤 실시간 조작으로 돌아올 수 있는 경로가 '손 펴기' 하나뿐이었다 —
+        ///      자세를 유지한 채 이어서 조작할 방법이 없었다.
+        /// 저장·복원을 버리고 "주인이 누구인가"를 한 변수로 들고, 돌려주는 버튼을 UI에 뒀다.
+        ///
+        /// 씬 시작값은 false — 데모 기본이 웹캠 텔레옵이고, PicknPlaceControlModeSwitcher가
+        /// 수동 모드에서 Receiver/HandDriver를 켜는 것과 앞뒤가 맞아야 한다.
+        /// </summary>
+        bool _presetOwnsHand;
 
         void Awake()
         {
@@ -282,15 +299,26 @@ namespace KDT.PicknPlaceTraining
             //    sim→real 진입 시 실물이 파지 자세였다면 **그 자세가 '펴진 손'이 되어 버려**
             //    이후 '손 펴기'가 파지 자세로 갔다(2026-08-31). _openDeg는 씬 시작 시점의
             //    프리팹 기본(펴진) 자세로 계속 두고, 여기서는 명령 기준점만 현재 자세로 옮긴다.
-            for (int i = 0; i < _handJoints.Length; i++)
-                if (_handJoints[i] != null)
-                    _cmdDeg[i] = _handJoints[i].xDrive.target;
+            SyncCommandToCurrentPose();
             _closure = 0f;
             _targetClosure = 0f;
             _releasedGroups = 0;
             // 버튼을 누르기 전까지는 지금 자세를 그대로 유지한다. 이게 없으면 곧바로 _openDeg를
             // 향해 움직여, 실물 자세에 맞춰둔 의미가 사라진다(전환 직후 튐).
             _holdPose = true;
+            // 이 메서드는 Dg5fTwinModeSwitcher가 sim→real 진입에서 부른다 — 그 모드에서는
+            // 스위처가 Receiver/HandDriver를 끄고 손을 이 버튼에 넘긴다. 자세를 '유지'하는
+            // 주체도 이 버튼이므로 소유권을 함께 넘겨받아야 FixedUpdate가 동작한다.
+            _presetOwnsHand = true;
+        }
+
+        /// 명령 기준점(_cmdDeg)을 지금 관절 자세로 맞춘다. 주인이 바뀌는 순간마다 필요하다 —
+        /// 안 맞춰두면 다음 틱에 옛 명령각으로 순간이동한다.
+        void SyncCommandToCurrentPose()
+        {
+            for (int i = 0; i < _handJoints.Length; i++)
+                if (_handJoints[i] != null)
+                    _cmdDeg[i] = _handJoints[i].xDrive.target;
         }
 
         /// 캡처한 파지 자세로 간다. 자세 파일이 없으면 아무것도 하지 않는다.
@@ -308,18 +336,42 @@ namespace KDT.PicknPlaceTraining
         {
             _holdPose = false;      // 사람이 자세를 지시했으니 '현재 자세 유지'를 푼다
             _targetClosure = closed ? 1f : 0f;
+            // '손 펴기'도 프리셋 자세다 — 방향과 무관하게 이 버튼이 손을 잡는다. 예전처럼
+            // 펴기에서 웹캠을 되돌리면, 펴는 동작과 웹캠 구동이 같은 xDrive를 두고 싸운다.
+            // 웹캠으로 돌아가는 것은 아래 ReleaseHandToTracking()(UI 버튼)이 담당한다.
+            TakeOverHand();
+        }
 
-            if (closed)
-            {
-                if (handDriver != null) { _handDriverWasEnabled = handDriver.enabled; handDriver.enabled = false; }
-                if (handReceiver != null) { _handReceiverWasEnabled = handReceiver.enabled; handReceiver.enabled = false; }
-                if (agent != null) agent.PauseForManualControl();
-            }
-            else
-            {
-                if (handDriver != null) handDriver.enabled = _handDriverWasEnabled;
-                if (handReceiver != null) handReceiver.enabled = _handReceiverWasEnabled;
-            }
+        /// 프리셋 버튼이 손 관절을 전담한다. 웹캠 트래킹은 멈춘다(같은 xDrive.target 경합 방지).
+        /// ★몇 번을 눌러도 상태가 누적되지 않는 것이 핵심 — 이전 저장·복원 방식이 여기서 깨졌다.
+        void TakeOverHand()
+        {
+            if (_presetOwnsHand) return;
+            _presetOwnsHand = true;
+            // 웹캠이 움직여둔 **현재 자세에서 이어받는다.** 안 하면 옛 _cmdDeg에서 출발해 첫 틱에
+            // 그만큼 튄다 — 실물이 붙어 있으면 그게 곧 하드 스톱 충돌 위험이다.
+            SyncCommandToCurrentPose();
+            if (handDriver != null) handDriver.enabled = false;
+            if (handReceiver != null) handReceiver.enabled = false;
+            if (agent != null) agent.PauseForManualControl();
+        }
+
+        /// 손을 웹캠 트래킹(MediaPipe)에 돌려준다 — 프리셋 자세를 취한 뒤 실시간 조작으로
+        /// 복귀하는 경로. 자세를 억지로 되돌리지 않고 **현재 자세에서 손을 뗀다**:
+        /// 이 시점부터 FixedUpdate가 xDrive에 아무것도 쓰지 않으므로, 웹캠이 그 자세를
+        /// 출발점으로 이어받는다(Dg5fHandDriver의 lerp가 부드럽게 연결한다).
+        public void ReleaseHandToTracking()
+        {
+            _presetOwnsHand = false;
+            _holdPose = true;               // 다시 잡을 때까지 프리셋은 아무 자세도 지시하지 않는다
+            // 폐합 진행 상태를 '열림'으로 되돌린다. 안 되돌리면 다음에 '주먹 쥐기'를 눌렀을 때
+            // _releasedGroups가 이미 끝값이라 순차 폐합이 통째로 건너뛰어져 20관절이 동시에
+            // 닫힌다 — 물체를 감쌀 때 끝마디가 먼저 부딪히는, sequentialClosing이 막으려던 그 상황.
+            _targetClosure = 0f;
+            _closure = 0f;
+            _releasedGroups = 0;
+            if (handReceiver != null) handReceiver.enabled = true;
+            if (handDriver != null) handDriver.enabled = true;
         }
 
         /// 채널 i가 지금 얼마나 닫혀 있어야 하는지(0~1). 단계 시작값을 넘기기 전에는 0이라
@@ -360,6 +412,10 @@ namespace KDT.PicknPlaceTraining
         void FixedUpdate()
         {
             if (!_resolved || !driveHand) return;
+            // 손의 주인이 아니면 xDrive에 손대지 않는다. 이 한 줄이 웹캠 실시간 조작과의 경합을
+            // 없앤다 — 예전에는 씬을 켠 직후부터 이 컴포넌트가 매 틱 '펴진 손'을 써넣어,
+            // Dg5fHandDriver와 같은 xDrive.target을 두고 컴포넌트 실행 순서에 결과가 좌우됐다.
+            if (!_presetOwnsHand) return;
 
             // 실물 브리지의 슬루 리밋과 같은 '등속' 접근. 이게 없으면 지수 보간이라 초기 각속도가
             // (이동량 × closeSpeed)까지 치솟아 트윈이 실물보다 먼저 도착한다.
@@ -426,7 +482,8 @@ namespace KDT.PicknPlaceTraining
             if (!showUI) return;
             // 우상단 — 좌상단(PicknPlaceControlModeSwitcher), 우하단(PicknPlaceTeleopNudge)과
             // 겹치지 않는 모서리.
-            GUILayout.BeginArea(new Rect(Screen.width - 250, 10, 240, 128), GUI.skin.box);
+            // 높이를 바꾸면 Dg5fSender.OnGUI의 패널 y도 함께 내려야 한다(그쪽이 이 아래에 붙는다).
+            GUILayout.BeginArea(new Rect(Screen.width - 250, 10, 240, 176), GUI.skin.box);
             // 구동권이 없을 때(real→sim: 손의 주인이 Dg5fHandDriver) 자세 버튼은 눌러도 소용없다.
             // 반면 '녹화'는 그 모드에서 쓰는 기능이라 계속 살려둔다.
             GUI.enabled = driveHand;
@@ -438,7 +495,13 @@ namespace KDT.PicknPlaceTraining
             GUI.enabled = driveHand && _graspDeg != null;
             if (GUILayout.Button(_graspDeg != null ? $"파지하기 ({_graspName})" : "파지하기 (자세 없음)"))
                 SetGrasp(true);
+            // 프리셋 자세를 취한 뒤 웹캠 실시간 조작으로 돌아오는 경로. 프리셋이 손을 잡고 있을
+            // 때만 의미가 있다(이미 웹캠이 주인이면 누를 것이 없다).
+            GUI.enabled = driveHand && _presetOwnsHand;
+            if (GUILayout.Button("웹캠 실시간 조작으로")) ReleaseHandToTracking();
             GUI.enabled = true;
+            // 지금 손을 누가 쥐고 있는지 항상 보이게 한다 — "왜 손이 안 움직이지"의 답이 여기다.
+            GUILayout.Label(_presetOwnsHand ? "손 주인: 프리셋 버튼" : "손 주인: 웹캠 트래킹");
             // 지금 자세가 마음에 들면 그 자리에서 다시 뜬다 — real→sim으로 손에 자세를 잡아둔 뒤 누른다.
             if (GUILayout.Button("현재 자세 녹화"))
             {

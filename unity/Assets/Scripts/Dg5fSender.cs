@@ -135,9 +135,10 @@ public class Dg5fSender : MonoBehaviour
     void OnGUI()
     {
         if (!showUI) return;
-        // 우상단은 Dg5fFistButton이 쓰므로 그 아래에 붙인다(그쪽이 y=10..92를 쓴다 — 주먹/펴기 +
-        // 파지하기 3버튼). 그쪽 버튼이 늘면 이 y도 같이 내려야 겹치지 않는다.
-        GUILayout.BeginArea(new Rect(Screen.width - 250, 100, 240, 78), GUI.skin.box);
+        // 우상단은 Dg5fFistButton이 쓰므로 그 아래에 붙인다 — 그쪽 패널이 y=10..186이다
+        // (주먹/펴기 · 파지하기 · 웹캠 복귀 · 소유권 표시 · 녹화). 그쪽 높이가 바뀌면 이 y도
+        // 같이 내려야 한다. 2026-09-01에 실제로 겹쳐 있던 것을 바로잡았다.
+        GUILayout.BeginArea(new Rect(Screen.width - 250, 194, 240, 78), GUI.skin.box);
         bool next = GUILayout.Toggle(sendEnabled, sendEnabled ? " 실물 송신 ON" : " 실물 송신 OFF");
         if (next != sendEnabled)
         {

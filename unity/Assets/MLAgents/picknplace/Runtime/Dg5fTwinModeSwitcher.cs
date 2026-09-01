@@ -110,13 +110,29 @@ namespace KDT.PicknPlaceTraining
             bool realToSim = m == TwinMode.RealToSim;
 
             if (sender != null) sender.sendEnabled = simToReal;
-            if (receiver != null) receiver.enabled = realToSim;
-            if (handDriver != null) handDriver.enabled = realToSim;
+
+            // 웹캠→트윈 수신 경로(Receiver + HandDriver)는 **sim→real에서만** 끈다.
+            // sim→real에서 끄는 이유는 되먹임이다: 브리지의 실물 상태 echo가 같은 5006으로
+            // 들어와 Unity→실물→Unity 루프가 된다.
+            // ⚠️ Off에서도 함께 끄던 것을 2026-09-01에 바로잡았다. Off는 '실물 연결만 끊는다'는
+            //    뜻인데 웹캠 미러링까지 멈춰서, '연결 끊기'를 누르면(그리고 씬 시작 시 Start()가
+            //    SetMode(Off)를 부르는 순간에도) 웹캠 조작이 죽었다.
+            bool trackingOwnsHand = !simToReal;
+            if (receiver != null) receiver.enabled = trackingOwnsHand;
+            if (handDriver != null) handDriver.enabled = trackingOwnsHand;
+
             // real→sim에서는 손 자세의 주인이 Dg5fHandDriver다. 주먹/파지 버튼이 같이 구동하면
             // 같은 xDrive.target을 두 컴포넌트가 매 틱 덮어써서 결과가 실행 순서에 좌우된다.
             // 컴포넌트를 끄지 않고 구동만 막는 이유: 끄면 OnGUI도 멈춰 '현재 자세 녹화' 버튼이
             // 사라지는데, 손으로 자세를 잡아 녹화하는 게 바로 이 모드이기 때문이다.
-            if (fistButton != null) fistButton.driveHand = !realToSim;
+            if (fistButton != null)
+            {
+                fistButton.driveHand = !realToSim;
+                // 웹캠이 주인인 모드로 들어갈 때는 프리셋이 쥐고 있던 소유권을 확실히 내려놓게
+                // 한다. 안 그러면 프리셋을 누른 뒤 모드를 옮겼을 때 소유권이 남아, 웹캠과
+                // 프리셋이 같은 xDrive를 두고 다시 싸운다.
+                if (trackingOwnsHand) fistButton.ReleaseHandToTracking();
+            }
 
             SendControl(realToSim);   // 실물 교시 모드: real→sim일 때만 힘을 푼다
 
@@ -124,7 +140,7 @@ namespace KDT.PicknPlaceTraining
             {
                 TwinMode.SimToReal => "Unity가 실물을 구동합니다. 주먹/파지 버튼을 누르세요.",
                 TwinMode.RealToSim => "실물 힘이 풀렸습니다. 손으로 자세를 잡으면 트윈이 따라옵니다.",
-                _ => "양쪽 모두 정지. 실물은 마지막 자세를 유지합니다.",
+                _ => "실물 연결만 끊었습니다(실물은 마지막 자세 유지). 웹캠 미러링은 계속됩니다.",
             };
             Debug.Log($"[Dg5fTwinModeSwitcher] 모드 = {m} — {_note}");
         }
