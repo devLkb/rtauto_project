@@ -47,7 +47,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from config.rtauto_config import UNITY_IP, PORT_DG5F_SIM, DG5F_GRASP_POSE_FILE
+from config.rtauto_config import (
+    UNITY_IP, PORT_DG5F_SIM, DG5F_GRASP_POSE_FILE, DG5F_IP, resolve_gripper_ip,
+)
 
 from dg5f_sdk_bridge import (
     Dg5fSdk, MODELS, DG_RESULT_NONE, DEFAULT_DLL,
@@ -71,7 +73,10 @@ def bind_readback(dll):
 
 def main():
     ap = argparse.ArgumentParser(description="DG-5F 실물 상태 판독 → Unity 트윈 반사")
-    ap.add_argument("--ip", default=None, help="그리퍼 IP — 생략 시 --fake만 가능")
+    ap.add_argument("--ip", nargs="?", const="", default=None,
+                    help="그리퍼 IP. 아예 생략하면 --fake만 가능, 값 없이 --ip만 주면 "
+                         ".env의 RTAUTO_DG5F_IP를 쓴다"
+                         + (f" (현재 {DG5F_IP})" if DG5F_IP else " (현재 비어 있음)"))
     ap.add_argument("--port", type=int, default=502, help="그리퍼 Modbus TCP 포트 (기본 502)")
     ap.add_argument("--model", default="5f_right", choices=sorted(MODELS))
     ap.add_argument("--dll", default=DEFAULT_DLL, help="DGSDK.dll 경로")
@@ -114,6 +119,12 @@ def main():
     ap.add_argument("--fake", action="store_true",
                      help="하드웨어 없이 가짜 스윕 패턴 송신 — UDP 경로/Unity 수신만 검증")
     args = ap.parse_args()
+
+    try:
+        args.ip = resolve_gripper_ip(args.ip)
+    except ValueError as e:
+        print(f"[오류] {e}")
+        return
 
     if args.fake:
         run_fake(args)

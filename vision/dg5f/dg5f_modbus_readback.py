@@ -38,8 +38,9 @@ Modbus 채널 순서(Motor N)는 dg5f_sdk_bridge.py가 하드웨어 설명서 §
 사용:
   python dg5f_modbus_readback.py --fake
       # 하드웨어 없이 가짜 스윕 패턴 송신 — UDP 수신 경로만 검증
-  python dg5f_modbus_readback.py --ip 169.254.186.72
-      # 실물 연결(사용자모드). DGManager를 이미 켜둔 채로 시도해 동시접속 여부를 확인한다.
+  python dg5f_modbus_readback.py --ip
+      # 실물 연결(사용자모드). IP는 .env의 RTAUTO_DG5F_IP에서 읽는다.
+      # DGManager를 이미 켜둔 채로 시도해 동시접속 여부를 확인한다.
   종료: Ctrl+C
 """
 import argparse
@@ -51,7 +52,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from config.rtauto_config import UNITY_IP, PORT_DG5F_SIM
+from config.rtauto_config import UNITY_IP, PORT_DG5F_SIM, DG5F_IP, resolve_gripper_ip
 
 from dg5f_sdk_bridge import N_JOINTS, CHANNEL_NAMES, from_sdk_frame
 
@@ -184,7 +185,10 @@ def run_real(args):
 def main():
     ap = argparse.ArgumentParser(
         description="DG-5F 실물 상태 판독(Modbus TCP, 사용자모드 경로) → Unity 트윈 반사")
-    ap.add_argument("--ip", default=None, help="그리퍼 IP — 생략 시 --fake만 가능")
+    ap.add_argument("--ip", nargs="?", const="", default=None,
+                    help="그리퍼 IP. 아예 생략하면 --fake만 가능, 값 없이 --ip만 주면 "
+                         ".env의 RTAUTO_DG5F_IP를 쓴다"
+                         + (f" (현재 {DG5F_IP})" if DG5F_IP else " (현재 비어 있음)"))
     ap.add_argument("--port", type=int, default=MODBUS_TCP_PORT_DEFAULT,
                      help=f"Modbus TCP 포트 (기본 {MODBUS_TCP_PORT_DEFAULT})")
     ap.add_argument("--slave-id", type=int, default=1, help="Modbus Slave ID (기본 1)")
@@ -198,6 +202,12 @@ def main():
     ap.add_argument("--fake", action="store_true",
                      help="하드웨어 없이 가짜 스윕 패턴 송신 — UDP 경로/Unity 수신만 검증")
     args = ap.parse_args()
+
+    try:
+        args.ip = resolve_gripper_ip(args.ip)
+    except ValueError as e:
+        print(f"[오류] {e}")
+        return
 
     if args.fake:
         run_fake(args)

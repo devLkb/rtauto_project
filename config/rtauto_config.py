@@ -68,6 +68,30 @@ UNITY_IP = _env("RTAUTO_UNITY_IP", "127.0.0.1")
 # 보통 Unity와 브리지를 같은 PC에서 돌리므로 기본값이 로컬이다.
 DG5F_BRIDGE_IP = _env("RTAUTO_DG5F_BRIDGE_IP", "127.0.0.1")
 
+# 실물 DG-5F 그리퍼 자신의 IP (링크로컬 — 그리퍼용 이더넷에 꽂았을 때만 도달 가능).
+# 기본값 없음: 머신·배선마다 다르고, 틀린 IP로 조용히 시도하면 원인 파악이 어렵다.
+DG5F_IP = _env("RTAUTO_DG5F_IP", "")
+
+
+def resolve_gripper_ip(value):
+    """브리지 스크립트들의 `--ip` 인자 해석 — 세 브리지가 같은 규칙을 공유한다.
+
+      None  → 드라이런 (실물 미접속, 수신값만 출력)
+      ""    → 값 없이 `--ip`만 준 경우 → 위 DG5F_IP(.env의 RTAUTO_DG5F_IP)
+      그 외 → 명시한 IP (일회성 실험·다른 그리퍼)
+
+    ⚠️ `--ip`를 아예 생략했을 때만 드라이런이다. `--ip`를 줬는데 .env가 비어 있으면
+    조용히 드라이런으로 빠지지 않고 ValueError를 낸다 — 그렇지 않으면 "실물이 안
+    움직인다"로 오해하고 하드웨어를 의심하게 된다.
+    """
+    if value != "":
+        return value
+    if not DG5F_IP:
+        raise ValueError(
+            "--ip를 값 없이 줬지만 .env의 RTAUTO_DG5F_IP가 비어 있다 — "
+            ".env에 RTAUTO_DG5F_IP=<그리퍼 IP>를 넣거나 --ip <IP>로 직접 줄 것")
+    return DG5F_IP
+
 # UDP 포트 레지스트리 — 각 포트는 이 파일에서만 숫자로 정의한다. 새로 포트를 쓸 일이 생기면
 # 여기부터 확인해서 겹치지 않는 번호를 고를 것 (과거 DG5F 실물 브리지와 ZED 좌표 송신이
 # 둘 다 5007을 써서 같은 PC에서 동시 실행 시 UDP 바인드 충돌이 나는 문제가 있었다 — 2026-08-25 수정).

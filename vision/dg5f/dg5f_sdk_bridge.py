@@ -15,16 +15,22 @@ SDK 근거 (태슬로sdk/DGSDKSample_ver_2_0_1, 2026-07-20 확인):
   - 구조체 레이아웃: DGDataTypes.h (GripperSystemSetting/GripperSetting) 그대로 ctypes 매핑
 
 사용:
-  python dg5f_sdk_bridge.py                          # 드라이런 — DLL 안 씀, 수신값만 출력(패킷 경로 검증)
-  python dg5f_sdk_bridge.py --ip 169.254.186.72      # 실물 연결 (기본 모델 5f_right — DG-5F-M-R 확정)
+  python dg5f_sdk_bridge.py                # 드라이런 — DLL 안 씀, 수신값만 출력(패킷 경로 검증)
+  python dg5f_sdk_bridge.py --ip           # 실물 연결 — IP는 .env의 RTAUTO_DG5F_IP에서 읽는다
+                                           # (기본 모델 5f_right — DG-5F-M-R 확정)
   python dg5f_sdk_bridge.py --ip <IP> --model 5f_right --unmirror
+      --ip <IP>: .env 값 대신 일회성으로 다른 그리퍼를 지정할 때만
       --unmirror: vision_node를 left로 돌리면서(왼손 Unity 트윈) 실물이 오른손일 때 —
                   왼손 미러 채널 부호를 되돌려 오른손 규약으로 변환
   종료: Ctrl+C (SystemStop + Disconnect 자동)
 
-⚠️ 첫 실물 구동 전 필수 확인 (모르면 움직이지 말 것):
-  1. JOINT_ORDER/JOINT_SIGN/JOINT_OFFSET_DEG — 우리 채널(엄지1_1..새끼5_4, URDF 기준)과
-     실물 관절 번호·방향·영점 대응은 **미검증**. --pose 로 한 관절씩 살살 보내며 확정할 것.
+관절 대응은 **2026-08-31 실물 실측으로 확정됐다** — JOINT_ORDER 항등(Motor N ↔ 채널 N-1),
+JOINT_SIGN 전 채널 +1, JOINT_OFFSET_DEG 0, JOINT_CLAMP는 채널별 실제 가동범위. 근거와
+함정은 아래 상수 정의부 주석과 docs/SIM2REAL_ROADMAP.md §5 참고.
+
+⚠️ 새 관절·새 하드웨어를 처음 움직일 때 (기존 DG-5F-M-R에는 해당 없음):
+  1. --jog IDX:DEG 로 한 관절씩 단독 구동하고 **전류를 함께 볼 것**. 부호를 잘못 잡으면
+     반대편 하드 스톱을 밀며 1.5 A로 스톨하는데, 증상은 "안 움직인다"로 보인다(실측 전례).
   2. 처음엔 --max-step 을 작게(기본 2°/틱) + 손 벌린 rest 자세에서 시작.
 """
 import argparse
@@ -39,7 +45,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from config.rtauto_config import (
     PORT_DG5F_BRIDGE, DG5F_DLL as CONFIG_DG5F_DLL, DG5F_MAX_DEG_PER_SEC,
-    UNITY_IP, PORT_DG5F_SIM,
+    UNITY_IP, PORT_DG5F_SIM, DG5F_IP, resolve_gripper_ip,
 )
 
 # ---------------- 우리 패킷 계약 (dg5f_angles와 동일) ----------------
@@ -399,7 +405,10 @@ def from_sdk_frame(sdk):
 
 def main():
     ap = argparse.ArgumentParser(description="DG-5F 실물 SDK 브리지")
-    ap.add_argument("--ip", default=None, help="그리퍼 IP — 생략 시 드라이런(수신값 출력만)")
+    ap.add_argument("--ip", nargs="?", const="", default=None,
+                    help="그리퍼 IP. 아예 생략하면 드라이런(수신값 출력만), 값 없이 --ip만 "
+                         "주면 .env의 RTAUTO_DG5F_IP를 쓴다"
+                         + (f" (현재 {DG5F_IP})" if DG5F_IP else " (현재 비어 있음)"))
     ap.add_argument("--port", type=int, default=502, help="그리퍼 Modbus TCP 포트 (기본 502)")
     ap.add_argument("--model", default="5f_right", choices=sorted(MODELS),
                     help="실물 모델 (기본 5f_right — 하드웨어 확정: DG-5F-M-R, M=표준/비-short)")
@@ -464,12 +473,37 @@ def main():
                          "예) --pose 6:20 (검지 pip만 20°)")
     args = ap.parse_args()
 
+    try:
+        args.ip = resolve_gripper_ip(args.ip)
+    except ValueError as e:
+        print(f"[오류] {e}")
+        return
+
     if args.max_step is None:
         args.max_step = args.max_deg_per_sec / max(1e-6, args.hz)
     print(f"[슬루] 각속도 상한 {args.max_deg_per_sec:g} deg/s @ {args.hz:g} Hz "
           f"→ 틱당 {args.max_step:.2f}° (Unity Dg5fFistButton도 같은 상한을 읽는다)")
 
     dry = args.ip is None
+
+    # UDP 수신 소켓을 실물 연결보다 **먼저** 잡는다 (2026-09-01).
+    #   순서가 반대면, 포트가 이미 점유된 상태에서 ConnectToGripper·게인설정·SystemStart까지
+    #   다 끝낸 뒤 bind에서 죽는다 — 그리퍼는 서보가 켜진 채 세션만 끊기고, 다음 실행이
+    #   ConnectToGripper DG_RESULT=500으로 거부된다(세션이 아직 물려 있어서). 실패는
+    #   하드웨어를 건드리기 전에 나야 한다.
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.bind(("0.0.0.0", args.listen))
+    except OSError as e:
+        sock.close()
+        print(f"[오류] UDP :{args.listen} 바인드 실패 — {e}")
+        print("       같은 포트를 듣는 브리지가 이미 떠 있을 가능성이 높다. 점유 프로세스 확인:")
+        print("         Windows: powershell -Command "
+              f"'Get-NetUDPEndpoint -LocalPort {args.listen} | Select-Object OwningProcess'")
+        print(f"         Linux  : ss -lunp | grep :{args.listen}")
+        return
+    sock.settimeout(0.2)
+
     sdk = None
     if not dry:
         dll_path = os.path.abspath(args.dll)
@@ -492,6 +526,7 @@ def main():
         if args.jog is not None:
             run_jog(sdk, args)
             sdk.close()
+            sock.close()
             return
 
         if args.pose is not None:   # 관절 대응 검증 모드 — 한 포즈 보내고 종료
@@ -503,11 +538,9 @@ def main():
             sdk.servo(target)
             time.sleep(1.0)
             sdk.close()
+            sock.close()
             return
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", args.listen))
-    sock.settimeout(0.2)
     print(f"[수신] UDP :{args.listen} 대기 — vision_node_dg5f.py [left|right] --bridge 로 송신"
           + (" (드라이런: 실물 송신 없음)" if dry else ""))
 
