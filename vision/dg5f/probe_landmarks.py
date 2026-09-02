@@ -47,14 +47,19 @@ MCP·자세 비교용 권장 세션(2026-07-28):
 """
 import sys
 import time
+from pathlib import Path
 
 import cv2
 import mediapipe as mp
 
 from dg5f_paths import unique_log_path
 
-# vision_node_dg5f.py와 동일 설정 (변경 시 양쪽 함께)
-CAM_INDEX = 0
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from config.rtauto_config import VISION_CAMERA_INDEX
+
+# vision_node_dg5f.py와 동일 출처(config/rtauto_config.py + .env) — 카메라가 여러 대라
+# 엉뚱한 게 잡히면 여기가 아니라 .env의 RTAUTO_VISION_CAMERA_INDEX를 바꿀 것.
+CAM_INDEX = VISION_CAMERA_INDEX
 # FRAME_W/FRAME_H는 2026-07-28에 삭제 — cap.set()을 안 쓰므로 쓸 데가 없고,
 # 실제 크기는 frame.shape에서 읽어 CSV(frame_w/frame_h)에 그대로 기록한다.
 

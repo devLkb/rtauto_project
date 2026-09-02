@@ -21,7 +21,9 @@ svh/calibrate_raw.py의 DG5F 20채널 버전. 관절 매핑 전에 반드시 이
 import csv
 import json
 import os
+import sys
 import time
+from pathlib import Path
 
 import cv2
 import mediapipe as mp
@@ -30,7 +32,12 @@ import numpy as np
 from dg5f_angles import compute_raw, landmarks_to_xyz, CHANNEL_NAMES, WRIST, THUMB, MIDDLE
 from dg5f_paths import CALIB_PATH, unique_log_path
 
-CAM_INDEX = 0
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from config.rtauto_config import VISION_CAMERA_INDEX
+
+# vision_node_dg5f.py와 동일 출처(config/rtauto_config.py + .env) — 카메라가 여러 대라
+# 엉뚱한 게 잡히면 여기가 아니라 .env의 RTAUTO_VISION_CAMERA_INDEX를 바꿀 것.
+CAM_INDEX = VISION_CAMERA_INDEX
 # FRAME_W/FRAME_H는 2026-07-28에 삭제 — cap.set()을 안 쓰므로 미사용.
 # 실제 크기는 frame.shape에서 읽어 landmarks_to_xyz의 등방 보정에 쓴다.
 LOG_EVERY_SEC = 0.5
@@ -77,7 +84,8 @@ def main():
     #    실제 해상도는 frame.shape에서 읽어 쓴다(종횡비 보정도 그 값을 쓴다).
     cap = cv2.VideoCapture(CAM_INDEX)
     if not cap.isOpened():
-        print(f"[오류] 카메라 {CAM_INDEX} 열기 실패 — CAM_INDEX를 1,2로 바꿔보세요.")
+        print(f"[오류] 카메라 {CAM_INDEX} 열기 실패 — 레포 루트 .env의 "
+              "RTAUTO_VISION_CAMERA_INDEX를 0, 1, 2 순으로 바꿔보세요.")
         return
 
     obs_min = {n: float("inf") for n in CHANNEL_NAMES}

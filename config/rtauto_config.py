@@ -133,6 +133,15 @@ VISION_CAMERA_HEIGHT = int(_env("RTAUTO_VISION_CAMERA_HEIGHT", "720"))
 VISION_CAMERA_FPS = int(_env("RTAUTO_VISION_CAMERA_FPS", "30"))
 VISION_CAMERA_BACKEND = _env("RTAUTO_VISION_CAMERA_BACKEND", "auto").strip().lower()
 
+# 다중 웹캠(디지털 트윈 다시점 모니터링 등, vision/dg5f/multi_camera_capture.py)용 인덱스
+# 목록 — 쉼표구분("0,1,2"). 비워두면 위 VISION_CAMERA_INDEX 하나만 쓴다 — 기존 단일
+# 카메라 스크립트(vision_node_dg5f.py 등)는 이 값과 무관하게 그대로 동작한다.
+_VISION_CAMERA_INDICES_RAW = _env("RTAUTO_VISION_CAMERA_INDICES", "").strip()
+VISION_CAMERA_INDICES = (
+    [int(v) for v in _VISION_CAMERA_INDICES_RAW.split(",") if v.strip()]
+    if _VISION_CAMERA_INDICES_RAW else [VISION_CAMERA_INDEX]
+)
+
 # ---------------- 경로 (머신마다 다름 — 기본값 없음, 없으면 각 스크립트가 명확히 에러) ----------------
 UNITY_PROJECT = _env("RTAUTO_UNITY_PROJECT", "")   # tools/urdf_hand_import용 Unity 프로젝트 루트
 UNITY_CLI = _env("RTAUTO_UNITY_CLI", "")           # unity-cli 실행파일 경로
@@ -202,6 +211,16 @@ def _repo_path(name, default_relative):
 TRAINING_RESULTS_DIR = _repo_path("RTAUTO_TRAINING_RESULTS_DIR", "training/results")
 TRAINING_FAILURE_DIR = TRAINING_RESULTS_DIR / "failure"
 TRAINING_LEGACY_DIR = TRAINING_RESULTS_DIR / "legacy"
+
+# ---------------- 다중 웹캠 3D 캘리브레이션 (calibrate_intrinsics.py / calibrate_extrinsics.py) ----------------
+# 체스보드 내부 코너 개수(가로x세로)·한 칸 실측 변(mm) — 실제 보유한 보드에 맞춰 .env에서 덮어쓸 것.
+# 기본값은 OpenCV 예제에서 흔히 쓰는 9x6(10x7 사각형) 보드 기준.
+CALIB_BOARD_COLS = int(_env("RTAUTO_CALIB_BOARD_COLS", "9"))
+CALIB_BOARD_ROWS = int(_env("RTAUTO_CALIB_BOARD_ROWS", "6"))
+CALIB_SQUARE_SIZE_MM = float(_env("RTAUTO_CALIB_SQUARE_SIZE_MM", "25.0"))
+# 카메라별 intrinsics(intrinsics_cam<N>.json)·다중뷰 extrinsics(extrinsics.json) 저장 폴더.
+# 저장소 상대 기본값 — 다른 디스크로 빼야 하면 .env에서 절대경로로 덮어쓴다.
+CALIB_DIR = _repo_path("RTAUTO_CALIB_DIR", "vision/dg5f/camera_calib")
 
 # ---------------- 로봇 구성 (하드웨어 스펙, 2026-08-25 확정) ----------------
 # 스펙 변동 가능성이 통보돼 있어 코드에 박지 않고 여기서 바꾼다.
