@@ -8,6 +8,10 @@ Gazebo를 검증 단계로 추가).
 (ROS-TCP-Connector/Endpoint)로 일원화 — 아래 "Gazebo 폐기 경위" 참고).
 개정 2026-08-30 (v5 — 학습 머신 교체(RTX 4070 Ti), **headless 병렬 학습 인프라** 구축,
 엄지 자세 제약 측정·재정의. §6 Phase 2 참고).
+개정 2026-09-03 (v6 — **실물 네트워크 토폴로지·DG-5F 통신 모드 확정**, 단기/최종 2단계
+연결 아키텍처 결정, 벤더 공식 ROS2 드라이버(UR·Tesollo) 확인, **카메라↔로봇 베이스
+캘리브레이션 누락** 발견·신설, Unity 공식 예제(Part 4)의 **개루프 함정** 기록.
+§5 "2026-09-03" 절 참고).
 1인 풀타임·로컬 단독 머신(**RTX 4070 Ti 12 GB / 32 GB RAM / Ryzen 7 7800X3D**, Windows) 체제.
 
 정책 계약 상세는 [`DG5F_GRASP_LIFT.md`](DG5F_GRASP_LIFT.md), SDK 실측 근거는
@@ -49,7 +53,8 @@ Gazebo를 검증 단계로 추가).
 | ROS2 통합/검증 | **Unity-Robotics-Hub**(ROS-TCP-Connector/Endpoint) | Unity가 직접 ROS2와 통신. ~~Gazebo~~ — 2026-08-26 폐기(별도 물리 시뮬레이터 불필요, ROS2 생태계 정합성은 이 경로로 확인). 매니퓰레이션·주행 공용 |
 | 자율주행 | **ROS2 + Nav2 + slam_toolbox** | [Robotics-Nav2-SLAM-Example](https://github.com/Unity-Technologies/Robotics-Nav2-SLAM-Example) 기반, 통신은 위 ROS-TCP-Connector/Endpoint 공유 |
 | 실물 하드웨어 | **UR16e** (RTDE) + **Tesollo DG-5F-M-R (오른손)** (dgsdk) + **엔스퀘어(Nsquare) AMR**(모델·상세 스펙 미확보) | |
-| 3D 비전 | **손·팔 장착 예정** (eye-in-hand / arm-mounted) | 시기 미정 |
+| 3D 비전 | **고정 카메라 N대 다중뷰**(현행, `559e967`) + 손·팔 장착(eye-in-hand)은 장래 옵션 | 2026-09-03 정정 — 현재 구현은 고정 카메라이므로 캘리브레이션은 **eye-to-hand** 문제다(§5-7). §2의 eye-in-hand 절은 장착형으로 갈 때의 설계 메모로 남긴다 |
+| 실물 연결 | 컨트롤박스 RJ45 **1개**(무선랜 없음) → 단기 RS-485+URCap / 최종 PC 중앙 제어 | §5의 2026-09-03 절. 무선 구간 경계는 §10 |
 
 ⚠️ 스펙은 변동 가능하다고 통보받았다(2026-08-25). 따라서 로봇 치수·워크스페이스
 상수를 **컴파일 상수로 굳히지 말고** 런타임 파라미터/설정으로 빼두는 편이 안전하다
@@ -264,6 +269,16 @@ UR16e+오른손 조합에도 필요한지 Phase 2 착수 시 재확인.
 33 kg급 + DG5F + 카메라 지지), 풋프린트, 배터리, 비상정지 경로. (참고: 웹 검색으로
 공개 스펙 시트를 찾지 못했다 — 제조사 자료나 정확한 모델명이 확보되면 갱신)
 
+**온보드 PC 관련 (2026-09-03 추가).** 최종 구조가 "제어는 로봇 위 유선, 무선은 감독만"
+이므로(§10 "무선 구간 경계") 아래 4개를 함께 문의한다. 1·2가 예스면 추가 하드웨어가
+사실상 없다:
+
+1. **온보드 PC 탑재 여부** — 있으면 여유 CPU/RAM/USB와 접근 권한. **x86인지 ARM64인지**
+   (ARM64면 `dg_sdk_ros2_bridge` 빌드 불가 — §5의 2026-09-03 절)
+2. **여유 이더넷 포트 / 스위치 내장 여부** — 있으면 UR·DG-5F를 거기 물린다
+3. **24 V 급전 가능 여부와 여유 용량** — 온보드 PC를 새로 얹어야 할 때 필요
+4. **WiFi 모듈 유무와 로밍 정책**
+
 **웨이퍼 케이스** — 치수, 질량, **파지 지점(손잡이/엣지/플랜지)**, 재질·마찰,
 **허용 기울기·가속 한계**, 청정도 요구.
 
@@ -289,6 +304,10 @@ UR16e+오른손 조합에도 필요한지 Phase 2 착수 시 재확인.
 6. **ArUco 마커로 물체 자세 공급** — 비전 파이프라인 없이 obs의 비전 의존 10칸을 채우는
    우회로. 마커/지그로 물체 자세를 주면 **비전 개발 전에 파지 루프 전체를 실물에서
    닫을 수 있다.**
+7. **카메라 ↔ 로봇 베이스 캘리브레이션 (eye-to-hand)** — 고정 카메라 N대의 3D 추정값을
+   `base_link` 프레임으로 옮기는 변환 `T_base_camera`를 구한다. **6번의 일반화이자
+   전제**다. 이게 없으면 비전이 물체를 정확히 찾아도 팔은 엉뚱한 곳으로 간다.
+   2026-09-03 로드맵 점검에서 **누락이 발견된 항목** — 상세는 아래 2026-09-03 절.
 
 ### 2026-08-31 실물 연동 결과 — 손(DG-5F) 경로는 양방향으로 뚫렸다
 
@@ -319,14 +338,222 @@ UR16e+오른손 조합에도 필요한지 Phase 2 착수 시 재확인.
 - `dg5f_readback_bridge.py` — 실물 → Unity 트윈. `--teach`(수동 교시), `--rest`(영점 점검),
   `--probe`(관절 대응 확인), `--capture-pose`(파지 자세 캡처 → Unity 버튼이 재생)
 
-**남은 것**: UR16e RTDE(§5-5), 핑거팁 센서 임계값(§5-3), ArUco 자세 공급(§5-6).
-그리퍼가 **클라이언트 1개만 허용**하므로 DGManager와 우리 스크립트는 동시 접속 불가 —
-읽기·쓰기·진단을 한 프로세스가 다 해야 한다(설계 제약).
+**남은 것**: UR16e RTDE(§5-5), 핑거팁 센서 임계값(§5-3), ArUco 자세 공급(§5-6),
+카메라↔베이스 캘리브레이션(§5-7). 그리퍼가 **클라이언트 1개만 허용**하므로 DGManager와
+우리 스크립트는 동시 접속 불가 — 읽기·쓰기·진단을 한 프로세스가 다 해야 한다(설계 제약).
+**이 제약은 URCap에도 그대로 적용된다**(2026-09-03 확인, Tesollo 공식 문서도 명시):
+URCap이 손을 쥐고 있으면 PC는 붙을 수 없다. 아래 2026-09-03 절 참고.
 
 **완료 기준**: 기존 Unity 학습 ONNX를 그대로 써서, ArUco로 자세를 공급한 상태에서
 실물 UR16e+DG5F가 12 cm 블록을 파지·들어올린다. (성공률은 기대하지 않는다 —
 랜덤화 없이 학습된 정책이라 실패해도 정상이다. **검증 대상은 배선과 관찰 조립이
 맞는지**이며, 실패 모드 자체가 Phase 2 랜덤화 설계의 데이터다.)
+
+### 2026-09-03 실물 연결 경로 확정 — 네트워크 토폴로지와 DG-5F 통신 모드
+
+팔(UR16e)을 실물 연동에 넣으려다 **배선 자체가 막히는 문제**를 만나 정리한 결과다.
+여기서 확정한 사실은 이후 Phase 1~5의 전제가 된다.
+
+#### 물리 제약 — 컨트롤박스 이더넷 포트는 1개다
+
+UR e-Series 컨트롤박스의 RJ45는 **하나뿐**이고 무선랜이 없다. 그리퍼를 이더넷으로
+컨트롤박스에 직결하면 **PC가 꽂을 자리가 사라진다.** 이더넷은 데이지체인이 안 되는
+스타 토폴로지라, 장치 3개(컨트롤러·그리퍼·PC)를 붙이려면 포트를 늘려주는 장비가
+하나 필요하다 — UR 공식 문서도 "컨트롤러 포트에 직결하거나 **네트워크 스위치를
+거친다**" 두 가지만 제시한다.
+
+| 구성 | 필요 장비 | 비고 |
+|---|---|---|
+| **A. RS-485로 손을 툴 쪽에 붙임** | RS-485 컨버터 | **컨트롤박스 RJ45가 빈다.** 아래 참고 |
+| B. 공유기/기존 LAN 경유 | 랜케이블 1~2개 | 노트북은 WiFi로 합류. 추가 구매 0원 가능 |
+| C. 전용 스위치 | 5포트 스위치 (+노트북에 랜포트 없으면 USB-이더넷 어댑터) | 가장 확실. 최종 AMR 구성의 축소판 |
+
+> ⚠️ **개발 노트북에 RJ45가 없다**(2026-09-03 현재). C를 고르면 USB-이더넷 어댑터가
+> 함께 필요하다. A·B는 어댑터 없이 성립한다.
+
+#### DG-5F 통신 모드 — RS-485(Modbus RTU) 공식 지원 확정
+
+`dg5f_modbus_readback.py` 주석이 인용한 하드웨어 설명서 §4.2("개발자 모드는 EtherNET
+통신만 가능")만 보고 **"RS-485로 가면 진단 데이터를 잃는다"고 판단했으나 오판이었다.**
+벤더 공식 자료로 확정한 사실:
+
+| 항목 | 확정 내용 | 출처 |
+|---|---|---|
+| DG-5F-M 통신 사양 | **`Modbus (RTU, TCP)`, `Ethernet (TCP/IP)`** | Tesollo 제품 페이지 |
+| URCap의 RS-485 지원 | **지원** — `Delto Gripper URCaps 1.0.2`의 Connect Mode에 `Modbus RTU on RS-485` / `Modbus TCP` 선택지. Serial Port·Baud rate·Slave ID 설정란 존재 | URCaps 1.0.2 매뉴얼 |
+| 물리 배선 | DG5F 흰색/갈색 RS-485선 → RS-485 컨버터 → USB → UR 컨트롤박스 | 동 매뉴얼 |
+
+#### Modbus Input Register 맵 — 진단 데이터는 RTU에서도 전부 읽힌다
+
+| 주소 | 내용 |
+|---|---|
+| 6 ~ 25 | 모터 1~20 현재 **위치** (0.1° 단위) |
+| 26 ~ 45 | 모터 1~20 현재 **전류** |
+| 46 ~ 65 | 모터 1~20 현재 **속도** |
+| 66 ~ 85 | 모터 1~20 현재 **온도** |
+| 116 | **에러 코드** (400 + 오류 모터 번호) |
+| 128 ~ | **센서 데이터** |
+
+> ⚠️ **`vision/dg5f/dg5f_modbus_readback.py` 상단 주석 갱신 필요.** 그 주석이 리포의
+> 레지스터 맵 정본 역할을 하는데 Control Manual v2.0.0 기준 **0~25만** 담고 있어서,
+> 실제로 그것만 보고 "RTU는 진단 불가"라는 오판이 나왔다. 위 표를 반영할 것.
+> §5-3(핑거팁 센서 임계값)도 `128~` 존재를 전제로 접근이 달라진다.
+
+**RS-485로 실제로 잃는 것**은 진단 데이터가 아니라 이것들이다:
+- Developer Mode의 raw duty 직접 제어, 개발자용 custom TCP 프로토콜
+- **Tesollo 공식 ROS2 드라이버 `dg5f_driver`** — Developer Mode + Ethernet을 요구한다
+
+#### 벤더 공식 ROS2 드라이버 — 양쪽 다 존재한다 (신규 확인)
+
+| | 패키지 | 확인 내용 |
+|---|---|---|
+| 팔 | [`Universal_Robots_ROS2_Driver`](https://github.com/UniversalRobots/Universal_Robots_ROS2_Driver) | **UR16e·PolyScope 5 명시 지원.** Humble/Jazzy/Kilted/Rolling (Foxy·Galactic·Iron은 EOL). MoveIt2 내장. `ur_calibration`으로 실물 캘리브레이션 추출. 제어에는 External Control URCap + Remote Control 필요, **읽기 전용은 불필요** |
+| 손 | [`tesollo_ros2`](https://tesollodelto.github.io/tesollo_ros2/) (`dg5f_ros2`) | **DG-5F 좌/우 모두 지원.** `ros2_control` 하드웨어 인터페이스(`delto_hardware`) + `dg_sdk_ros2_bridge` 고수준 API |
+
+둘 다 `ros2_control` 기반이라 **하나의 컨트롤러 매니저 아래로 합쳐진다.** §4에서 빌드한
+`ur16e_dg5f_right.urdf`가 그대로 통합 description이 된다.
+
+제약 두 가지:
+- **둘 다 Linux 전용이다.** UR 드라이버 README가 "Linux only; no support for other
+  operating systems"를 명시하고, Windows/WSL 지원 문의 이슈는 2021년 개설 후 메인테이너
+  답변 없이 열려 있다. Tesollo는 Ubuntu 22.04+Humble / 24.04+Jazzy만 지원.
+- **ARM64/Jetson에서는 `dg_sdk_ros2_bridge`가 빌드되지 않는다**(`ros2_control` 드라이버는
+  가능). 최종 온보드 PC는 x86 쪽이 안전하다.
+
+`dg_sdk_ros2_bridge`는 `StartGraspMotion`/`SetGraspData`/`SetGraspForce` 같은 **고수준
+파지 API**와 관절위치·속도·전류·온도·F/T·진단 수집을 단일 TCP 연결 하나로 함께 제공한다.
+순차 동작 원칙상 손가락 20개를 실시간 저수준 제어할 이유가 없으므로 이쪽이 맞고,
+이미 있는 `config/dg5f_grasp_pose.json` + `--capture-pose` 자산이 그대로 grasp preset이 된다.
+
+#### 결정 — 2단계 연결 아키텍처
+
+**단기 (팔 트윈 개통용)**
+
+```text
+DG5F ─RS485─ 컨버터 ─USB─ UR16e 컨트롤박스 [RJ45] ── PC
+                          (URCap이 손을 소유)         └ RTDE → Unity
+```
+
+- 컨트롤박스 RJ45가 비므로 **추가 장비 없이** 팔 RTDE 경로가 열린다.
+- **손 트윈은 이 구조에서 불가능하다.** RS-485 마스터가 컨트롤러의 URCap 하나뿐이라
+  PC에 도달 경로가 없다(Modbus RTU도 버스당 마스터 1개). 일정에 그렇게 반영할 것.
+- 굳이 하려면 URScript가 관절값을 **RTDE general purpose register**에 쓰고 PC가 읽는
+  우회로가 있으나, float 출력 레지스터가 24개뿐이라 위치 20채널이 겨우 들어가고
+  전류·온도는 못 싣는다. 갱신률도 URScript 루프에 묶인다. **"손이 움직이는 게 보이는"
+  수준이지 §5-4 추종 오차 측정용이 아니다.**
+
+**최종 (PC 중앙 제어)**
+
+```text
+              Linux PC (개발: 노트북 / 실물: AMR 온보드 PC)
+         ┌─────────┼──────────┐
+       ROS2      ONNX    Digital Twin
+         │         ▲
+   ┌─────┴─────┐   │
+   ▼           ▼  Cameras
+UR16e        DG5F
+(Ethernet)  (Ethernet)
+```
+
+- URCap의 손 소유를 버리고 **PC가 팔·손을 각각 소유**한다. Developer Mode와 공식 ROS2
+  드라이버가 여기서 살아난다.
+- **전환 시점은 카메라·ONNX를 붙이기 직전**이 자연스럽다. 그 시점에 어차피 PC가 중앙
+  제어자가 되어야 한다.
+- RS-485는 초기 구동용 임시 수단이며 **최종 아키텍처로 눌러앉히지 않는다.**
+
+Modbus RTU 대역폭 참고(115200 8N1, 이론 상한 — 3.5 char 무음 구간·처리 지연 제외):
+
+| 읽는 범위 | 왕복 | 상한 |
+|---|---|---|
+| 위치만 (reg 6~25) | ~5 ms | ~150 Hz |
+| 진단 전체 (reg 6~85) | ~15 ms | ~50 Hz |
+
+트윈 반영(30 Hz)엔 충분하고 저수준 제어 루프엔 빠듯하다 — 최종 구조가 이더넷이어야
+하는 또 하나의 이유.
+
+#### 누락 발견 — 카메라 ↔ 로봇 베이스 캘리브레이션 (§5-7 신설)
+
+`vision/dg5f/`에 카메라 **내부** 파라미터(`calibrate_intrinsics.py`)와 **카메라 간**
+외부 파라미터(`calibrate_extrinsics.py`, 다중뷰 삼각측량)는 있으나, **카메라 좌표계를
+`base_link`로 옮기는 변환이 없다.** 3D 위치 추정 결과가 카메라 기준이라 그대로는
+UR에 줄 수 없다.
+
+고정 카메라 N대 구성이므로 정확히는 **eye-to-hand(camera-to-robot extrinsic)** 문제다:
+
+```text
+camera_1 ─┐
+camera_2 ─┼─→ world/calib frame ─→ base_link ─→ UR16e TCP
+camera_3 ─┘
+```
+
+ArUco/AprilTag/체커보드를 로봇 베이스에 고정된 위치에 놓고 `T_base_camera`를 구한다.
+§5-6(ArUco 자세 공급)이 이 항목의 특수 사례이자 최소 구현이다.
+
+**파이프라인 순서를 문서에 못박는다:**
+
+```text
+카메라 구축 → 3D 위치 추정 → ★ Camera↔UR base 캘리브레이션
+           → ROS2 TF → Motion Planning(MoveIt2) → 실물 동작
+```
+
+이걸 빼면 "비전은 물체를 제대로 찾았는데 팔은 다른 곳으로 간다"가 된다. §11 리스크의
+"eye-in-hand FK·장착변환 오차 전파"가 이 변환의 오차를 가리킨다.
+
+> **용어 주의**: 이 파이프라인의 "ONNX"는 **객체 검출·자세 추정 모델**
+> (`vision/zed_object_detection/`의 YOLO 계열)이며, 기존 **RL 정책 ONNX**(obs 57 →
+> action 7)와 다른 물건이다. 문서·이슈에 적을 때 반드시 구분할 것.
+
+#### ⚠️ 트윈 구현 함정 — Unity 공식 예제(Part 4)는 개루프다
+
+[Unity-Robotics-Hub Pick-and-Place Part 4](https://github.com/Unity-Technologies/Unity-Robotics-Hub/blob/main/tutorials/pick_and_place/4_pick_and_place.md)가
+"실물 + 시뮬 동시 구동" 예제로 흔히 참조되지만, Unity 쪽 `RealSimPickAndPlace.cs`가
+구독하는 토픽은 `niryo_one/commander/robot_action/`**`goal`** — **명령이지 실물의 측정
+상태가 아니다.** 실물이 명령을 못 따라가거나 걸려도 Unity 화면은 완벽하게 움직인다.
+
+즉 **sim2real 검증 도구로 쓸 수 없다.** 검증 대상(명령 대비 추종 오차)이 정확히 이
+구조에서 사라지므로, §5-4의 "명령 대비 추종 오차를 측정해 PhysX 액추에이터(xDrive)
+모델에 반영"이 불가능해진다.
+
+**팔 트윈은 RTDE `getActualQ`(ROS2면 `/joint_states`)를 구독하는 폐루프로 만든다.**
+Part 4에서는 Unity 쪽 구독자 구조(ArticulationBody `xDrive` 주입, 웨이포인트 간
+고정 대기 0.038 s·보간 없음)만 템플릿으로 참고한다.
+
+참고로 **손 경로는 이미 폐루프다** — `dg5f_readback_bridge.py`가 실물 엔코더를 읽어
+반사한다. 이 항목에 한해 우리 구현이 Unity 공식 예제보다 정확하다.
+
+부수 확인(같은 레포 `tutorials/ros_unity_integration/network.md`): 방화벽 규칙을
+**포트 10000 아웃바운드 / 5005 인바운드**, Unity Editor를 사설·공용망 모두 허용으로
+명시한다. Docker면 ROS 쪽 `ROS_IP=0.0.0.0` + `10000:10000`·`5005:5005` 포워딩, Unity
+쪽은 `127.0.0.1`. **WSL2는 이 문서가 다루지 않는다**(Docker만) — §9가 "WSL2 또는
+Docker"로 잡아둔 것 중 **문서화된 길은 Docker 쪽**이다.
+
+#### 착수 순서 (2026-09-03 확정)
+
+| | 내용 | 상태 |
+|---|---|---|
+| 0 | **결정**: 그리퍼 소유권 — 단기 URCap / 최종 PC | 위 참고 |
+| 1 | **팔 RTDE → Unity** + `ur_calibration` 추출 | 착수 가능 |
+| 2 | 손 상태 → Unity (최종 구조 전환 후) | **코드 있음**, 연결만 |
+| 3 | 다중 카메라 3D 위치 추정 | **거의 완료**(`559e967`) |
+| 4 | ★ Camera↔base 캘리브레이션 | **신규** |
+| 5 | 객체 검출 → 자세 → TF → IK → UR | 신규 |
+| 6 | 상태기계 pick & place (§10) | 신규 |
+| 7 | 모방학습 → 강화학습 | 나중 |
+
+**팔 RTDE는 그리퍼와 독립**이므로 RS-485 검증 결과를 기다릴 필요가 없다. 1번을 RS-485에
+묶어두면 그게 막힐 때 전체가 멈춘다.
+
+#### 선행 정리 항목 — 착수 전에 처리 (원칙 1·2)
+
+| 항목 | 현재 상태 | 필요한 조치 |
+|---|---|---|
+| **UR IP·포트 키 부재** | [`rtauto_config.py`](../config/rtauto_config.py)에 `UR_TYPE`만 있고 **IP·RTDE 포트 키가 없다** | 키 추가. 팔 관절 UDP 포트도 레지스트리에 등록 — 5005~5008 사용 중이므로 5009가 비어 있다 |
+| **`ur_rtde`/ROS2 의존성 부재** | `requirements-vision.txt`는 mediapipe·opencv·numpy 계열뿐 | 의존성 추가 + [`PYTHON_ENV_SETUP.md`](PYTHON_ENV_SETUP.md) 동시 갱신 — **Windows·Linux 양쪽 모두** |
+| **Modbus 레지스터 맵 정본 불완전** | `dg5f_modbus_readback.py` 주석이 0~25만 담음 | 위 "Modbus Input Register 맵" 표 반영. 참조 매뉴얼 **판본과 범위**를 함께 명시 |
+
+원칙 2("새 머신에서 설치 직후 바로 구동")를 지키려면 팔 연동 의존성이 requirements와
+문서에 함께 올라와야 한다. §10이 전제한 "이사할 때 바뀌는 게 IP뿐"도 첫 행에 걸린다 —
+지금 노트북에서 짠 브리지가 나중에 온보드 PC에서 그대로 돌아야 한다.
 
 ## 6. Phase 2 — Unity PhysX 재학습 (새 하드웨어: UR16e + 오른손)
 
@@ -455,15 +682,29 @@ ROS-TCP-Connector/Endpoint로 ROS2와 직접 통신하며, 매니퓰레이션 �
   - `ROS TCP Endpoint` — ROS2 쪽(Python), 메시지 송수신 서버.
   - `ROS TCP Connector` — Unity 패키지(UPM git URL), 메시지 송수신·시각화.
   - `URDF Importer` — Unity 패키지, URDF 로드(§4 모델 정본화와 연결).
-- **토폴로지**: ROS2 + Nav2 + slam_toolbox를 **WSL2(Ubuntu) 또는 Docker**에서,
-  Unity는 Windows에서, 둘을 **ROS-TCP-Connector/Endpoint**로 연결. ROS2를 Windows
-  네이티브로 돌리는 건 피한다.
-- **버전 호환 확인 필요**: Unity-Robotics-Hub 공식 지원 배지는 ROS Melodic/Noetic,
-  **ROS2는 Foxy까지**만 명시한다. Nav2에 보통 쓰는 Humble 이상 호환은 착수 시
-  별도 검증 필요(공식 미지원일 수 있음 — fork/커뮤니티 브랜치 확인).
-  Robotics-Nav2-SLAM-Example 자체도 Unity 2020.3 LTS / ROS2 Foxy~Galactic 시절
-  기준이라, 이 프로젝트의 **Unity 6000.4.0f1** + 렌더 파이프라인(Built-in) +
-  예제 로봇·센서 프리팹 쪽에 포팅 작업이 필요하다.
+- **토폴로지**: ROS2 + Nav2 + slam_toolbox를 **Linux**에서, Unity는 Windows에서,
+  둘을 **ROS-TCP-Connector/Endpoint**로 연결. ROS2를 Windows 네이티브로 돌리는 건
+  피한다. **2026-09-03 갱신 — "WSL2 또는 Docker"에서 네이티브 Ubuntu 우선으로 정정**:
+  UR·Tesollo 공식 ROS2 드라이버가 모두 Linux 전용이고 WSL 지원이 확인되지 않는다
+  (§5의 2026-09-03 절). WSL2를 쓸 경우 DDS 디스커버리를 위해
+  `.wslconfig`의 `networkingMode=mirrored`가 필요한데, 이는 Unity-Robotics-Hub
+  공식 문서(`network.md`)가 다루지 않는 영역이다 — 문서화된 길은 Docker 쪽이다.
+- **네트워크 설정 체크리스트** (`ros_unity_integration/network.md`):
+  ROS 쪽 `ROS_IP`는 rosparam(Docker면 `0.0.0.0`), Unity 쪽은 `Robotics → ROS Settings`
+  (Docker면 `127.0.0.1`), 포트 포워딩 `10000:10000`·`5005:5005`.
+  **방화벽**: 10000 아웃바운드, 5005 인바운드, Unity Editor를 사설/공용망 모두 허용.
+  ⚠️ **포트 5005는 현재 `PORT_SVH_JOINTS`(레거시 SVH)와 충돌한다** —
+  [`config/rtauto_config.py`](../config/rtauto_config.py)에서 착수 전 정리할 것.
+- 🚩 **버전 호환 — 리스크가 과소평가돼 있었다 (2026-09-03 재평가).**
+  Unity-Robotics-Hub 공식 지원 배지는 ROS Melodic/Noetic, **ROS2는 Foxy까지**만 명시한다.
+  그런데 실상은 그보다 나쁘다: **마지막 커밋이 2024-11-26**이고 그 무렵 커밋 제목이
+  "Removed contribution and adjusted license", "Removing legacy pipelines and workflows"
+  로 **기능 개발이 아니라 정리 작업**이다. 그 이전엔 2021-07 → 2024-11의 3년 공백이 있다.
+  `Robotics-Nav2-SLAM-Example`은 **ROS2 Galactic(2022-11 EOL) / Unity 2020.3.11f** 기준.
+  즉 "버전이 오래된" 게 아니라 **프로젝트가 사실상 멈춰 있다.** 이 프로젝트의
+  **Unity 6000.4.0f1** + Humble 이상 조합으로의 포팅은 "확인 필요"가 아니라
+  **확정된 작업량**으로 잡아야 한다. 팔 트윈 개통을 여기에 의존시키지 말 것 —
+  1단계는 `ur_rtde` + UDP 직결로 뚫고, ROS2/Unity 브릿지는 그 위에 나중에 얹는다.
 - **원칙 1 (하드코딩 금지) 적용**: ROS_IP·TCP 포트는 [`config/rtauto_config.py`](../config/rtauto_config.py)에
   추가하고 Unity(C#)·Python 양쪽에서 그걸 참조한다. 리터럴로 박지 않는다.
 - **베이스 스펙 대기 중에도 착수 가능** — 예제의 스톡 로봇으로 Nav2/SLAM 파이프라인을
@@ -480,6 +721,53 @@ ROS2 액션으로 노출해 상태기계가 호출하는 구조. 이유는 결�
 결합될 필요가 없기 때문이다. (Tesollo도 ROS2 패키지를 제공하므로 전면 ROS2 통합도
 가능하지만, 1인 체제에서는 위 절충이 낫다고 본다.)
 
+> **2026-09-03 — 위 절충의 전제가 바뀌었다.** "전면 ROS2는 1인 체제에 부담"이라는
+> 판단은 드라이버를 직접 짜야 한다는 가정 위에 있었다. 그런데 **UR·Tesollo 양쪽 모두
+> `ros2_control` 기반 공식 드라이버를 완성해 제공**하고 있어(§5의 2026-09-03 절) 그
+> 부담이 크게 줄었다. DDS 지터 우려는 여전히 유효하므로 결정을 뒤집지는 않되,
+> **전면 ROS2 통합을 다시 저울질할 값어치가 있다**는 점을 기록해둔다. 재검토 시점은
+> §5 착수 순서의 5번(객체 검출 → TF → MoveIt2)이 자연스럽다.
+
+### 무선 구간 경계 (2026-09-03 확정)
+
+AMR 탑재 후에도 **UR 컨트롤박스는 유선이다**(무선랜 없음). 랜선이 사라지는 게 아니라
+**로봇 위로 올라탄다** — 공유기 자리에 AMR에 고정된 소형 스위치가 들어가고, 케이블은
+로봇 몸통 안에서 30 cm로 끝난다.
+
+```text
+┌───────── AMR 위 (전부 유선) ─────────┐
+│  UR16e 컨트롤러 ─┐                   │
+│  DG-5F          ─┼─ [스위치] ─ [온보드 PC]
+│  AMR 베이스      ─┘                  │      │
+└──────────────────────────────────────┼──────┘
+                                       ∿ WiFi
+                            노트북 (Unity 감독)
+```
+
+| 유선(로봇 안) | 무선(밖으로) |
+|---|---|
+| RTDE 제어 루프, dgsdk 그리퍼 제어 | 관절각 스트림(트윈 시각화) |
+| Nav2 로컬 플래너, 오도메트리, LiDAR | 고수준 명령(goal pose, `pick`/`place`) |
+| 정책 추론, 안전 I/O | 상태·로그, 정책 파일 갱신 |
+
+**실시간 루프는 WiFi에 태우지 않는다.** AP 로밍 한 번에 수십~수백 ms가 사라지므로
+125 Hz 제어 루프는 protective stop으로 떨어진다. 대역폭은 문제가 아니다 — 관절 26채널
+60 Hz라도 수 KB/s다.
+
+**비상정지는 예외 없이 유선.** UR 안전 I/O와 AMR E-stop은 로봇 몸통 안에서 물리
+배선으로 묶는다. 무선 쪽에는 별도 **워치독**을 둬 링크 상실 시 감속·정지시킨다.
+
+**ROS2를 무선에 쓸 때**: DDS 멀티캐스트 디스커버리가 WiFi에서 자주 깨진다(AP가 흔히
+차단, 최저 전송률 전송). 정착된 답은 **Zenoh** — 로봇마다
+[`zenoh-bridge-ros2dds`](https://github.com/eclipse-zenoh/zenoh-plugin-ros2dds)를 두고
+네임스페이스를 붙이는 구성이 표준이고, Jazzy부터는
+[`rmw_zenoh`](https://github.com/ros2/rmw_zenoh)로 RMW 자체를 교체할 수도 있다.
+§9 착수 시 기본 DDS로 헤매지 말 것.
+
+**현재 개발 구성은 이 최종 구성의 리허설이다** — 노트북이 온보드 PC 역할을 대행하고
+있을 뿐이고, 나중에 브리지 코드가 통째로 온보드 PC로 이사한다. **이사할 때 바뀌는 게
+IP뿐이려면 원칙 1(하드코딩 금지)이 지켜져야 한다.**
+
 ## 11. 리스크
 
 | 리스크 | 영향 | 대응 |
@@ -491,7 +779,12 @@ ROS2 액션으로 노출해 상태기계가 호출하는 구조. 이유는 결�
 | xDrive 게인 UR16e 미재튜닝(더 무거운 팔) | Phase 2 학습 불안정 가능 | Phase 2 착수 시 재튜닝·검증 |
 | 비전 자세 오차·지연 | 관찰 32칸 오염 | Phase 1 실측 → 랜덤화 범위로 사용 |
 | Nav2 예제 ↔ Unity 6 비호환 | 주행 착수 지연 | 스톡 로봇으로 선행, 스펙 대기 중 수행 |
-| Unity-Robotics-Hub 공식 지원이 ROS2 Foxy까지만 명시(Nav2는 보통 Humble+) | §9 착수 시 통신 브릿지 호환 문제 가능 | 착수 시 fork/커뮤니티 브랜치 여부 확인, 필요하면 직접 패치 |
+| 🚩 **Unity-Robotics-Hub 유지보수 사실상 중단** (마지막 커밋 2024-11-26, 그마저 정리 작업. Nav2 예제는 ROS2 Galactic/Unity 2020.3 기준) — 2026-09-03 재평가로 "호환 확인 필요"에서 격상 | §9 통신 브릿지 포팅이 **확정 작업량**. 팔 트윈을 여기 의존시키면 개통이 막힘 | 1단계는 `ur_rtde`+UDP 직결로 뚫고 ROS2 브릿지는 나중에 얹는다. 포팅은 별건 일정으로 |
+| **카메라 → `base_link` 변환 미구현** (내부·카메라간 캘리브만 존재) | 비전이 물체를 찾아도 팔이 엉뚱한 곳으로 감 | §5-7 신설 — ArUco/체커보드로 `T_base_camera` 산출을 Motion Planning 앞에 배치 |
+| ROS-TCP-Connector 포트 **5005가 `PORT_SVH_JOINTS`(레거시 SVH)와 충돌** | §9 착수 시 같은 PC에서 동시 실행 불가 | 착수 전 `config/rtauto_config.py`에서 정리 |
+| UR·Tesollo 공식 ROS2 드라이버가 **모두 Linux 전용**, WSL 지원 미확인 | Windows 개발 머신에서 직접 구동 불가 | 네이티브 Ubuntu 22.04+Humble 확보. 어차피 최종 온보드 PC가 Ubuntu다 |
+| 단기 RS-485 구조에서는 **손 트윈이 불가능** (RS-485 마스터가 URCap 하나) | STEP 3 지연 | 의도된 절충으로 일정에 반영. 최종 구조 전환 시 해소 |
+| **리포 주석이 정본인데 불완전하면 오판을 부른다** — `dg5f_modbus_readback.py`가 레지스터 0~25만 기록한 탓에 "RTU는 진단 불가"라는 잘못된 판단이 나왔다(2026-09-03) | 아키텍처 결정이 틀린 전제 위에 섬 | 정본 주석은 **참조한 매뉴얼 판본과 범위를 함께 명시**하고, 벤더 문서 갱신 시 함께 갱신 |
 | 웨이퍼 그립 방식이 5지 파지와 다름 | 파지 포즈·보상 재설계 | Phase 4에 재학습 일정 반영 |
 | 단일 GPU 시분할 | 학습·하드웨어 동시 진행 불가 | 학습 야간 / 하드웨어·비전 주간 |
 | 아키텍처 결정이 하루 만에 뒤집힌 전례(MuJoCo 확정→폐기) | 로드맵 신선도에 대한 신뢰 저하 | "확정" 표시된 결정도 며칠간 재확인 없이는 다음 대형 작업의 전제로 쓰지 않는다 |
