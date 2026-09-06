@@ -22,21 +22,25 @@ namespace KDT.PicknPlaceTraining.Editor
     /// arm/hand simply stop being commanded and hold their last pose (Dg5fPicknPlaceAgent.FixedUpdate
     /// no-ops once _episodeActive is false) instead of resetting into the next training episode.
     ///
-    /// A PicknPlaceControlModeSwitcher lets the operator flip to manual mid-run: PicknPlaceTeleopNudge
-    /// takes over the arm (joystick+height-slider, ArmTargetIK) and Dg5fReceiver/Dg5fHandDriver take
-    /// over the fingers from real hand tracking (vision/dg5f/vision_node_dg5f.py, right-hand model —
-    /// run with no arguments). Unlike GraspLift's shared ur5e_dg5f_left.prefab, ur16e_dg5f_right.prefab
-    /// does not ship these teleop components (CreateUr16eDg5fRightPrefab strips even the preview-only
-    /// HandSliderUI), so this builder adds them fresh on the robot root instead of just enabling
-    /// pre-existing ones. A second arm-control mode, PicknPlaceArmJointPanel, lets the operator drag
-    /// each of the 6 joints directly instead of nudging the end effector — the control mode switcher's
-    /// "조이스틱/관절직접" toggle picks one at a time so they never fight over the same xDrive.target.
+    /// A PicknPlaceControlModeSwitcher lets the operator flip to manual mid-run: PicknPlaceArmJointPanel
+    /// takes over the arm (6 joint sliders) and Dg5fReceiver/Dg5fHandDriver take over the fingers from
+    /// real hand tracking (vision/dg5f/vision_node_dg5f.py, right-hand model — run with no arguments).
+    /// Unlike GraspLift's shared ur5e_dg5f_left.prefab, ur16e_dg5f_right.prefab does not ship these
+    /// teleop components (CreateUr16eDg5fRightPrefab strips even the preview-only HandSliderUI), so
+    /// this builder adds them fresh on the robot root instead of just enabling pre-existing ones.
     /// That panel's "초기화" button teleports the arm and cube back to whatever PicknPlaceArmJointPanel
     /// captured in its own Start() — i.e. the pose actually on screen when Play began, not
     /// Dg5fPicknPlaceAgent.OnEpisodeBegin()'s HomeArmDeg/random cube spawn (which never runs
     /// automatically here since agent.enabled is permanently false) — and also releases the fist
     /// button so a held grasp cannot immediately fight the reset back closed.
-    /// A Dg5fFistButton (top-right OnGUI) additionally lets the operator force the
+    ///
+    /// 2026-09-04: the Cartesian arm mode (PicknPlaceTeleopNudge — mouse joystick + height slider over
+    /// ArmTargetIK) was removed along with its now-unused ArmTargetIK/HandSliderUI wiring. URSim/real
+    /// UR16e is driven over RTDE in **joint** angles, so keeping a second workspace-IK path meant two
+    /// controls fighting over the same xDrive.target and one more HUD box overlapping the others.
+    /// The same panel now also owns the URSim link direction (UrArmSender / UrArmTwinDriver, mutually
+    /// exclusive), and every HUD box is positioned by DemoUiLayout instead of hardcoded coordinates.
+    /// A Dg5fFistButton (left column OnGUI) additionally lets the operator force the
     /// right-hand fist pose (Dg5fPicknPlaceSpec.RightFistDeg) without a webcam/MediaPipe running. The
     /// Main Camera is a single free-fly viewpoint (PicknPlaceFreeFlyCamera — WASD move + right-drag
     /// look, Scene-view-style), starting close to the grasp point instead of a fixed overview.
@@ -150,7 +154,7 @@ namespace KDT.PicknPlaceTraining.Editor
         /// Unlike GraspLift's shared ur5e_dg5f_left.prefab, ur16e_dg5f_right.prefab was never given
         /// Dg5fReceiver/Dg5fHandDriver/ArmTargetIK/HandSliderUI (CreateUr16eDg5fRightPrefab strips even
         /// the preview-only HandSliderUI before saving it) — so these are added fresh here, all on the
-        /// robot root (agent.gameObject), matching where PicknPlaceTeleopNudge/PicknPlaceControlModeSwitcher
+        /// robot root (agent.gameObject), matching where PicknPlaceArmJointPanel/PicknPlaceControlModeSwitcher
         /// resolve them via GetComponent. Both drivers start disabled (auto mode is the default).
         static void ConfigureManualTeleop(GameObject area, Dg5fPicknPlaceAgent agent)
         {
@@ -160,26 +164,33 @@ namespace KDT.PicknPlaceTraining.Editor
             if (receiver == null) receiver = robot.AddComponent<Dg5fReceiver>();
             Dg5fHandDriver driver = robot.GetComponent<Dg5fHandDriver>();
             if (driver == null) driver = robot.AddComponent<Dg5fHandDriver>();
-            HandSliderUI sliderUI = robot.GetComponent<HandSliderUI>();
-            if (sliderUI == null) sliderUI = robot.AddComponent<HandSliderUI>();
-            ArmTargetIK armIK = robot.GetComponent<ArmTargetIK>();
-            if (armIK == null) armIK = robot.AddComponent<ArmTargetIK>();
-            // The hierarchy contains collision/shadow objects with repeated names.
-            // Never let ArmTargetIK's name-based fallback pick the wrong GraspPoint.
-            armIK.endEffector = agent.graspPoint;
+            // HandSliderUI/ArmTargetIK are no longer added: both existed only to serve
+            // PicknPlaceTeleopNudge's Cartesian arm mode, removed 2026-09-04 (see class summary).
             foreach (ArticulationBody body in robot.GetComponentsInChildren<ArticulationBody>(true))
             {
                 if (!Dg5fPicknPlaceSpec.ArmLinks.Contains(body.name)) continue;
                 ArticulationDrive drive = body.xDrive;
                 drive.stiffness = Dg5fPicknPlaceSpec.ArmDriveStiffness;
                 drive.damping = Dg5fPicknPlaceSpec.ArmDriveDamping;
+                // forceLimit must be set here too, not only in PicknPlaceTrainingSceneBuilder:
+                // without it this scene kept the imported default while the training scene ran
+                // the URDF torque limits, so the demo/twin arm and the training arm had
+                // different torque envelopes for the same robot (fixed 2026-09-04).
+                int limitIndex = UrArmLimits.IndexOf(body.name);
+                if (limitIndex >= 0) drive.forceLimit = UrArmLimits.MaxEffortNm[limitIndex];
                 body.xDrive = drive;
+                // Gravity stays OFF on the arm links, and that is deliberate rather than a
+                // shortcut: the real UR16e controller compensates gravity internally, so a
+                // servoJ target is tracked without sag. An ArticulationDrive is a pure PD
+                // controller with no integral term, so switching gravity on here would add a
+                // steady-state droop (order 0.5 deg at the shoulder) that the real arm does
+                // not have — i.e. it would move the twin further from reality, not closer.
+                // The payload (cube Rigidbody) keeps its gravity, which is the weight the
+                // controller genuinely has to fight.
                 body.useGravity = false;
             }
             receiver.enabled = false;
             driver.enabled = false;
-            sliderUI.enabled = false;
-            armIK.enabled = false;
 
             Transform handRoot = area.GetComponentsInChildren<Transform>(true)
                 .FirstOrDefault(t => t.name == HandRootName);
@@ -197,33 +208,47 @@ namespace KDT.PicknPlaceTraining.Editor
             foreach (Collider collider in handRoot.GetComponentsInChildren<Collider>(true))
                 collider.enabled = true;
 
-            PicknPlaceTeleopNudge nudge = robot.GetComponent<PicknPlaceTeleopNudge>();
-            if (nudge == null) nudge = robot.AddComponent<PicknPlaceTeleopNudge>();
-            nudge.agent = agent;
-            nudge.armIK = armIK;
-            nudge.armSliderUI = sliderUI;
+            // URSim(또는 실물 UR16e) 연동 — arm/ur_rtde_bridge.py와 UDP로 주고받는다.
+            // 사람이 손으로 붙여야 하는 컴포넌트는 문서화되지 않은 수동 단계이므로(CLAUDE.md
+            // 원칙 2) Dg5fSender와 같은 이유로 빌더가 붙인다. 두 방향 모두 기본 꺼짐이라
+            // 씬을 열어도 URSim/실물은 가만있는다. 자체 토글 박스(showUI)는 끄고 아래
+            // PicknPlaceArmJointPanel의 "URSim 연동 방향"이 대신 소유한다 — HUD 박스가
+            // 팔 관련만 셋으로 갈라지지 않게.
+            UrArmSender urSender = robot.GetComponent<UrArmSender>();
+            if (urSender == null) urSender = robot.AddComponent<UrArmSender>();
+            urSender.showUI = false;
+            UrArmReceiver urReceiver = robot.GetComponent<UrArmReceiver>();
+            if (urReceiver == null) urReceiver = robot.AddComponent<UrArmReceiver>();
+            UrArmTwinDriver urTwinDriver = robot.GetComponent<UrArmTwinDriver>();
+            if (urTwinDriver == null) urTwinDriver = robot.AddComponent<UrArmTwinDriver>();
+            urTwinDriver.receiver = urReceiver;
+            urTwinDriver.showUI = false;
 
-            // Joint-space alternative to PicknPlaceTeleopNudge's Cartesian IK — lets the operator
-            // drag each of the 6 UR16e joints directly instead of nudging the end effector.
+            // 팔 패널의 "브리지 실행" 버튼이 arm/ur_rtde_bridge.py를 직접 띄운다 — 터미널을
+            // 하나 더 열어 venv를 켜는 단계를 없앤다. Play를 멈추면 런처가 프로세스를 죽인다.
+            UrArmBridgeLauncher urBridge = robot.GetComponent<UrArmBridgeLauncher>();
+            if (urBridge == null) urBridge = robot.AddComponent<UrArmBridgeLauncher>();
+
+            // 유일한 팔 조작 창구 — 6축 관절 슬라이더 + URSim 연동 방향 선택.
             PicknPlaceArmJointPanel jointPanel = robot.GetComponent<PicknPlaceArmJointPanel>();
             if (jointPanel == null) jointPanel = robot.AddComponent<PicknPlaceArmJointPanel>();
             jointPanel.agent = agent;
+            jointPanel.urSender = urSender;
+            jointPanel.urReceiver = urReceiver;
+            jointPanel.urTwinDriver = urTwinDriver;
+            jointPanel.urBridgeLauncher = urBridge;
 
             PicknPlaceControlModeSwitcher switcher =
                 robot.GetComponent<PicknPlaceControlModeSwitcher>();
             if (switcher == null) switcher = robot.AddComponent<PicknPlaceControlModeSwitcher>();
             switcher.agent = agent;
-            switcher.armNudge = nudge;
             switcher.armJointPanel = jointPanel;
             switcher.handReceiver = receiver;
             switcher.handDriver = driver;
             switcher.startInManualMode = true;
             // MediaPipe drives the right-hand fingers while the operator moves the
-            // UR16e arm with PicknPlaceTeleopNudge's mouse joystick/height slider.
+            // UR16e arm with PicknPlaceArmJointPanel's 6 joint sliders.
             switcher.handOnlyManualMode = false;
-            nudge.maxHeightOffset = 0.2f;
-            nudge.maxHorizontalOffset = 0.25f;
-            nudge.horizontalMoveSpeed = 0.12f;
 
             // Webcam-free manual grasp: lets the operator force the validated right-hand
             // fist pose without MediaPipe running (unlike GraspLift's left-hand demo, which

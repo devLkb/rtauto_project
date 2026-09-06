@@ -94,12 +94,15 @@ python -m pip install -r requirements-mlagents.txt
 ```bash
 python -m pip check
 python -c "import cv2, mediapipe as mp, numpy; print(cv2.__version__, mp.__version__, numpy.__version__); print(mp.solutions.hands)"
+python -c "import rtde_control, rtde_receive; print('ur_rtde OK')"
 mlagents-learn --help
 ```
 
 비전 시연만 하는 PC에서는 마지막 `mlagents-learn` 검증은 생략할 수 있다. 검증된 핵심
 조합은 `mediapipe==0.10.11`, `opencv-contrib-python==4.8.1.78`,
-`numpy==1.23.5`, `protobuf==3.20.3`이다.
+`numpy==1.23.5`, `protobuf==3.20.3`이다. `ur_rtde`(UR16e 팔 디지털 트윈,
+`arm/ur_rtde_bridge.py`)는 이 조합과 버전 충돌 이력이 없어 같은 venv에 공존한다 —
+검증된 버전은 `ur_rtde==1.6.5`(Windows/Linux 모두 PyPI 휠 제공, 별도 빌드 도구 불필요).
 
 ## 4. PC별 설정
 

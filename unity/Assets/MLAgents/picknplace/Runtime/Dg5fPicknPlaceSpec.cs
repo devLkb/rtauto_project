@@ -465,8 +465,60 @@ namespace KDT.PicknPlaceTraining
         // Unity position-drive gains for the UR16e digital twin. The imported
         // prefab has zero stiffness/damping, so xDrive.target otherwise has no
         // effect and the arm freely collapses even though commands are received.
+        //
+        // ⚠️ These two gains are UNVERIFIED and must be retuned empirically, one knob
+        // at a time. Do not treat them as measured values.
+        //
+        // Unit trap, because it invalidates the obvious back-of-envelope check: for a
+        // ROTATIONAL ArticulationDrive, Unity expresses `target` in DEGREES, so
+        // `stiffness` is N*m per DEGREE and `damping` is N*m per (DEGREE/second) — not
+        // per radian. A 2026-09-04 attempt to raise damping 200 -> 600 was justified by
+        // a damping-ratio table that mixed these per-degree gains with inertias in
+        // kg*m^2 (a radian-based unit). Converting consistently scales zeta by
+        // sqrt(180/pi) ~= 7.6, which flips the conclusion from "underdamped" to
+        // nominally overdamped, so that table did not explain the observed wobble at
+        // all. The change was reverted and the table deleted rather than left to be
+        // mistaken later for a verified result.
+        //
+        // What is actually suspicious: stiffness 10000 in per-degree units is roughly
+        // 573,000 N*m/rad, i.e. an extremely stiff drive relative to the 50 Hz fixed
+        // timestep it is integrated at. The residual wobble is therefore SUSPECTED to
+        // be numerical (a poorly converged solve) rather than physical underdamping —
+        // note the project ran only 1 velocity solver iteration. Suspected, not
+        // established: verify by changing solver iterations, then timestep, then these
+        // gains, observing after each.
         public const float ArmDriveStiffness = 10000f;
         public const float ArmDriveDamping = 200f;
+
+        // DG-5F finger drive gains. These lived as bare literals in
+        // PicknPlaceTrainingSceneBuilder and GraspLiftTrainingSceneBuilder (same three
+        // numbers typed twice) until 2026-09-04 — moved here so the hand's dynamics
+        // have one source of truth, the way CLAUDE.md requires physics constants to be
+        // kept. Unchanged in value: with finger inertias around 1e-4 kg m^2 these are
+        // already heavily overdamped (zeta >> 1), so the fingers never contributed to
+        // the arm wobble and there was no reason to retune them here.
+        public const float HandDriveStiffness = 1500f;
+        public const float HandDriveDamping = 120f;
+        public const float HandDriveForceLimit = 20f;
+
+        // How much of the real UR16e joint-speed envelope (UrArmLimits.MaxDegPerSec, which
+        // is URDF truth: 120 deg/s at the shoulder, 180 at elbow/wrists) the policy is
+        // allowed to command. THE single knob for training motion speed — change this one
+        // number, not the per-joint values, which are hardware facts and must stay as the
+        // URDF states them.
+        //
+        // It lives here rather than in UrArmLimits on purpose: UrArmLimits holds what the
+        // robot *can* do, this holds what we *choose to let* training use. Mixing the two
+        // would make it tempting to "fix" a hardware constant to change training behaviour.
+        //
+        // 0.5 is a deliberate margin, NOT a measured value. Before 2026-09-04 the agent used
+        // a single serialized `armDeltaDegPerDecision = 2f`, which at a 0.1 s decision period
+        // meant a uniform ~20 deg/s ceiling on every joint — 1/6 to 1/9 of the real envelope,
+        // and identical across joints whose real limits differ. Going straight to 1.0 was
+        // rejected because full-speed exploration noise on a 16 kg-payload arm hurts both
+        // learnability and, later, real-hardware safety. Raise it once training is stable and
+        // the real arm's behaviour has been measured.
+        public const float TrainingSpeedFraction = 0.5f;
 
         // --- curriculum -----------------------------------------------------------
         // Unified grasp curriculum (spawn annulus + lift target/hold), identical

@@ -99,6 +99,54 @@ PORT_SVH_JOINTS = int(_env("RTAUTO_PORT_SVH_JOINTS", "5005"))    # 레거시 SVH
 PORT_DG5F_SIM = int(_env("RTAUTO_PORT_DG5F_SIM", "5006"))        # → Unity Dg5fReceiver (DG5F 손 관절 트윈)
 PORT_ZED_TARGET = int(_env("RTAUTO_PORT_ZED_TARGET", "5007"))    # → Unity CameraTargetReceiver (ZED 객체 좌표)
 PORT_DG5F_BRIDGE = int(_env("RTAUTO_PORT_DG5F_BRIDGE", "5008"))  # vision_node --bridge → dg5f_sdk_bridge.py (실물 SDK)
+PORT_UR_ARM_BRIDGE = int(_env("RTAUTO_PORT_UR_ARM_BRIDGE", "5009"))  # Unity UrArmSender → arm/ur_rtde_bridge.py
+PORT_UR_ARM_SIM = int(_env("RTAUTO_PORT_UR_ARM_SIM", "5010"))    # arm/ur_rtde_bridge.py --echo-to-unity → Unity UrArmReceiver (팔 관절 트윈)
+
+# ---------------- UR16e RTDE (URSim/실물 팔) ----------------
+# URSim을 도커로 로컬 실행하면 포트가 호스트로 매핑돼 PC 입장에서는 127.0.0.1로 보인다
+# (docs/SIM2REAL_ROADMAP.md §9 "URSim 선행 개발 경로" 참고) — 그래서 다른 IP 키(DG5F_IP 등)와
+# 달리 기본값을 비워두지 않는다. 실물로 전환할 때는 .env의 RTAUTO_UR_IP만 실제 컨트롤박스
+# IP로 바꾸면 되고, 그 외 코드는 그대로다(원칙 1이 이 전환의 성립 조건).
+UR_IP = _env("RTAUTO_UR_IP", "127.0.0.1")
+
+
+def resolve_ur_ip(value):
+    """arm/ur_rtde_bridge.py의 `--ip` 인자 해석 — resolve_gripper_ip와 같은 규칙.
+
+      None  → 드라이런 (RTDE 미접속, 수신값만 출력)
+      ""    → 값 없이 `--ip`만 준 경우 → 위 UR_IP(.env의 RTAUTO_UR_IP, 기본 127.0.0.1=URSim 로컬)
+      그 외 → 명시한 IP (실물 컨트롤박스 등)
+    """
+    return UR_IP if value == "" else value
+
+
+# 공용 venv의 파이썬 실행 파일. Unity의 UrArmBridgeLauncher("UR16e 팔" 패널의 "브리지 실행"
+# 버튼)가 이 값으로 arm/ur_rtde_bridge.py를 직접 띄운다 — 사람이 터미널을 하나 더 열어
+# venv를 활성화하는 단계를 없애기 위한 것.
+# 비워두면 양쪽(파이썬/Unity)이 각자 OS에 맞는 공용 venv 기본 경로를 쓴다
+# (docs/PYTHON_ENV_SETUP.md §2의 vision/.vision). 다른 venv를 쓰면 .env에서 덮어쓸 것.
+PYTHON_EXE = _env("RTAUTO_PYTHON", "")
+
+
+def python_exe():
+    """공용 venv 파이썬의 절대경로. 상대경로는 저장소 루트 기준으로 해석한다.
+
+    Unity 쪽 UrArmBridgeLauncher.cs가 같은 키(RTAUTO_PYTHON)와 같은 OS별 기본값을 쓴다 —
+    한쪽만 고치면 "터미널에서는 되는데 버튼으로는 안 된다"가 되므로 함께 고칠 것.
+    """
+    if PYTHON_EXE:
+        path = Path(PYTHON_EXE)
+        return path if path.is_absolute() else (REPO_ROOT / path)
+    relative = ("vision/.vision/Scripts/python.exe" if sys.platform.startswith("win")
+                else "vision/.vision/bin/python")
+    return REPO_ROOT / relative
+
+
+# UR16e 관절 각속도 상한[deg/s] — ur_rtde_bridge.py가 틱당 슬루 리밋으로 환산해 URSim/실물
+# 급격한 목표 점프를 막는다. ⚠️ DG5F_MAX_DEG_PER_SEC과 달리 **실측 근거 없음** — UR16e
+# 카탈로그상 관절 최고속도(대략 120 deg/s대, 관절별로 다름)의 한참 아래로 잡은 보수적
+# 추정 초기값이다. 실물/URSim에서 --track 유사 검증 후 조정할 것.
+UR_MAX_DEG_PER_SEC = float(_env("RTAUTO_UR_MAX_DEG_PER_SEC", "30"))
 
 # ML-Agents 트레이너 <-> Unity 플레이어 gRPC 포트의 시작값. --num-envs N이면
 # BASE..BASE+N-1을 쓴다. 위 UDP 레지스트리(5005~5008)와 겹치지 않게 5100부터 잡았다 —

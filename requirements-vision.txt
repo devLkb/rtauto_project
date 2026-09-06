@@ -13,3 +13,7 @@ numpy==1.23.5
 protobuf==3.20.3
 pandas==2.0.3
 scipy==1.10.1
+
+# UR16e RTDE (arm/ur_rtde_bridge.py) — URSim/실물 팔 디지털 트윈. mediapipe/mlagents와
+# 별개 기능이라 버전 충돌 이력 없음. Windows/Linux 모두 PyPI 휠 제공.
+ur_rtde==1.6.5

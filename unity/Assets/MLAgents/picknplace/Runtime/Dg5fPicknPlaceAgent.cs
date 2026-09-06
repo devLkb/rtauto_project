@@ -49,7 +49,11 @@ namespace KDT.PicknPlaceTraining
         public bool endEpisodeOnSuccess = true;
 
         [Header("Control")]
-        public float armDeltaDegPerDecision = 2f;
+        // NOTE: the arm's per-decision delta is NOT a serialized field any more. It used to be
+        // `public float armDeltaDegPerDecision = 2f`, which (a) applied one uniform value to
+        // joints whose real speed limits differ and (b) was baked into every saved prefab and
+        // scene, so changing the code default silently did nothing. It is now derived per joint
+        // from the URDF envelope in EnsureResolved() — see _armDeltaDegPerDecision.
         public float gripDeltaPerDecision = 0.08f;
 
         readonly Dictionary<ArticulationBody, float> _initialTargetDeg =
@@ -59,6 +63,8 @@ namespace KDT.PicknPlaceTraining
         ArticulationBody[] _armJoints;
         ArticulationBody[] _handJoints;
         float[] _armTargetDeg;
+        /// Per-joint arm delta cap [deg per decision]. Filled by ResolveArmDeltaEnvelope().
+        float[] _armDeltaDegPerDecision;
         float[] _openHandDeg;
         readonly Vector3[] _contactDirections = new Vector3[Dg5fPicknPlaceSpec.ContactPointCount];
 
@@ -149,6 +155,7 @@ namespace KDT.PicknPlaceTraining
 
             _armTargetDeg = new float[Dg5fPicknPlaceSpec.ArmJointCount];
             _openHandDeg = new float[Dg5fPicknPlaceSpec.HandJointCount];
+            ResolveArmDeltaEnvelope();
             foreach (var body in _allJoints)
             {
                 try { _initialTargetDeg[body] = body.xDrive.target; }
@@ -162,6 +169,43 @@ namespace KDT.PicknPlaceTraining
             _stats = Academy.Instance.StatsRecorder;
 
             _resolved = true;
+        }
+
+        /// Per-joint cap on how far one decision may move each arm joint [deg].
+        ///
+        /// Derived, not authored: the real UR16e joint speed limits (UrArmLimits.MaxDegPerSec,
+        /// straight from the URDF) x Dg5fPicknPlaceSpec.TrainingSpeedFraction x the wall-clock
+        /// seconds one decision covers. The old single serialized 2 deg/decision imposed a flat
+        /// ~20 deg/s on every joint, unrelated to what each joint can actually do.
+        ///
+        /// The decision period is read from this agent's own DecisionRequester instead of being
+        /// hardcoded, because the envelope is only correct relative to how much time a decision
+        /// actually spans: with DecisionPeriod 5 and a 0.02 s timestep that is 0.1 s, but either
+        /// can change (halving the timestep to sharpen physics would otherwise silently double
+        /// the commanded joint speed). If no DecisionRequester is present, decisions are assumed
+        /// to arrive every physics step — the conservative reading, since it yields the smallest
+        /// envelope rather than an optimistic one.
+        void ResolveArmDeltaEnvelope()
+        {
+            var requester = GetComponent<DecisionRequester>();
+            int decisionPeriod = requester != null ? Mathf.Max(1, requester.DecisionPeriod) : 1;
+            if (requester == null)
+            {
+                Debug.LogWarning(
+                    $"[{nameof(Dg5fPicknPlaceAgent)}] No DecisionRequester found on "
+                    + $"'{name}'. Assuming one decision per physics step, which caps arm "
+                    + "motion lower than intended. Add a DecisionRequester if decisions are "
+                    + "meant to be spaced out.", this);
+            }
+            float secondsPerDecision = decisionPeriod * Time.fixedDeltaTime;
+
+            _armDeltaDegPerDecision = new float[Dg5fPicknPlaceSpec.ArmJointCount];
+            for (int i = 0; i < _armDeltaDegPerDecision.Length; i++)
+            {
+                _armDeltaDegPerDecision[i] = UrArmLimits.MaxDegPerSec[i]
+                    * Dg5fPicknPlaceSpec.TrainingSpeedFraction
+                    * secondsPerDecision;
+            }
         }
 
         void ResolveReferences()
@@ -611,7 +655,7 @@ namespace KDT.PicknPlaceTraining
                 }
                 _previousArmActions[i] = action;
                 _armTargetDeg[i] = Mathf.Clamp(
-                    _armTargetDeg[i] + action * armDeltaDegPerDecision * actionScale,
+                    _armTargetDeg[i] + action * _armDeltaDegPerDecision[i] * actionScale,
                     Dg5fPicknPlaceSpec.ArmSafeMinDeg[i], Dg5fPicknPlaceSpec.ArmSafeMaxDeg[i]);
             }
             if (_hasPreviousArmAction)

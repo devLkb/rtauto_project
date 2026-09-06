@@ -60,6 +60,10 @@ public static class RtautoConfig
         return _values != null && _values.TryGetValue(key, out string value) ? value : fallback;
     }
 
+    /// 저장소 루트 절대경로. 찾지 못하면 null(standalone 빌드 등) — 호출부가 조용히
+    /// 건너뛸 수 있게 예외는 던지지 않는다. 파이썬 프로세스를 띄울 때의 작업 디렉터리로 쓴다.
+    public static string RepoRoot => ResolveRepositoryRoot();
+
     /// 저장소 루트 기준 상대경로를 절대경로로 바꾼다. 이미 절대경로면 그대로 돌려준다.
     /// 루트를 못 찾으면(standalone 빌드 등) null — 호출부가 조용히 건너뛸 수 있게 예외는 안 던진다.
     /// config/rtauto_config.py가 "상대경로는 저장소 루트 기준"으로 다루는 규칙과 같게 맞춘 것이다.

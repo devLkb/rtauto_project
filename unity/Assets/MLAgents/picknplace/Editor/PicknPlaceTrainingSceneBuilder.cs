@@ -234,16 +234,31 @@ namespace KDT.PicknPlaceTraining.Editor
                 bool hand = body.name.Contains("_dg_");
                 if (hand)
                 {
-                    drive.stiffness = 1500f;
-                    drive.damping = 120f;
-                    drive.forceLimit = 20f;
+                    drive.stiffness = Dg5fPicknPlaceSpec.HandDriveStiffness;
+                    drive.damping = Dg5fPicknPlaceSpec.HandDriveDamping;
+                    drive.forceLimit = Dg5fPicknPlaceSpec.HandDriveForceLimit;
                 }
                 else
                 {
                     drive.stiffness = Dg5fPicknPlaceSpec.ArmDriveStiffness;
                     drive.damping = Dg5fPicknPlaceSpec.ArmDriveDamping;
-                    drive.forceLimit =
-                        body.name.StartsWith("wrist_", StringComparison.Ordinal) ? 28f : 150f;
+                    // Torque limits come from the UR16e URDF via UrArmLimits. They used to
+                    // be `wrist_ ? 28f : 150f`, which are the **UR5e** effort values
+                    // (ur5e_dg5f_right.urdf: 150/150/150/28/28/28) left behind when this
+                    // scene's robot was switched UR5e -> UR16e. The real UR16e is
+                    // 330/330/150/54/54/54, so the simulated arm had roughly half the real
+                    // torque at the shoulder and wrists and every policy trained here
+                    // learned a weaker robot than the one it deploys to (fixed 2026-09-04).
+                    int limitIndex = UrArmLimits.IndexOf(body.name);
+                    if (limitIndex < 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"Unexpected non-hand revolute joint '{body.name}' — not in "
+                            + "UrArmJointNames.Names, so its torque limit is unknown. Add it "
+                            + "there (and to UrArmLimits) rather than letting it silently "
+                            + "keep the imported default.");
+                    }
+                    drive.forceLimit = UrArmLimits.MaxEffortNm[limitIndex];
                 }
                 body.xDrive = drive;
                 body.useGravity = false;

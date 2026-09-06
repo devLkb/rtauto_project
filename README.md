@@ -2,7 +2,7 @@
 
 확정 하드웨어인 UR16e와 Tesollo DG-5F-M-R 오른손으로 파지·들어올리기를 검증하는
 디지털 트윈 프로젝트다. 현재 시연 씬에서는 MediaPipe가 오른손 손가락을 구동하고,
-사용자가 Unity 화면의 조이스틱과 높이 슬라이더로 팔을 직접 움직인다.
+사용자가 Unity 화면 오른쪽 패널의 6축 관절 슬라이더로 팔을 직접 움직인다.
 
 ```text
 Unity 수동 팔 IK (UR16e)
@@ -21,6 +21,7 @@ Unity 수동 팔 IK (UR16e)
 |---|---|
 | `unity/` | Unity 프로젝트 (Assets + Packages + ProjectSettings — Library는 열 때 자동 생성) |
 | `vision/dg5f/` | **DG5F 텔레옵 파이프라인**: 보정→웹캠 트래킹→UDP 송신 + 검증/분석 도구 |
+| `arm/` | **UR16e RTDE 브리지**: Unity ↔ URSim/실물 팔 디지털 트윈 (`ur_rtde_bridge.py`) |
 | `tools/urdf_hand_import/` | URDF→Unity 임포트/물리검증/구동준비/프로브 범용 스크립트 |
 | `urdf/dg5f/` | Tesollo DG5F URDF+메시 원본 4변형 (검증 스크립트의 대조 기준) |
 | `urdf/build_arm_hand.py` | UR 팔+DG5F 손 결합 URDF 빌더 (기종·좌우 파라미터화) |
@@ -100,9 +101,16 @@ Unity 수동 팔 IK (UR16e)
    **"대기중"**이면 2번이 아직 안 돌고 있다는 뜻.
 
 조작은 두 가지다 — **손가락**은 웹캠 앞에서 오른손을 움직이면 그대로 미러링되고,
-**팔**은 화면 우하단 조이스틱(드래그)과 높이 슬라이더로 움직인다.
+**팔**은 화면 **오른쪽 "UR16e 팔" 패널**의 6축 관절 슬라이더(Shoulder Pan / Shoulder
+Lift / Elbow / Wrist 1~3)로 움직인다.
 
-우상단 프리셋 버튼(**주먹 쥐기 / 손 펴기 / 파지하기**)은 웹캠 없이 자세를 재생한다.
+> **화면 배치 (2026-09-04 정리)**: **왼쪽 열 = 손·모드**(제어 모드 → 디지털 트윈 방향(손)
+> → 손 프리셋 → 실물 손 송신), **오른쪽 열 = 팔·URSim**(UR16e 팔 패널). 패널 좌표는
+> `DemoUiLayout`이 순서대로 쌓아 계산하므로 패널이 늘거나 높이가 바뀌어도 겹치지 않는다.
+> 예전에 있던 **팔 조이스틱·높이 슬라이더(작업공간 IK)는 제거**했다 — URSim RTDE가
+> 관절각 단위라 두 조작 방식이 같은 관절 목표를 다퉜다.
+
+왼쪽 프리셋 패널의 버튼(**주먹 쥐기 / 손 펴기 / 파지하기**)은 웹캠 없이 자세를 재생한다.
 프리셋과 웹캠은 같은 관절을 건드리므로 **한 번에 하나만** 손을 쥔다 — 지금 누가 쥐고
 있는지는 같은 패널의 **"손 주인: …"** 표시로 항상 보인다. 프리셋을 누르면 주인이 프리셋으로
 넘어가고, **"웹캠 실시간 조작으로"** 버튼을 누르면 **현재 자세를 유지한 채** 웹캠으로
@@ -139,7 +147,7 @@ DG-5F-M-R까지 전달된다. **2026-09-01 동작 확인.**
    python vision/dg5f/vision_node_dg5f.py right
    ```
    좌상단이 **"손 트래킹: 수신중"**(초록)인지 확인.
-4. 손을 **편 중립 자세**로 두고, Unity 화면 **우상단 `실물 송신 OFF` 토글을 ON**으로 바꾼다.
+4. 손을 **편 중립 자세**로 두고, Unity 화면 **왼쪽 열의 `실물 송신 OFF` 토글을 ON**으로 바꾼다.
    이 순서를 지키는 이유: 트윈이 이미 내 손 자세를 잡고 있으면 실물의 이동량이 0에 가깝다.
    순서를 뒤집으면 실물이 트윈의 기본 자세(손 편 상태)까지 한 번에 움직인다 —
    브리지 슬루 리밋(`RTAUTO_DG5F_MAX_DEG_PER_SEC`, 기본 100 deg/s)이 속도는 막아주지만
@@ -161,6 +169,88 @@ Unity 관절이 아니라 비전 패킷이 실물에 직접 간다):
 ```bash
 python vision/dg5f/vision_node_dg5f.py right --bridge
 ```
+
+## UR16e 팔 디지털 트윈 (Unity ↔ URSim)
+
+**2026-09-04 착수.** 손(DG5F)과 별개로 팔(UR16e)을 Unity와 URSim(UR 공식 가상
+컨트롤박스) 사이에서 왕복시키는 경로. 실물 UR16e는 Manual→Automatic 모드 전환
+안전 비밀번호가 아직 없어 실물 검증은 보류 중이지만(`docs/SIM2REAL_ROADMAP.md` §11),
+URSim은 이 블로커와 무관하게 지금 바로 검증할 수 있다.
+
+```text
+Unity UrArmSender.cs -> UDP:5009 -> arm/ur_rtde_bridge.py -> RTDE servoJ -> URSim
+                                          |
+                                          '--echo-to-unity--> UDP:5010 -> Unity UrArmReceiver.cs
+```
+
+1. **URSim 실행** (도커 필요):
+   ```powershell
+   .\arm\run_ursim.ps1
+   ```
+   ```bash
+   ./arm/run_ursim.sh
+   ```
+   펜던트 화면: `http://localhost:6080/vnc.html`. 첫 부팅 시 안전 설정 초기화 화면이
+   나오면 기본값으로 Confirm — URSim은 실물과 달리 Manual→Automatic 전환에 별도
+   비밀번호가 걸려 있지 않다. **이어서 펜던트 화면 하단의 `Power off` 표시를 눌러
+   `Power On` → `Brake Release`(또는 `Start`)까지 진행할 것** — 이걸 안 하면
+   로봇이 정지 상태라 다음 단계에서 브리지가 붙어도 `servoJ`가 거부되거나 조용히
+   씹힌다(실물도 동일 — 컨트롤박스 전원만 켠 상태와 "구동 가능" 상태는 다르다).
+2. **RTDE 브리지** 실행 — **Unity 안의 버튼으로 띄우는 게 기본**이다(3번 참고).
+   "UR16e 팔" 패널의 **`브리지 실행`** 버튼이 아래 명령을 저장소 루트에서 그대로 실행하고,
+   Play를 멈추면 프로세스를 죽인다(살려두면 UDP 포트를 쥔 채 남아 다음 실행이 바인드
+   실패로 죽는다). 별도 콘솔 창이 열려 브리지 로그가 그대로 보인다.
+
+   터미널에서 직접 띄우고 싶으면 — **터미널 2 (PowerShell/bash, 리포 루트, RTDE 브리지)**,
+   위 URSim 창과는 별개다. 텔레옵과 같은 공용 venv(`vision/.vision`,
+   `docs/PYTHON_ENV_SETUP.md` §2)를 활성화한다. `ur_rtde`는 `requirements-vision.txt`에
+   포함돼 있어 이 venv에 이미 설치돼 있다:
+   ```powershell
+   .\vision\.vision\Scripts\Activate.ps1
+   python arm/ur_rtde_bridge.py --ip --echo-to-unity
+   ```
+   ```bash
+   source vision/.vision/bin/activate
+   python arm/ur_rtde_bridge.py --ip --echo-to-unity
+   ```
+   `--ip`만 주면 `.env`의 `RTAUTO_UR_IP`(기본 `127.0.0.1` = 로컬 URSim)를 쓴다.
+   `[연결] RTDE 접속 완료`가 뜨면 준비된 것이다. 종료는 `Ctrl+C`.
+
+   > 버튼이 쓰는 파이썬은 `.env`의 `RTAUTO_PYTHON`이고, 비워두면 OS별 공용 venv 기본
+   > 경로(Windows `vision/.vision/Scripts/python.exe`)를 쓴다. venv를 아직 안 만들었다면
+   > 버튼이 "파이썬 없음 — venv 먼저 만들 것"으로 실패하고 Console에 만드는 법이 찍힌다.
+3. **Unity 에디터에서 Play.**
+   1. Project 창(에디터 하단)에서 `Assets/Scenes/Pipeline_Demo_GraspLift.unity`를
+      더블클릭해 연다.
+   2. 에디터 상단 중앙의 **▶(Play)** 버튼을 누른다. 다시 누르면 멈춘다.
+   3. Game 화면 **오른쪽 "UR16e 팔" 패널**에 URSim 연동 UI가 나온다. 필요한 컴포넌트
+      (`UrArmSender`/`UrArmReceiver`/`UrArmTwinDriver`)는 씬에 이미 붙어 있고,
+      씬을 새로 빌드해도 `PicknPlacePipelineDemoSceneBuilder`가 자동으로 붙인다 —
+      손으로 추가할 것은 없다.
+
+   패널 맨 위 **`브리지 실행`** 버튼을 누르면 2번의 파이썬 브리지가 뜬다(콘솔 창이 따로
+   열린다). 아래 **`브리지: 실행 중`** 표시로 상태를 확인한다. **`브리지 중지`**로 내리고,
+   Play를 멈춰도 자동으로 내려간다.
+
+   그 아래 **"URSim 연동 방향"**에서 방향을 고른다. 둘은 **상호배타**라 하나를 켜면
+   다른 하나가 자동으로 꺼진다(되먹임 루프 방지 — Unity 목표 → URSim → echo → 다시 Unity):
+
+   | 버튼 | 방향 | 무슨 일이 일어나나 |
+   |---|---|---|
+   | `Unity→URSim` | Unity가 URSim을 구동 | 관절 슬라이더(또는 자동 모드의 정책)가 URSim을 움직인다 |
+   | `URSim→Unity` | URSim이 Unity를 구동 | **펜던트에서 직접 조그**하거나 URScript를 돌리면 Unity가 따라온다. 이때 슬라이더는 잠긴다 |
+
+   그 아래 초록색 **"URSim: 수신중"**이 뜨면 브리지가 붙은 것이고, 주황색
+   **"URSim: 대기중"**이면 2번 브리지가 안 돌고 있다는 뜻이다. 각 관절 줄에는
+   `명령각 / URSim 실제각`이 함께 표시돼 추종 오차를 바로 볼 수 있다.
+   **"URSim 실제각으로 맞추기"** 버튼은 Unity 자세를 URSim 현재 자세로 한 번에 맞춘다 —
+   두 자세가 벌어진 채 `Unity→URSim`을 켜면 URSim이 그 간극만큼 한꺼번에 움직이므로,
+   켜기 전에 눌러두면 안전하다.
+
+포트·IP는 전부 `.env`(`RTAUTO_PORT_UR_ARM_BRIDGE`/`RTAUTO_PORT_UR_ARM_SIM`/`RTAUTO_UR_IP`)
+에서 관리한다 — 실물로 전환할 때는 `RTAUTO_UR_IP`만 컨트롤박스 IP로 바꾸면 된다(원칙 1).
+관절 순서·부호·슬루 리밋 등 상세는 `arm/ur_rtde_bridge.py` 안내문 및
+`docs/SIM2REAL_ROADMAP.md` §9 "URSim 선행 개발 경로" 참고.
 
 ## 다른 PC에 exe로 배포 (설치 없이 시연)
 

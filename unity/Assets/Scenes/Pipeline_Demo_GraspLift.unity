@@ -22506,14 +22506,15 @@ GameObject:
   - component: {fileID: 1648934179}
   - component: {fileID: 1648934178}
   - component: {fileID: 1648934177}
-  - component: {fileID: 1648934176}
-  - component: {fileID: 1648934175}
-  - component: {fileID: 1648934174}
   - component: {fileID: 1648934173}
   - component: {fileID: 1648934172}
   - component: {fileID: 1648934171}
   - component: {fileID: 1648934170}
   - component: {fileID: 1648934169}
+  - component: {fileID: 1648934190}
+  - component: {fileID: 1648934191}
+  - component: {fileID: 1648934192}
+  - component: {fileID: 1648934193}
   m_Layer: 0
   m_Name: UR16e_DG5F_PicknPlaceAgent
   m_TagString: robot
@@ -22823,7 +22824,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: KDT.PicknPlaceTraining::KDT.PicknPlaceTraining.PicknPlaceControlModeSwitcher
   agent: {fileID: 1648934168}
-  armNudge: {fileID: 1648934174}
   armJointPanel: {fileID: 1648934173}
   handReceiver: {fileID: 1648934178}
   handDriver: {fileID: 1648934177}
@@ -22844,155 +22844,11 @@ MonoBehaviour:
   m_EditorClassIdentifier: KDT.PicknPlaceTraining::KDT.PicknPlaceTraining.PicknPlaceArmJointPanel
   agent: {fileID: 1648934168}
   fistButton: {fileID: 1648934171}
+  urSender: {fileID: 1648934190}
+  urTwinDriver: {fileID: 1648934192}
+  urReceiver: {fileID: 1648934191}
+  urBridgeLauncher: {fileID: 1648934193}
   lerpSpeed: 8
-  showUI: 1
---- !u!114 &1648934174
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1648934166}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: cd998f629bd740f49a07946c08432a33, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: KDT.PicknPlaceTraining::KDT.PicknPlaceTraining.PicknPlaceTeleopNudge
-  agent: {fileID: 1648934168}
-  armIK: {fileID: 1648934175}
-  armSliderUI: {fileID: 1648934176}
-  showControlUI: 1
-  maxHeightOffset: 0.2
-  maxHorizontalOffset: 0.25
-  horizontalMoveSpeed: 0.12
---- !u!114 &1648934175
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1648934166}
-  m_Enabled: 0
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: e855f4a910e671b4b84a59c504f42140, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: KDT.RobotScripts::ArmTargetIK
-  target: {fileID: 0}
-  endEffector: {fileID: 1317877631}
-  enableIK: 1
-  showUI: 1
-  ignoreArrivalAndStallGating: 0
-  positionJointCount: -1
-  threshold: 0.02
-  rotationSpeed: 5
-  maxStepDeg: 1.8
-  maxAccelDeg: 0.12
-  distalStepScale: 0.6
-  deadbandDeg: 0.25
-  rearmFactor: 1.5
-  windupDeg: 15
-  signs:
-  - 1
-  - 1
-  - 1
-  - 1
-  - 1
-  - 1
-  reachMargin: 0.88
-  stallFreezeSec: 1.5
-  stallResumeMove: 0.03
---- !u!114 &1648934176
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1648934166}
-  m_Enabled: 0
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 2197be6fae7f6114791f08cb4587f32f, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: KDT.RobotScripts::HandSliderUI
-  armJoints:
-  - label: Shoulder Pan
-    link: shoulder_link
-    minDeg: -180
-    maxDeg: 180
-    value: 0
-  - label: Shoulder Lift
-    link: upper_arm_link
-    minDeg: -180
-    maxDeg: 180
-    value: 0
-  - label: Elbow
-    link: forearm_link
-    minDeg: -180
-    maxDeg: 180
-    value: 0
-  - label: Wrist 1
-    link: wrist_1_link
-    minDeg: -180
-    maxDeg: 180
-    value: 0
-  - label: Wrist 2
-    link: wrist_2_link
-    minDeg: -180
-    maxDeg: 180
-    value: 0
-  - label: Wrist 3
-    link: wrist_3_link
-    minDeg: -180
-    maxDeg: 180
-    value: 0
-  handJoints:
-  - label: Thumb Flexion
-    link: right_hand_a
-    minDeg: 0
-    maxDeg: 55.6
-    value: 0
-  - label: Thumb Opposition
-    link: right_hand_z
-    minDeg: 0
-    maxDeg: 56.6
-    value: 0
-  - label: Index Proximal
-    link: right_hand_l
-    minDeg: 0
-    maxDeg: 45.7
-    value: 0
-  - label: Index Distal
-    link: right_hand_p
-    minDeg: 0
-    maxDeg: 76.4
-    value: 0
-  - label: Middle Proximal
-    link: right_hand_k
-    minDeg: 0
-    maxDeg: 45.7
-    value: 0
-  - label: Middle Distal
-    link: right_hand_o
-    minDeg: 0
-    maxDeg: 76.4
-    value: 0
-  - label: Ring Finger
-    link: right_hand_j
-    minDeg: 0
-    maxDeg: 56.2
-    value: 0
-  - label: Pinky
-    link: right_hand_i
-    minDeg: 0
-    maxDeg: 56.2
-    value: 0
-  - label: Finger Spread
-    link: right_hand_virtual_i
-    minDeg: 0
-    maxDeg: 33.4
-    value: 0
-  lerpSpeed: 12
-  showArm: 1
-  driveHandJoints: 1
   showUI: 1
 --- !u!114 &1648934177
 MonoBehaviour:
@@ -23026,6 +22882,69 @@ MonoBehaviour:
   m_EditorClassIdentifier: KDT.RobotScripts::Dg5fReceiver
   port: 5006
   secondsSinceLastPacket: Infinity
+--- !u!114 &1648934190
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1648934166}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d79d10279cd64427826371ce79d548b3, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: KDT.RobotScripts::UrArmSender
+  bridgeIp: 127.0.0.1
+  bridgePort: 5009
+  sendEnabled: 0
+  sendHz: 10
+  sendCommandedAngle: 1
+  showUI: 0
+--- !u!114 &1648934191
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1648934166}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 97a0f1d72264416db1b4351dfb5ae565, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: KDT.RobotScripts::UrArmReceiver
+  port: 5010
+  secondsSinceLastPacket: Infinity
+--- !u!114 &1648934192
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1648934166}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1508bf2322694130bc4d31f6a6525b55, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: KDT.RobotScripts::UrArmTwinDriver
+  receiver: {fileID: 1648934191}
+  driveEnabled: 0
+  lerpSpeed: 15
+  showUI: 0
+--- !u!114 &1648934193
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1648934166}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e546fe10b0dc41f1894a43c37c6cdb04, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: KDT.RobotScripts::UrArmBridgeLauncher
+  scriptRelativePath: arm/ur_rtde_bridge.py
+  arguments: --ip --echo-to-unity
+  showWindow: 1
 --- !u!114 &1648934179
 MonoBehaviour:
   m_ObjectHideFlags: 0

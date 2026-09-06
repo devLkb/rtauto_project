@@ -480,10 +480,10 @@ namespace KDT.PicknPlaceTraining
         void OnGUI()
         {
             if (!showUI) return;
-            // 우상단 — 좌상단(PicknPlaceControlModeSwitcher), 우하단(PicknPlaceTeleopNudge)과
-            // 겹치지 않는 모서리.
-            // 높이를 바꾸면 Dg5fSender.OnGUI의 패널 y도 함께 내려야 한다(그쪽이 이 아래에 붙는다).
-            GUILayout.BeginArea(new Rect(Screen.width - 250, 10, 240, 176), GUI.skin.box);
+            // 왼쪽 열(손·모드 관련)에 쌓인다. 좌표·순서는 DemoUiLayout이 정하므로 이 패널의
+            // 높이를 바꿔도 다른 패널과 겹치지 않는다 — 예전에는 여기 높이를 고치면
+            // Dg5fSender.OnGUI의 y도 손으로 같이 내려야 했다(그러다 실제로 겹쳤다).
+            GUILayout.BeginArea(DemoUiLayout.Left(176f), GUI.skin.box);
             // 구동권이 없을 때(real→sim: 손의 주인이 Dg5fHandDriver) 자세 버튼은 눌러도 소용없다.
             // 반면 '녹화'는 그 모드에서 쓰는 기능이라 계속 살려둔다.
             GUI.enabled = driveHand;

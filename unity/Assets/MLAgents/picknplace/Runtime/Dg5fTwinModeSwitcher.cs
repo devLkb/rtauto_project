@@ -200,9 +200,11 @@ namespace KDT.PicknPlaceTraining
         void OnGUI()
         {
             if (!showUI) return;
-            // 좌하단 — 우상단(주먹/파지·송신), 좌상단(제어모드 전환), 우하단(팔 조작)을 피한다.
-            GUILayout.BeginArea(new Rect(10, Screen.height - 132, 280, 122), GUI.skin.box);
-            GUILayout.Label("디지털 트윈 방향");
+            // 왼쪽 열(손 관련)에 쌓인다 — 팔/URSim 패널은 오른쪽 열이라 서로 겹치지 않는다.
+            // 이 패널은 **손**의 트윈 방향이고, 팔의 방향 전환은 PicknPlaceArmJointPanel의
+            // "URSim 연동 방향"이 같은 역할을 한다(둘 다 상호배타 강제).
+            GUILayout.BeginArea(DemoUiLayout.Left(ComputePanelHeight()), GUI.skin.box);
+            GUILayout.Label("디지털 트윈 방향 (손)");
 
             GUI.enabled = mode != TwinMode.SimToReal;
             if (GUILayout.Button("sim → real  (Unity가 실물 구동)")) SetMode(TwinMode.SimToReal);
@@ -214,6 +216,20 @@ namespace KDT.PicknPlaceTraining
 
             GUILayout.Label(_note);
             GUILayout.EndArea();
+        }
+
+        /// 안내문(_note)은 모드마다 길이가 달라 두세 줄로 접힌다. 높이를 122f 같은 상수로
+        /// 두면 마지막 줄이 박스 밖으로 잘려 나간다(2026-09-04에 실제로 "…마지막 자세 유"에서
+        /// 끊겨 보였다). 실제 줄바꿈 결과를 CalcHeight로 재서 박스를 그만큼 키운다.
+        float ComputePanelHeight()
+        {
+            const float titleHeight = 20f;
+            const float buttonHeight = 22f;   // sim→real / real→sim / 연결 끊기
+            float textWidth = DemoUiLayout.LeftWidth - 24f;   // 박스 좌우 여백 제외
+            float noteHeight = string.IsNullOrEmpty(_note)
+                ? 0f
+                : GUI.skin.label.CalcHeight(new GUIContent(_note), textWidth);
+            return titleHeight + buttonHeight * 3f + noteHeight + 20f;
         }
 
         void OnDisable()

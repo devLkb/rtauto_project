@@ -16,6 +16,32 @@ Gazebo를 검증 단계로 추가).
 공식 문서로 검증해 채택, 연결 구성을 **이더넷 스위치 단일안**으로 통일. 착수 순서를
 5단계로 재정리하고 **eye-in-hand 카메라 도입**·**관찰 재설계 후 재학습**을 명시.
 AMR 통합은 후속으로 보류. §5 "결정 (2026-09-03 최종)" 및 "URSim 선행 개발 경로" 절 참고).
+개정 2026-09-04 (v8 — **UR16e 소프트웨어 버전 확인**: PolyScope 5.25.2, URCaps DG5F 1.0.1,
+UR connect 2.3.10. §4 "확정됨" 절 참고).
+개정 2026-09-04 (v9 — **Unity↔URSim 팔 디지털 트윈 착수**: `arm/ur_rtde_bridge.py` +
+Unity `UrArmSender`/`UrArmReceiver`/`UrArmTwinDriver` 작성(양방향 — Unity→URSim 명령,
+URSim→Unity 실제각 반영), `config/rtauto_config.py`에 UR_IP·RTDE 포트 키 추가
+(로드맵 §10 "UR IP·포트 키 부재" 항목 해소). 실물 UR16e는 Automatic 모드 전환
+비밀번호 미확보로 검증 보류 — URSim으로 먼저 검증 진행. §5-5 참고).
+개정 2026-09-04 (v9.1 — **데모 HUD 정리**: 팔 조작 경로를 관절각 하나로 통일해
+작업공간 IK(`PicknPlaceTeleopNudge` + `ArmTargetIK`/`HandSliderUI` 배선)를 삭제하고,
+겹치던 OnGUI 박스들을 `DemoUiLayout`(왼쪽=손·모드 / 오른쪽=팔·URSim 자동 배치)으로 옮김.
+URSim 연동 방향 선택은 `PicknPlaceArmJointPanel`이 소유하며 손 쪽 `Dg5fTwinModeSwitcher`와
+같이 상호배타를 강제한다).
+개정 2026-09-04 (v10 — **URSim 실행 명령 버전 고정**: 태그 없는 `latest` 대신 실물
+확인 버전 `5.25.2`로 명시, `--rm` 제거하고 `--name`으로 컨테이너 재사용 — 그렇지 않으면
+PolyScope 언어 설정 등 상태가 재실행마다 초기화됨. §5-5 "실행 명령" 참고).
+개정 2026-09-04 (v11 — **UR16e 관절 순서·부호·영점 URSim 검증 완료**: 6관절 단독
+조그 대조로 순서·부호 일치 확인, 최종값 오차 약 0.2°는 허용 범위로 판정. 실물 대조는
+과제로 남음. §5 Phase 1 항목 5 참고).
+개정 2026-09-04 (v12 — **Unity↔URSim 양방향 트윈 동작 확인 + 브리지 자가복구 도입**:
+Local↔Remote 전환이 `ur_rtde` 컨트롤 스크립트를 죽여 Unity→URSim만 막히던 문제를,
+`servoJ` 반환값 확인 + 2초 주기 자동 재접속으로 해결해 **실행 순서 의존을 제거**.
+§5 Phase 1 항목 5 참고).
+개정 2026-09-04 (v13 — **Unity 물리 충실도 정비**: 씬 빌더에 UR5e 토크 한계가 남아
+sim 팔이 실물 절반 토크로 학습되던 버그 수정, 속도 제한 3중 불일치를 URDF 정본
+(`UrArmLimits.cs`)으로 통일, 솔버 반복 20/10 상향. 중력 OFF 유지 근거와 드라이브 게인
+미검증 상태를 명시. §6 "물리 충실도 정비" 절 참고).
 1인 풀타임·로컬 단독 머신(**RTX 4070 Ti 12 GB / 32 GB RAM / Ryzen 7 7800X3D**, Windows) 체제.
 
 정책 계약 상세는 [`DG5F_GRASP_LIFT.md`](DG5F_GRASP_LIFT.md), SDK 실측 근거는
@@ -209,7 +235,20 @@ URDF"** 라고 적혀 있다 — 원본이 오른손 포즈였고 왼손용으�
 기존 자산이 이미 공식본이었다. `dg5f_sdk_bridge.py --model` 기본값을
 `5f_right`로 갱신했다.
 
-여전히 확인 필요한 것 — **UR16e**: Polyscope 버전, 네트워크(IP), RTDE 활성화 여부.
+**UR16e 소프트웨어 버전 확인 완료 (2026-09-04):**
+
+| 항목 | 버전 |
+|---|---|
+| PolyScope | **5.25.2** |
+| URCaps — DG5F | **1.0.1** |
+| URCaps — UR connect | **2.3.10** |
+
+> 위 §"DG-5F 통신 모드" 절(RS-485/Modbus)에서 인용한 "Delto Gripper URCaps 1.0.2 매뉴얼"은
+> 벤더가 배포한 매뉴얼 버전이고, 실물에 설치된 버전은 **1.0.1**이다. Connect Mode
+> 옵션(Modbus RTU on RS-485 / Modbus TCP) 자체는 두 버전에서 동일하다고 가정하되,
+> 실제 설정 화면이 매뉴얼과 다르면 이 차이부터 의심할 것.
+
+여전히 확인 필요한 것 — 네트워크(IP), RTDE 활성화 여부.
 
 #### 재빌드 완료 — `ur16e_dg5f_right.urdf`
 
@@ -267,8 +306,9 @@ UR16e+오른손 조합에도 필요한지 Phase 2 착수 시 재확인.
 
 ### 스펙 요구 목록 (미정 항목)
 
-**이동 베이스 — 제조사 확정(2026-08-25): 엔스퀘어(Nsquare) AMR.** 모델·상세 스펙은
-아직 미확보. Nav2가 요구하는 세부 항목은 여전히 확인 필요: 구동 방식(차동/전방향),
+**이동 베이스 — 제조사 확정(2026-08-25): 엔스퀘어(Nsquare) AMR.** 모델은 **NR-200을
+커스텀한 것으로 추정**(2026-09-04, 미확정 — 제조사 확인서·정식 스펙시트로 재확인 필요).
+Nav2가 요구하는 세부 항목은 여전히 확인 필요: 구동 방식(차동/전방향),
 오도메트리 출력(엔코더), LiDAR 모델, **ROS2 드라이버 제공 여부**, 적재 하중(UR16e
 33 kg급 + DG5F + 카메라 지지), 풋프린트, 배터리, 비상정지 경로. (참고: 웹 검색으로
 공개 스펙 시트를 찾지 못했다 — 제조사 자료나 정확한 모델명이 확보되면 갱신)
@@ -305,6 +345,29 @@ UR16e+오른손 조합에도 필요한지 Phase 2 착수 시 재확인.
 5. **UR16e RTDE 연결** — `getActualQ`/`getActualQd`, 10 Hz `servoJ`. `ArmLinks` 순서가
    UR `q` 순서와 1:1인지, **부호·영점**이 URDF와 맞는지 대조. 여기가 틀리면 관찰
    정규화가 조용히 어긋난다.
+   → **2026-09-04 URSim 경로 착수**: `arm/ur_rtde_bridge.py`(Unity↔URSim 왕복,
+   `README.md` "UR16e 팔 디지털 트윈" 절) 작성 완료.
+   → **2026-09-04 관절 순서·부호·영점 URSim 검증 완료**: 6관절 각각 단독 조그로
+   대조 — 순서·회전 방향(부호) 전부 일치. 정지 후 최종값 비교(예: shoulder_pan
+   URSim -29.77° vs Unity -30°)에서 **약 0.2° 수준 오차만 확인** — 부호/오프셋
+   문제가 아니라 Unity 표시 반올림 또는 float32 누적 오차로 판단, 허용 범위로 간주.
+   `UrArmSender`/`UrArmTwinDriver`에 DG5F 같은 `JOINT_SIGN`/`JOINT_OFFSET_DEG`
+   보정 레이어가 없는 채로 그대로 둬도 무방함을 확인. **실물 UR16e 대조는 여전히
+   남음** — URSim의 URDF 규약이 실물과 같다는 전제이므로, 실물 연결 시 이 절차를
+   한 번 더 반복해 재확인할 것.
+   → **2026-09-04 Unity→URSim 방향 복구 + 자가복구 도입**: 펜던트에서 Local↔Remote를
+   전환하면 `ur_rtde`가 로봇에 올려둔 **컨트롤 스크립트가 죽는데**, RTDE Receive(관절
+   읽기)는 계속 살아 있어서 **"URSim→Unity는 되는데 반대만 안 된다"**로 보인다. 게다가
+   당시 코드가 `servoJ()`의 bool 반환값을 버려서 거부가 **아무 로그도 없이 묻혔다**.
+   조치: ① `servoJ` 반환값·예외를 확인하고 ② 링크가 죽으면 `CONTROL_RETRY_SEC`(2초)마다
+   **스스로 재접속**하도록 `arm/ur_rtde_bridge.py`를 고쳤다. 그래서 브리지와 펜던트 설정의
+   **실행 순서 의존이 없다** — 사람이 지켜야 할 순서로 떠넘기지 않고 코드가 흡수한다.
+   재접속 시 슬루 기준점을 로봇의 현재 자세로 다시 잡아 복구 순간의 급격한 점프도 막는다.
+   → **2026-09-04 슬루 리밋 정성적 확인**: 목표각을 크게 점프시켜도 클램프가 걸려
+   Unity·URSim 트윈 동기화가 깨지지 않음을 듀얼 모니터 육안 관찰로 확인. **정량
+   검증(실제 도달 시간을 재서 deg/s 역산 후 `UR_MAX_DEG_PER_SEC`=100 기본값이
+   적정한지 판단)은 아직 안 함** — 실측 근거 없는 보수적 추정값이라는 상태는
+   그대로 유지, 정밀 튜닝은 실물 확보 후 과제로 남김.
 6. **ArUco 마커로 물체 자세 공급** — 비전 파이프라인 없이 obs의 비전 의존 10칸을 채우는
    우회로. 마커/지그로 물체 자세를 주면 **비전 개발 전에 파지 루프 전체를 실물에서
    닫을 수 있다.**
@@ -543,13 +606,23 @@ RS-485안은 폐기됐지만, 사용자모드(Modbus) 경로 자체는 남아 �
 > URSim에 대해서는 한계를 명시하지 않는다.
 
 **실행 명령** — RTDE를 쓰려면 30001–30004 게시가 필수다. 공식 이미지 문서의 기본
-예시에는 5900/6080만 있어 그대로 따라 하면 RTDE에 못 붙는다:
+예시에는 5900/6080만 있어 그대로 따라 하면 RTDE에 못 붙는다. 이미지 태그는 **버전을
+명시**한다 — 태그 없이 받으면 `latest`가 잡혀 실물 PolyScope 버전과 어긋난다. 실물
+UR16e 확인 버전(§4 "확정됨", 2026-09-04)인 **5.25.2**로 고정:
 
 ```bash
-docker run --rm -it -e ROBOT_MODEL=UR16 -p 5900:5900 -p 6080:6080 -p 29999:29999 -p 30001-30004:30001-30004 universalrobots/ursim_e-series
+docker run -it -e ROBOT_MODEL=UR16 -p 5900:5900 -p 6080:6080 -p 29999:29999 -p 30001-30004:30001-30004 --name ursim universalrobots/ursim_e-series:5.25.2
 ```
 
-펜던트 화면: `http://localhost:6080/vnc.html`
+`--rm`을 빼고 `--name`으로 컨테이너를 고정한다 — `--rm`을 쓰면 컨테이너가 멈출 때마다
+내부 상태(PolyScope 언어 설정 등)가 통째로 사라져 재실행할 때마다 초기화된다. 껐다 켤
+때는 `docker run`을 다시 하지 말고 `docker stop ursim` / `docker start ursim`으로
+같은 컨테이너를 재사용한다.
+
+펜던트 화면: **반드시 `http://localhost:6080/vnc.html`로 접속** — 컨테이너 시작 로그가
+`http://172.17.0.2:6080/vnc.html?host=172.17.0.2&port=6080`처럼 도커 내부 브리지 IP를
+찍어주는데, 이 IP는 도커 네트워크 밖(WSL2 밖 Windows 브라우저 등)에서 접근 불가능하다.
+로그의 IP를 그대로 쓰지 말고 `localhost`로 바꿔서 접속할 것.
 (공식 문서 경고 — 포트를 게시하면 **시뮬 로봇이 LAN에 노출**된다. 방화벽 확인.)
 
 **URSim으로 끝낼 수 있는 것 / 실물이 필요한 것**
@@ -677,8 +750,8 @@ Docker"로 잡아둔 것 중 **문서화된 길은 Docker 쪽**이다.
 
 | 항목 | 현재 상태 | 필요한 조치 |
 |---|---|---|
-| **UR IP·포트 키 부재** | [`rtauto_config.py`](../config/rtauto_config.py)에 `UR_TYPE`만 있고 **IP·RTDE 포트 키가 없다** | 키 추가. 팔 관절 UDP 포트도 레지스트리에 등록 — 5005~5008 사용 중이므로 5009가 비어 있다 |
-| **`ur_rtde`/ROS2 의존성 부재** | `requirements-vision.txt`는 mediapipe·opencv·numpy 계열뿐 | 의존성 추가 + [`PYTHON_ENV_SETUP.md`](PYTHON_ENV_SETUP.md) 동시 갱신 — **Windows·Linux 양쪽 모두** |
+| ~~**UR IP·포트 키 부재**~~ → **2026-09-04 해소** | `UR_IP`(기본 127.0.0.1=URSim 로컬)·`PORT_UR_ARM_BRIDGE`(5009)·`PORT_UR_ARM_SIM`(5010)·`UR_MAX_DEG_PER_SEC` 추가 완료 | 완료. `arm/ur_rtde_bridge.py`가 사용 중 |
+| **`ur_rtde` 의존성 부재** → **2026-09-04 부분 해소** | `requirements-vision.txt`에 `ur_rtde==1.6.5` 추가 완료. ROS2 의존성은 여전히 없음(§9 Unity-Robotics-Hub 별건) | `PYTHON_ENV_SETUP.md`에 `ur_rtde` 설치 확인 반영 필요 — **Windows·Linux 양쪽 모두** (아직 미착수) |
 | **Modbus 레지스터 맵 정본 불완전** | `dg5f_modbus_readback.py` 주석이 0~25만 담음 | 위 "Modbus Input Register 맵" 표 반영. 참조 매뉴얼 **판본과 범위**를 함께 명시 |
 
 원칙 2("새 머신에서 설치 직후 바로 구동")를 지키려면 팔 연동 의존성이 requirements와
@@ -686,6 +759,49 @@ Docker"로 잡아둔 것 중 **문서화된 길은 Docker 쪽**이다.
 지금 노트북에서 짠 브리지가 나중에 온보드 PC에서 그대로 돌아야 한다.
 
 ## 6. Phase 2 — Unity PhysX 재학습 (새 하드웨어: UR16e + 오른손)
+
+### 물리 충실도 정비 (2026-09-04) — 동작 한계를 URDF 정본에 묶었다
+
+발단은 "Unity 팔이 속 빈 풍선처럼 덜렁거린다"는 관찰이었는데, 파고들자 **원인이 감쇠가
+아니라 동작 한계(envelope)가 실물과 어긋나 있던 것**으로 드러났다.
+
+| 발견 | 조치 |
+|---|---|
+| **씬 빌더의 토크 한계가 UR5e 값이었다** — `wrist_ ? 28f : 150f`는 `ur5e_dg5f_right.urdf`의 effort(150/150/150/28/28/28)다. 로봇을 UR5e→UR16e로 바꿀 때 남은 잔재로, sim 팔이 **실물의 절반 토크**(어깨 150 vs 330, 손목 28 vs 54)로 학습되고 있었다 | `UrArmLimits.MaxEffortNm`(330/330/150/54/54/54)로 교체. 데모 씬 빌더는 아예 `forceLimit`을 안 걸어 학습 씬과 토크 envelope이 달랐던 것도 함께 수정 |
+| **속도 제한이 세 곳에서 제각각이었다** — 학습 20 °/s(`armDeltaDegPerDecision=2`의 암묵적 결과), 브리지 30 °/s(추측값), 데모·트윈 **제한 없음**. 어느 것도 URDF를 안 봤다 | `unity/Assets/Scripts/UrArmLimits.cs` 신설(URDF 유래 120/120/180/180/180/180 °/s). 데모·트윈에 per-joint 슬루 클램프 추가, 학습은 per-joint envelope × `TrainingSpeedFraction`(0.5)로 재정의 |
+| 솔버 반복이 26 DoF 체인에 비해 낮았다(**velocity iteration 1**) | `DynamicsManager.asset` 20 / 10 |
+
+**`UrArmLimits.cs`를 `KDT.RobotScripts`에 둔 이유**: 어셈블리 의존이
+`KDT.PicknPlaceTraining → KDT.RobotScripts` 한 방향이라 아래층에 둬야
+`UrArmTwinDriver`(트윈)와 `Dg5fPicknPlaceSpec`/`Dg5fPicknPlaceAgent`(학습)가 **같은 정본
+하나**를 쓴다. 위층에 두면 순환 참조로 컴파일이 깨진다(`UrArmJointNames.cs`가 같은 함정을
+기록해 뒀다).
+
+**`armDeltaDegPerDecision`은 직렬화 필드에서 제거**했다. `public` 필드라 값 `2`가 프리팹·씬에
+이미 구워져 있어서, 코드 기본값만 바꾸면 **조용히 아무 일도 일어나지 않는** 함정이었다. 이제
+`DecisionRequester.DecisionPeriod × Time.fixedDeltaTime`로 결정당 시간을 실측해 관절별로
+계산한다 — 타임스텝을 바꿔도 명령 속도가 몰래 따라 바뀌지 않는다.
+
+> ⚠️ **중력은 팔 링크에서 계속 끈다(`useGravity = false`).** 이건 편법이 아니라 실물
+> 모델링이다 — 실물 UR16e 컨트롤러가 중력을 내부 보상하므로 `servoJ` 목표를 처짐 없이
+> 추종한다. Unity의 `ArticulationDrive`는 적분항이 없는 순수 PD라 중력을 켜면 실물에는
+> **없는** 정상상태 처짐(어깨 약 0.5°)이 생겨 오히려 실물에서 멀어진다. 페이로드(큐브
+> Rigidbody)는 중력을 유지하며, 그게 컨트롤러가 실제로 이겨내야 하는 무게다.
+
+> ⚠️ **드라이브 게인(stiffness 10000 / damping 200)은 여전히 미검증이다.** 2026-09-04에
+> damping을 600으로 올렸다가 **되돌렸다** — 근거로 삼은 감쇠비 계산이 단위가 틀렸다. Unity의
+> 회전 드라이브는 `target`이 **도(degree)** 단위라 stiffness는 N·m/도, damping은
+> N·m/(도/s)인데 관성을 kg·m²(라디안계)와 섞어 계산했다. 일관되게 환산하면 ζ가 √(180/π)≈7.6배
+> 커져 "저감쇠"라는 결론 자체가 뒤집힌다. 남은 진동은 **수치적 원인(솔버 수렴 부족) 의심**이며
+> 확정이 아니다 — 솔버 반복 → 타임스텝 → 게인 순으로 하나씩 바꿔가며 확인할 것.
+
+**미결**: `config/rtauto_config.py`의 `UR_MAX_DEG_PER_SEC = 30`은 손대지 않았다. 실물이
+연결돼 있지 않아 안전한 값을 검증할 수 없다. 이대로면 sim은 60/90 °/s로 학습하는데 배포
+경로는 30으로 깎는 불일치가 남는다 — 실물 확보 시 함께 정할 것.
+
+**적용 조건**: 위 값들은 씬·프리팹에 구워지므로 `Tools > ML-Agents > Build PicknPlace
+Pipeline Demo Scene`과 `Tools > ML-Agents > Build DG5F PicknPlace Training Scene`을 다시
+실행해야 반영된다.
 
 과제를 바꾸지 않고 **같은 12 cm 블록으로** 재학습한다. 기존 Unity 베이스라인
 (학습조건 99.75% / 균일밀도 99.24%, UR5e+왼손)이 있으므로 **비교 가능한 성공률

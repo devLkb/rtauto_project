@@ -135,10 +135,10 @@ public class Dg5fSender : MonoBehaviour
     void OnGUI()
     {
         if (!showUI) return;
-        // 우상단은 Dg5fFistButton이 쓰므로 그 아래에 붙인다 — 그쪽 패널이 y=10..186이다
-        // (주먹/펴기 · 파지하기 · 웹캠 복귀 · 소유권 표시 · 녹화). 그쪽 높이가 바뀌면 이 y도
-        // 같이 내려야 한다. 2026-09-01에 실제로 겹쳐 있던 것을 바로잡았다.
-        GUILayout.BeginArea(new Rect(Screen.width - 250, 194, 240, 78), GUI.skin.box);
+        // 왼쪽 열(손 관련)에 쌓인다. 예전에는 여기에 y=194를 직접 박아두고 "위쪽
+        // Dg5fFistButton 높이가 바뀌면 이 값도 같이 내려야 한다"는 주석을 달아뒀는데,
+        // 실제로 그걸 놓쳐 2026-09-01에 겹쳤다. 이제 DemoUiLayout이 순서대로 쌓아준다.
+        GUILayout.BeginArea(DemoUiLayout.Left(78f), GUI.skin.box);
         bool next = GUILayout.Toggle(sendEnabled, sendEnabled ? " 실물 송신 ON" : " 실물 송신 OFF");
         if (next != sendEnabled)
         {

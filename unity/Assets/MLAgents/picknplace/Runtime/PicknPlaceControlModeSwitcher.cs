@@ -6,14 +6,17 @@ namespace KDT.PicknPlaceTraining
     /// <summary>
     /// Pipeline_Demo_GraspLift(확정 하드웨어: UR16e + DG-5F-M-R 오른손)의 자동/수동 전환 토글.
     /// 자동은 Dg5fPicknPlaceAgent 정책(ONNX)이 그대로 팔+손을 움직여 큐브를 잡고 들어올리고,
-    /// 수동은 사람이 PicknPlaceTeleopNudge(팔)와 실제 손 트래킹(Dg5fReceiver/Dg5fHandDriver,
-    /// vision/dg5f/vision_node_dg5f.py가 UDP로 쏨)으로 직접 조종한다. GraspLift의
-    /// GraspLiftControlModeSwitcher와 동일한 OnGUI 버튼 컨벤션을 따른다.
+    /// 수동은 사람이 PicknPlaceArmJointPanel(팔 6축 관절 직접)과 실제 손 트래킹
+    /// (Dg5fReceiver/Dg5fHandDriver, vision/dg5f/vision_node_dg5f.py가 UDP로 쏨)으로 직접
+    /// 조종한다. GraspLift의 GraspLiftControlModeSwitcher와 동일한 OnGUI 버튼 컨벤션을 따른다.
+    ///
+    /// 2026-09-04: 팔 조작 방식 선택(조이스틱 IK ↔ 관절 직접)을 없앴다. 작업공간 IK
+    /// (PicknPlaceTeleopNudge)를 걷어내고 URSim RTDE와 같은 단위인 관절각 조작 하나로
+    /// 통일했기 때문 — 이유는 PicknPlaceArmJointPanel 주석 참고.
     /// </summary>
     public sealed class PicknPlaceControlModeSwitcher : MonoBehaviour
     {
         public Dg5fPicknPlaceAgent agent;
-        public PicknPlaceTeleopNudge armNudge;
         public PicknPlaceArmJointPanel armJointPanel;
         public Dg5fReceiver handReceiver;
         public Dg5fHandDriver handDriver;
@@ -22,14 +25,12 @@ namespace KDT.PicknPlaceTraining
         public bool showModeUI = true;
         [Tooltip("빠른 디지털 트윈 시연은 정책 모델 없이 손/팔 텔레옵부터 사용하므로 Play 시작 시 수동 모드로 진입")]
         public bool startInManualMode = true;
-        [Tooltip("켜면 현재 씬 자세를 고정하고 MediaPipe 오른손 손가락만 구동. 끄면 마우스 팔 조작도 활성화")]
+        [Tooltip("켜면 현재 씬 자세를 고정하고 MediaPipe 오른손 손가락만 구동. 끄면 팔 관절 조작도 활성화")]
         public bool handOnlyManualMode = false;
 
         bool _isManual;
-        bool _armJointMode; // false = PicknPlaceTeleopNudge(조이스틱, 작업공간), true = PicknPlaceArmJointPanel(관절 직접)
 
         public bool IsManual => _isManual;
-        public bool IsArmJointMode => _armJointMode;
 
         void Start()
         {
@@ -53,7 +54,7 @@ namespace KDT.PicknPlaceTraining
                 DecisionRequester requester = agent.GetComponent<DecisionRequester>();
                 if (requester != null) requester.enabled = false;
             }
-            if (armNudge != null) armNudge.SetActive(false);
+            if (armJointPanel != null) armJointPanel.SetActive(false);
         }
 
         void FixedUpdate()
@@ -74,21 +75,13 @@ namespace KDT.PicknPlaceTraining
             if (manual)
             {
                 if (agent != null) agent.PauseForManualControl();
-                if (handOnlyManualMode)
-                {
-                    if (armNudge != null) armNudge.SetActive(false);
-                    if (armJointPanel != null) armJointPanel.SetActive(false);
-                }
-                else
-                {
-                    ApplyArmControlMode();
-                }
+                // handOnlyManualMode면 팔은 그대로 두고 손만 움직인다.
+                if (armJointPanel != null) armJointPanel.SetActive(!handOnlyManualMode);
                 if (handReceiver != null) handReceiver.enabled = true;
                 if (handDriver != null) handDriver.enabled = true;
             }
             else
             {
-                if (armNudge != null) armNudge.SetActive(false);
                 if (armJointPanel != null) armJointPanel.SetActive(false);
                 if (handReceiver != null) handReceiver.enabled = false;
                 if (handDriver != null) handDriver.enabled = false;
@@ -98,29 +91,14 @@ namespace KDT.PicknPlaceTraining
             }
         }
 
-        /// 수동 모드 중 팔 조작 방식(조이스틱 IK ↔ 관절 직접)을 전환한다. handOnlyManualMode에서는
-        /// 팔 조작 자체가 꺼져 있으므로 무시한다.
-        public void SetArmControlMode(bool jointMode)
-        {
-            if (handOnlyManualMode) return;
-            if (jointMode == _armJointMode) return;
-            _armJointMode = jointMode;
-            if (_isManual) ApplyArmControlMode();
-        }
-
-        void ApplyArmControlMode()
-        {
-            if (armNudge != null) armNudge.SetActive(!_armJointMode);
-            if (armJointPanel != null) armJointPanel.SetActive(_armJointMode);
-        }
-
         void OnGUI()
         {
             if (!showModeUI) return;
 
-            // 내용물이 늘어날 때(예: 수동 모드의 조이스틱/관절직접 행) 고정 높이로 잘리는 걸
-            // 막기 위해 실제로 그릴 줄 수에서 높이를 역산한다.
-            GUILayout.BeginArea(new Rect(10, 10, 240, ComputePanelHeight()), GUI.skin.box);
+            // 좌표는 DemoUiLayout이 정한다 — 왼쪽 열(제어 모드·손 관련)의 맨 위.
+            // 고정 y좌표를 각 패널이 직접 들고 있던 시절에는 패널 높이가 바뀔 때마다
+            // 아래 패널들과 겹쳤다(DemoUiLayout.cs 주석 참고).
+            GUILayout.BeginArea(DemoUiLayout.Left(ComputePanelHeight()), GUI.skin.box);
             GUILayout.Label("제어 모드");
             if (handOnlyManualMode)
             {
@@ -133,13 +111,7 @@ namespace KDT.PicknPlaceTraining
             if (GUILayout.Button(!_isManual ? "[자동]" : "자동")) SetManualMode(false);
             if (GUILayout.Button(_isManual ? "[수동]" : "수동")) SetManualMode(true);
             GUILayout.EndHorizontal();
-            if (_isManual)
-            {
-                GUILayout.BeginHorizontal();
-                if (GUILayout.Button(!_armJointMode ? "[조이스틱]" : "조이스틱")) SetArmControlMode(false);
-                if (GUILayout.Button(_armJointMode ? "[관절직접]" : "관절직접")) SetArmControlMode(true);
-                GUILayout.EndHorizontal();
-            }
+            if (_isManual) GUILayout.Label("팔: 오른쪽 관절 패널에서 조작");
             DrawHandTrackingStatus();
             GUILayout.EndArea();
         }
@@ -154,7 +126,7 @@ namespace KDT.PicknPlaceTraining
             else
             {
                 rows += 1; // 자동/수동
-                if (_isManual) rows += 1; // 조이스틱/관절직접
+                if (_isManual) rows += 1; // "팔: 오른쪽 관절 패널에서 조작" 안내
             }
             rows += HandTrackingStatusLineCount();
             return rows * 26f + 20f;
