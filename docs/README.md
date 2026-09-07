@@ -1,5 +1,13 @@
 # 문서 인덱스
 
+## 디렉터리별 README
+
+각 폴더에 그 폴더의 코드를 파일 단위로 설명하는 README가 있다. 전체 목록은 리포 루트
+[`README.md`](../README.md)의 "디렉터리별 README 지도"에 있다. 모듈 문서와의 역할 분담은
+[`modules/README.md`](modules/README.md)를 본다.
+
+용어 표기의 정본은 [`GLOSSARY.md`](GLOSSARY.md)다.
+
 ## 코드가 무슨 일을 하는지 (모듈 지도)
 
 - **[`MODULE_GUIDE.md`](modules/MODULE_GUIDE.md)** — 전체 데이터 흐름 + 영역별 문서 입구.

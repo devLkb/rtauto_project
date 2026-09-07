@@ -28,6 +28,43 @@ Unity 수동 팔 IK (UR16e)
 | `docs/` | Agent 계약, ML-Agents 설계·학습 가이드, 전체 작업 이력 |
 | `training/` | DG5FGraspPointReach PPO 설정, 학습·평가 도구 |
 
+### 디렉터리별 README 지도
+
+각 폴더에 **그 폴더 안의 코드를 파일 단위로 설명하는 README**가 있다. 폴더를 열었을 때
+"이게 뭐지"의 답은 그 폴더의 README에, "이 기능이 어디서 어떻게 이어지지"의 답은
+[`docs/modules/`](docs/modules/README.md)에 있다.
+
+| 폴더 | README | 다루는 것 |
+|---|---|---|
+| `arm/` | [README](arm/README.md) | UR16e RTDE 브리지, URSim 실행, 재접속 로직 |
+| `config/` | [README](config/README.md) | 모든 IP·포트·경로의 정본, `.env` 우선순위 |
+| `urdf/` | [README](urdf/README.md) | 결합 URDF 빌더 5단계, 링크 이름 규칙 |
+| `tools/` | [README](tools/README.md) | 임포트 도구, 학습 곡선 렌더링, 방화벽 토글 |
+| `build-support/` | [README](build-support/README.md) | Linux 플레이어 빌드 후처리 자산 |
+| `vision/` | [README](vision/README.md) | 손 텔레옵 흐름, 브리지 3종, 검증 도구 |
+| `vision/dg5f/` | [README](vision/dg5f/README.md) | 채널·매핑·패킷 계약(정본) |
+| `vision/dg5f/tests/` | [README](vision/dg5f/tests/README.md) | 다중 카메라 캘리브레이션 수학 테스트 |
+| `unity/` | [README](unity/README.md) | 프로젝트 정보, 씬 목록, 에디터 메뉴, 빌드 |
+| `unity/Assets/Scripts/` | [README](unity/Assets/Scripts/README.md) | 통신·구동·IK·로깅 C# 파일별 상세 |
+| `unity/Assets/MLAgents/` | [README](unity/Assets/MLAgents/README.md) | 관찰 57칸·행동 7칸·판정 상수·씬 빌더 |
+| `unity/Assets/Editor/` | [README](unity/Assets/Editor/README.md) | 로봇 임포트·검수 메뉴 |
+| `unity/Assets/Robots/` | [README](unity/Assets/Robots/README.md) | 임포트된 프리팹·메시(생성물) |
+| `training/` | [README](training/README.md) | 학습 실행 절차(정본) |
+| `training/scripts/` | [README](training/scripts/README.md) | 런처·모니터·격리·전이 스크립트 |
+| `training/config/` | [README](training/config/README.md) | PPO 설정·커리큘럼·실험 파일 이름 규칙 |
+| `training/tests/` | [README](training/tests/README.md) | 파이썬 회귀 테스트와 현재 통과 상태 |
+| `docs/` | [README](docs/README.md) | 문서 인덱스 |
+| `docs/modules/` | [README](docs/modules/README.md) | 기능 단위 모듈 설명 5종 |
+
+용어 표기는 [`docs/GLOSSARY.md`](docs/GLOSSARY.md)를 정본으로 쓴다 — 같은 것을 같은 말로
+부르기 위한 표준 용어표이며, 새 용어를 도입하면 거기에 먼저 추가한다.
+각 README 끝에는 **문서 이력**(버전·일자·변경자·내용·사유)과 함께 갱신할 문서 목록이 있다.
+
+폐기·잔재 폴더에도 **왜 남겨 두었고 쓰면 안 되는지**를 적은 README를 두었다:
+[`unity/Assets/Script/`](unity/Assets/Script/README.md)(단수, Rainbow Robotics 잔재) ·
+[`vision/zed_object_detection/`](vision/zed_object_detection/DEPRECATED.md) ·
+[`training/archives/`](training/archives/README.md) · [`docs/archives/`](docs/archives/README.md)
+
 ## 새 환경 셋업
 
 ### 1. Unity

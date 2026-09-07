@@ -1,7 +1,7 @@
 # DG5F Grasp + Lift (behavior `DG5FGraspLift`)
 
 `Grasp` 브랜치의 파지·들어올리기 학습 구현. 요구사항은
-[`docs/GraspClaude.md`](GraspClaude.md), 참고 설계는 Isaac Lab
+[`docs/archives/GraspClaude.md`](archives/GraspClaude.md), 참고 설계는 Isaac Lab
 [`VAlikV/IsaacLab_delto_envs`](https://github.com/VAlikV/IsaacLab_delto_envs)
 (`envs/tesolo_delto_UR_env/delto_env.py`).
 
@@ -95,7 +95,7 @@ prefab의 열린 자세로 고정되며(`enablePolicyClosure = false`), 7번째 
 
 다만 관측/행동 shape은 **의도적으로 기존과 동일한 57/7**로 맞췄다. 이미
 학습된 pre-grasp 정책(25.3° / 69%,
-[`DG5F_PREGRASP_ANGLE_RESULT.md`](DG5F_PREGRASP_ANGLE_RESULT.md))을
+[`DG5F_PREGRASP_ANGLE_RESULT.md`](archives/DG5F_PREGRASP_ANGLE_RESULT.md))을
 `--initialize-from`으로 그대로 물려받기 위해서다. CPU 학습 환경에서 접근
 단계를 처음부터 다시 배우는 것은 비용이 너무 크다.
 
@@ -538,7 +538,7 @@ inference한 기준선이다.
    (`m_DeterministicInference = 0`). scene builder는 이제
    `DeterministicInference = true`를 강제해 scene 재생성으로 이 문제가
    돌아오지 않게 한다. 다른 후보였던 physics-level oscillation은
-   [`DEBUG_OSCILLATION_20260708.md`](DEBUG_OSCILLATION_20260708.md)에
+   [`DEBUG_OSCILLATION_20260708.md`](archives/DEBUG_OSCILLATION_20260708.md)에
    기록된 대로 이미 해결됐다.
 
 ### 0.12 m top-down potential fine-tune
