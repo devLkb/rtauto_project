@@ -46,7 +46,32 @@ sim 팔이 실물 절반 토크로 학습되던 버그 수정, 속도 제한 3�
 Unity 시뮬레이션 안의 구현·학습만 수행한다. 이에 따라 **모방학습은 선택지로 강등**
 (모방학습 → 강화학습 순서를 무조건적 목표로 삼지 않음)하고, **Isaac Sim/Lab 이식 대비
 설계 제약을 해제**한다. 아래 "작업 범위 제한" 블록 참고 — `CLAUDE.md`도 같은 날 갱신).
-1인 풀타임·로컬 단독 머신(**RTX 4070 Ti 12 GB / 32 GB RAM / Ryzen 7 7800X3D**, Windows) 체제.
+개정 2026-09-07 (v15 — **DG5F 강화학습을 [Project SuperDex](https://github.com/facebookresearch/project_superdex)로
+이관하는 평가 착수**. 브랜치 `SuperDexTest`에서만 진행하며, 계획·게이트·회귀 기준의 정본은
+[`SUPERDEX_POC_PLAN.md`](SUPERDEX_POC_PLAN.md)다. 근거 두 가지: (1) Unity PhysX는
+non-kinematic Rigidbody에 concave collider를 허용하지 않아 **DG5F 지골·대상 물체가 모두
+convex hull로 근사**되고, FOUP급 고질량비 다접촉은 iterative solver의 최악 조건이다 —
+보상 튜닝으로 메울 수 없는 표현력 문제다. (2) ML-Agents 환경 상태가 `.unity`/`.prefab`의
+인스펙터 직렬화에 있어 **AI agent가 편집하지 못하는** 반면 SuperDex Lab은 순수
+Python + JSON이다. **Unity는 버리지 않는다** — ROS2/Nav2/AMR 통합과 URSim 양방향 트윈
+(v9·v12), 시연·모니터링을 계속 소유하고, 정책은 ONNX 경계를 통해 넘긴다. 단
+**Unity 트윈으로 파지 물리를 검증하지 않는다**(접촉 지배 구간에서 SuperDex와 반드시
+발산한다). v14의 관찰 v3(366)·행동 v3(팔6+손20) 계약은 엔진 독립 자산으로 유지하며,
+게이트 2에서 손 20관절·손목 고정으로 축약해 재사용한다. 신설:
+`docs/SUPERDEX_POC_PLAN.md`, `requirements-superdex.txt`, `config/rtauto_config.py`의
+SuperDex 절. venv는 Python 3.12로 분리한다(`superdex/.venv/`)).
+개정 2026-09-07 (v15.1 — **작업 머신 사양 정정.** 아래 v5·v14가 적어 온 "RTX 4070 Ti /
+Ryzen 7 7800X3D"는 **집 머신**이고, 주 작업 환경인 **회사 머신은 RTX 2080 8 GB /
+Ryzen 5 7600(6C/12T) / 32 GB**다. **성능 판정 기준은 회사 머신**이며, RTX 2080은
+Turing이라 **bf16 미지원**이다 — 4070 Ti에서 통하는 혼합정밀도 설정을 그대로 옮기면
+런타임 에러가 난다. 병렬 학습 관련 수치는 코드·문서에 박지 않고 `os.cpu_count()`에서
+파생시킨다(원칙 1·2) — [`SUPERDEX_POC_PLAN.md`](SUPERDEX_POC_PLAN.md) §8 참고).
+1인 풀타임 체제. 작업 머신 2대 (Windows):
+
+| | CPU | GPU | RAM |
+|---|---|---|---|
+| **회사** (주 작업, 성능 판정 기준) | Ryzen 5 7600 (6C/12T) | RTX 2080 8 GB (Turing, bf16 불가) | 32 GB |
+| 집 | Ryzen 7 7800X3D (8C/16T) | RTX 4070 Ti 12 GB (Ada) | 32 GB |
 
 정책 계약 상세는 [`DG5F_GRASP_LIFT.md`](DG5F_GRASP_LIFT.md), SDK 실측 근거는
 [`TESOLLO_SDK_기술부채_조사.md`](docs2/TESOLLO_SDK_기술부채_조사.md)를 우선한다.
@@ -865,7 +890,8 @@ Pipeline Demo Scene`과 `Tools > ML-Agents > Build DG5F PicknPlace Training Scen
 ### headless 병렬 학습 인프라 (2026-08-30)
 
 4번 항목("긴 blind run 금지")의 전제였던 "단일 GPU라 한 번에 하나씩 느리게"는
-더 이상 사실이 아니다. 학습 머신이 RTX 4070 Ti / 32 GB / 7800X3D(8C16T)로 바뀌었고,
+더 이상 사실이 아니다. 학습 머신이 RTX 4070 Ti / 32 GB / 7800X3D(8C16T) — **집 머신,
+v15.1 참고** — 로 바뀌었고,
 `mlagents-learn --num-envs`로 **빌드된 headless 플레이어를 여러 개** 띄워 하나의
 PPO 업데이트에 경험을 몰아주는 경로를 뚫었다. 실행은
 [`training/scripts/train_picknplace.py`](../training/scripts/train_picknplace.py),

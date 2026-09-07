@@ -1,0 +1,40 @@
+# SuperDex PoC 전용 가상환경 — Python 3.12 (superdex wheel이 3.12 전용으로만 배포된다).
+# 기존 vision/.vision(3.10.11 — mediapipe + ML-Agents)과 섞지 않는다. venv 위치는
+# superdex/.venv/ 이며 .gitignore의 `.venv/` 패턴이 모든 깊이에서 매칭해 추적 제외다.
+# 배경·게이트·회귀 기준: docs/SUPERDEX_POC_PLAN.md
+#
+# ⚠️ 아직 버전 핀이 없다 — 이 파일이 wheel 버전 핀의 정본이지만(원칙 1: 버전 문자열을
+#    config/rtauto_config.py에 중복 타이핑하지 않는다), 2026-09-07 시점에 PyPI 실제 배포
+#    버전 문자열을 확인하지 않았다. GitHub 릴리스 태그는 v1.0.0(2026-08-24)이다.
+#
+#    게이트 0의 첫 단계에서 반드시 아래를 수행해 이 파일을 `==` 핀으로 고정할 것:
+#      1) 설치 후 `pip freeze > /tmp/superdex-freeze.txt`로 해석된 버전 확인
+#      2) 이 파일의 각 줄을 그 버전으로 `==` 고정
+#    SuperDex는 alpha 단계이고 main이 급변한다. 핀 없이 최신을 따라가면 6개월간 반복
+#    파손된다 — docs/SUPERDEX_POC_PLAN.md §9 R3.
+
+# SuperDex Physics + Robotics (C++ 코어 + pybind 바인딩). Studio도 이 wheel에 포함된다.
+superdex
+
+# SuperDex Lab — Gymnasium 환경 + Ray/RLlib 연동. 벤치마크 asset은 wheel에 없고
+# project_superdex 클론의 assets/ 에 있다(RTAUTO_SUPERDEX_REPO로 지정).
+superdex-lab
+
+# RL 학습 스택. superdex-lab이 자체 의존으로 끌어올 수 있으나, RLlib 새 API 스택
+# (RLModule)을 명시적으로 요구하므로 여기서도 드러낸다.
+ray[rllib]
+
+# ⚠️ torch는 여기에 넣지 않는다. ray[rllib]은 torch를 끌어오지 않고, PyPI 기본
+#    Windows wheel은 CPU 전용이다. 두 작업 머신 모두 CUDA GPU로 learner를 돌릴 계획이므로
+#    (회사 RTX 2080 8 GB — Turing이라 **bf16 불가**, 집 RTX 4070 Ti 12 GB)
+#    (RTAUTO_SUPERDEX_GPUS_PER_LEARNER=1) CUDA wheel을 별도 인덱스에서 먼저 설치한다:
+#      pip install torch --index-url https://download.pytorch.org/whl/cu124
+#    설치 후 `python -c "import torch; print(torch.cuda.is_available())"`가 True여야 한다.
+#    False면 learner를 GPU로 못 쓴다 — CPU로 돌려도 게이트 진행은 가능하다.
+#    정확한 CUDA 태그(cu124 등)는 게이트 0에서 확인해 이 주석을 정정할 것.
+
+# ONNX 내보내기·검증 (게이트 1의 3자 파리티 테스트).
+# RLlib 새 API 스택은 ONNX export를 지원하지 않아(ray#45526) torch.onnx.export로
+# 래퍼 nn.Module을 직접 내보낸다 — docs/SUPERDEX_POC_PLAN.md §5 게이트 1.
+onnx
+onnxruntime
