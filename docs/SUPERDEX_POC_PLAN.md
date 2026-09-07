@@ -155,7 +155,8 @@ FR3는 OSC, DG5F는 **JSC**(joint space PD, target joint position → torque)로
 | # | 항목 | 왜 문제인가 | 확정 시점 |
 |---|---|---|---|
 | U1 | **DG-5F-M이 long wrist인가 short wrist인가** | SuperDex는 둘 다 제공한다. `config/rtauto_config.py`의 `DG5F_SHORT` 주석도 `"M"이 short면 1`로 미확정 상태다. 잘못 고르면 손목 길이만큼 전 학습이 틀어진다 | 게이트 0. Tesollo 도면/실물 실측 대조 |
-| U2 | **손 단독 asset의 실제 경로** | 조합 asset 경로만 실측했다. 손 단독은 `bots/hands/dg5f_long/right/dg5f_long_right.superdex_bot` 형태로 **추정**한 것이다 | 게이트 0. 클론한 `assets/` 트리에서 직접 확인 |
+| U2 | ~~손 단독 asset의 실제 경로~~ | **해소 (2026-09-07)** — 공식 조합 asset이 손을 `//hands/dg5f_short/right/dg5f_short_right.superdex_bot`으로 참조하는 것을 확인. `superdex_hand_asset()`의 형식이 맞다 | 완료 |
+| U7 | **우리가 만든 asset을 어디에 두는가** | UR16e 팔 asset과 결합 asset은 우리가 만들지만, 공식 asset은 외부 클론 안에 있다. `//` 참조는 `assets/bots/`의 `.superdex_root` 기준이라 **한 asset 루트 안에 우리 것과 공식 것이 함께 있어야** 참조가 성립한다. 그런데 **Tesollo asset은 재배포 제한이 있어 우리 저장소에 커밋할 수 없다**(U4) | 게이트 3 착수 전. §5 게이트 3 참고 |
 | U3 | ~~PyPI 배포 버전 문자열~~ | **해소 (2026-09-07)** — PyPI 확인: `superdex` `superdex-lab` `superdex-physics` 모두 **1.0.0**, `requires_python >=3.12,<3.13`. `superdex-physics`에 `cp312-cp312-win_amd64.whl`이 있어 **Windows 소스 빌드 불필요**. `requirements-superdex.txt`에 `==1.0.0` 핀 반영 | 완료. `ray`/`onnx` 핀만 게이트 0-4에 남음 |
 | U4 | **Tesollo asset 라이선스 범위** | 시뮬레이션·시각화·학술/비상업 연구·오픈소스 통합은 허용, 물리적 제조·3D 프린팅·하드웨어 복제는 금지. 제한 대상은 **하드웨어 형상 재현**이므로 학습된 가중치가 파생물로 걸릴 가능성은 낮지만, **asset 자체를 상용 제품에 재배포하는 것은 불가**. 공개 문서·영상에는 Tesollo attribution 필요 | **게이트 2 착수 전.** 벤더에 서면 질의 |
 | U5 | **mediapipe의 Python 3.12 지원** | ML-Agents가 빠지면 3.10.11 핀의 근거가 사라지지만 비전 파이프라인이 같은 venv를 쓴다 | 게이트 1. venv를 분리하면 회피 가능(§7) |
@@ -238,17 +239,98 @@ FR3는 OSC, DG5F는 **JSC**(joint space PD, target joint position → torque)로
 **판정**: 100 eval 에피소드에서 **들어올린 뒤 2초 유지 성공률 ≥ 80 %**, 그리고 **집계
 throughput 기록**.
 
-### 게이트 3 — UR16e asset (1~2일)
+### 게이트 3 — UR16e asset과 팔+손 결합 (1~2일)
 
-`urdf/ur16e_dg5f_right_build/`의 URDF를 **Studio에서** import → remesh → watertight →
-SDF bake → `.superdex_bot`.
+**결합 방식이 확인됐다 (2026-09-07).** 공식 `fr3_dg5f_short_right.superdex_bot`은 **571
+바이트 JSON**이고 메시를 담지 않는다 — 팔 asset을 `base`로 두고 손 asset을 붙이는
+선언이다:
 
-> ⚠️ runtime URDF loader에는 제약이 있다 — mesh collision은 지원하나 **primitive
-> collision(box/cylinder/sphere)은 일부 무시될 수 있고**, raw mesh가 watertight하지 않으면
-> SDF collider 품질이 떨어진다. 그래서 production asset은 Studio 경유가 공식 권장 경로다.
+```json
+{
+  "base": "//arms/fr3/fr3.superdex_bot",
+  "name": "fr3_dg5f_short_right",
+  "modifications": [
+    { "AttachBot": {
+        "enabled": true,
+        "joint": {
+          "name": "dg5f_to_fr3",
+          "type": "Hard",
+          "parentLinkFromJoint": { "rotation": [0, 0, 1, -4.3711388286737929e-08] }
+        },
+        "name": "dg5f",
+        "parentLinkName": "fr3_link8",
+        "path": "//hands/dg5f_short/right/dg5f_short_right.superdex_bot"
+    } }
+  ]
+}
+```
 
-**판정**: 관절 한계가 UR16e 스펙과 일치, 충돌 형상이 primitive 무시로 깨지지 않았는가,
-자기충돌 정상. 관절 순서·부호·영점은 로드맵 v11의 URSim 검증 결과와 대조한다.
+`rotation`은 쿼터니언 (x, y, z, w)이고 위 값은 **Z축 180°** — 즉 플랜지 프레임 규약을
+여기서 맞춘다. `type: "Hard"`는 강체 결합이다.
+
+즉 우리가 할 일은 **팔 asset 하나를 만들고, 위와 같은 파일을 하나 쓰는 것**이다.
+
+#### 3-1. 팔 단독 URDF 준비
+
+`urdf/ur16e_dg5f_right_build/`에 이미 두 파일이 있다:
+
+| 파일 | 메시 참조 형식 | 용도 |
+|---|---|---|
+| `ur16e_raw.urdf` | `package://ur_description/meshes/...` | **팔 단독** — 이게 팔 asset의 입력 |
+| `ur16e_dg5f_right.urdf` | `meshes/ur/...` (상대경로) | 팔+손 결합 (자체 DG5F) |
+
+충돌 형상은 **13링크 전부 mesh(`.stl`)** 이다 — 확인했다. 따라서 "primitive collision은
+무시된다"는 제약에 **걸리지 않는다.**
+
+> ⚠️ **`ur16e_raw.urdf`는 그대로 못 쓴다.** `package://ur_description/...`는 ROS 패키지
+> URI라 SuperDex가 해석하지 못한다. `build_arm_hand.py`가 결합 URDF를 만들 때 하는 리라이트
+> (`package://ur_description/meshes/` → `meshes/ur/`)를 **팔 단독 URDF에도 적용**해야 한다.
+
+#### 3-2. Studio로 팔 asset 굽기
+
+Studio에서 위 URDF를 import → remesh → watertight → SDF bake →
+`bots/arms/ur16e/ur16e.superdex_bot`. 공식 `bots/arms/fr3/`와 같은 구조를 따른다
+(`ur16e.superdex_bot` + `collision/` + `render/`).
+
+> runtime `load_bot_prefab_from_urdf_file()`도 있지만 예제 주석이 한계를 명시한다 —
+> mesh collision만 이해하고 primitive는 **조용히 무시**하며, 충돌 메시가 watertight라고
+> 가정하기 때문에 **열린 경계 근처에서 충돌 검출이 불안정**하다. 그래서 production asset은
+> Studio 경유 bake가 공식 권장 경로다.
+
+#### 3-3. 결합 파일 작성
+
+`parentLinkName`에 무엇을 넣을지가 유일한 판단 지점이다. 우리 결합 URDF의
+`tool0_to_dg_mount`가 **parent `tool0`, origin identity(xyz 0 0 0, rpy 0 0 0)** 로 손을
+붙이고 있으므로 **`tool0`**이 기준이다.
+
+> ⚠️ UR의 `tool0`은 `flange`에서 `rpy(π/2, 0, π/2)` 회전된 툴 프레임이고, `flange-tool0`은
+> **fixed joint**다. Studio 임포트가 fixed joint를 접어 링크를 없앨 수 있으므로 굽고 나서
+> **`tool0` 링크가 남아 있는지 확인**한다. 없으면 `flange`를 `parentLinkName`으로 쓰고
+> 그 회전을 `parentLinkFromJoint.rotation`에 넣는다.
+>
+> 손 방향(엄지 위치)은 FR3의 Z축 180°를 그대로 베끼지 말고 Studio에서 눈으로 확인해 정한다.
+
+`AttachBot.path`에 넣을 손 asset 참조는 `config/rtauto_config.py`의
+`superdex_hand_asset_ref()`가 만들어 준다 — 경로를 손으로 다시 타이핑하지 않는다(원칙 1).
+
+#### 3-4. U7 — asset을 어디에 두는가 (착수 전 결정)
+
+`//` 참조는 `assets/bots/`의 `.superdex_root` 기준이므로 **우리 팔 asset과 공식 손 asset이
+한 asset 루트 안에 있어야** 결합이 성립한다. 그런데 **Tesollo asset은 재배포 제한이 있어
+우리 저장소에 커밋할 수 없다**(U4).
+
+후보:
+
+1. **우리 리포를 asset 루트로 삼는다** — `superdex/assets/bots/`에 `.superdex_root`를 두고
+   `RTAUTO_SUPERDEX_ASSETS`를 그쪽으로 지정. 우리 `arms/ur16e/`와 결합 파일은 커밋하고,
+   클론에서 복사해 오는 공식 `hands/`·`sensors/`는 **`.gitignore`로 제외**하고 복사
+   스크립트를 둔다. ← 라이선스와 원칙 2를 동시에 만족시키므로 **현재 유력안**
+2. 클론 안에 우리 asset을 넣고 클론 쪽에서 관리 — 외부 저장소를 오염시키고 새 PC 재현이 깨진다
+3. SuperDex가 **다중 asset 검색 경로**를 지원하는지 확인 — 지원하면 가장 깔끔하다.
+   게이트 3에서 먼저 조사할 것
+
+**판정**: 결합 bot이 로드되고, 관절 한계가 UR16e 스펙과 일치하며, 충돌 형상이 깨지지
+않았고 자기충돌이 정상인가. 관절 순서·부호·영점은 로드맵 v11의 URSim 검증 결과와 대조한다.
 
 ### 게이트 4 — 일반화와 domain randomization
 

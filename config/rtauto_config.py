@@ -370,10 +370,26 @@ def superdex_hand_asset():
     변형(long/short, left/right)은 새 키를 만들지 않고 DG5F_HAND·DG5F_SHORT에서 파생시킨다
     — 같은 사실을 두 곳에 타이핑하지 않는다(원칙 1).
 
-    ⚠️ 경로 형식은 조합 asset 실측값
-    (bots/arm_hand_combos/fr3_dg5f_short/right/fr3_dg5f_short_right.superdex_bot)에서
-    **추정**한 것이다. 게이트 0에서 클론한 assets/ 트리로 확인·정정할 것
-    (docs/SUPERDEX_POC_PLAN.md §4 U2). DG-5F-M이 long인지 short인지도 미확정이다(U1).
+    경로 형식은 공식 조합 asset(fr3_dg5f_short_right.superdex_bot)이 손 asset을
+    "//hands/dg5f_short/right/dg5f_short_right.superdex_bot"으로 참조하는 것을 확인해
+    확정했다(2026-09-07, U2 해소). 두 표기가 같은 파일을 가리킨다:
+      - Python에서 load_bot_prefab_from_file()에 넘길 때: "bots/hands/..." (assets/ 기준)
+      - .superdex_bot 파일 안에서 참조할 때:              "//hands/..."   (assets/bots/ 기준,
+        그 폴더의 .superdex_root 가 루트를 표시한다)
+    이 함수는 앞쪽(Python용) 형식을 돌려준다.
+
+    ⚠️ DG-5F-M이 long wrist인지 short wrist인지는 아직 미확정이다(U1) — 기본값은 long.
+    확정 전까지 이 반환값은 잠정이며, DG5F_SHORT를 뒤집으면 기존 파이프라인의 URDF·메시
+    선택(dg5f_variant())까지 함께 바뀐다. docs/SUPERDEX_POC_PLAN.md §12 참고.
     """
     variant = "dg5f_short" if DG5F_SHORT else "dg5f_long"
     return f"bots/hands/{variant}/{DG5F_HAND}/{variant}_{DG5F_HAND}.superdex_bot"
+
+
+def superdex_hand_asset_ref():
+    """위 경로의 .superdex_bot 내부 참조 표기 ("//hands/...").
+
+    결합 asset(arm_hand_combos)을 만들 때 AttachBot.path 에 넣는 값이다 — 같은 사실을
+    두 번 타이핑하지 않기 위해 superdex_hand_asset()에서 파생시킨다(원칙 1).
+    """
+    return "//" + superdex_hand_asset().removeprefix("bots/")
