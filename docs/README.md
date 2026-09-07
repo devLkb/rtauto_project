@@ -8,14 +8,20 @@
     [비전/텔레옵](modules/VISION_TELEOP.md) · [실물 브리지](modules/REAL_BRIDGES.md) ·
     [설정·빌드 도구](modules/BUILD_TOOLING.md)
 
-## DG5FGraspLift 강화학습 (현재 활성 정책)
+## DG5FPicknPlace 강화학습 (현재 개발 기준: UR16e + 오른손)
 
-- **기준 문서**: [`DG5F_GRASP_LIFT.md`](DG5F_GRASP_LIFT.md) — Agent 계약·보상·실행법
+- **현재 구조와 계약 요약**: [`modules/RL_TRAINING.md`](modules/RL_TRAINING.md) — 관찰·행동·성공 조건·현재 한계
+- **실행 절차**: [`../training/README.md`](../training/README.md)
+- **이식·설계 이력**: [`DG5F_PICKNPLACE.md`](DG5F_PICKNPLACE.md) — GraspLift에서 바뀐 점
+- **이전 세대 기준선**: [`DG5F_GRASP_LIFT.md`](DG5F_GRASP_LIFT.md) — UR5e + 왼손의 설계와 실험
 - **실물 이관 계획**: [`SIM2REAL_ROADMAP.md`](SIM2REAL_ROADMAP.md) — 단계별 순서와 리스크
 - 발표자료: [`GRASP_LIFT_발표자료.md`](docs2/GRASP_LIFT_발표자료.md)
 - 설명: [`GRASP_LIFT_설명.md`](docs2/GRASP_LIFT_설명.md)
 
-제품 파이프라인은 `목표 좌표 -> RL 파지+들어올리기(GraspLift) -> MediaPipe 손 파지`다.
+현재 PicknPlace의 과제는 **파지+들어올리기**이며 운반·내려놓기는 포함하지 않는다.
+RL 자동 조작과 MediaPipe 수동 조작은 제어권을 전환하는 별도 경로다.
+실물에서 카메라 인식부터 자율 파지까지 연결하는 것은 후속 과제이며,
+현재 구현·제한은 [`MODULE_GUIDE.md`](MODULE_GUIDE.md)를 먼저 확인한다.
 
 ## 지난 세대 (archives/)
 
@@ -35,7 +41,7 @@ GraspLift로 완전히 대체되어 Unity 씬·코드가 삭제됐다. 계약 �
 
 - 시작점: [`../vision/dg5f/README.md`](../vision/dg5f/README.md)
 - 보정: [`../vision/dg5f/CALIBRATION_GUIDE.md`](../vision/dg5f/CALIBRATION_GUIDE.md)
-- 역할: 강화학습이 목표에 도달한 뒤 DG5F 손 20관절을 조작
+- 역할: 웹캠의 사람 손 동작으로 DG5F 손 20관절을 수동 조작. RL 실행 없이도 사용 가능
 
 텔레옵의 20관절 프로토콜은 유지되지만 강화학습 observation/action과는 독립이다.
 
@@ -45,5 +51,8 @@ GraspLift로 완전히 대체되어 Unity 씬·코드가 삭제됐다. 계약 �
 - [`DEBUG_OSCILLATION_20260707.md`](archives/DEBUG_OSCILLATION_20260707.md): 초기 진동 원인 분석
 - [`DEBUG_OSCILLATION_20260708.md`](archives/DEBUG_OSCILLATION_20260708.md): 관성 수정과 최종 검증
 
-WORKLOG의 예전 단계형 파지 기록은 당시 이력이며 현재 실행 지침이 아니다. 활성 정책
-계약은 항상 `AGENT_SPEC.md`를 우선한다.
+WORKLOG와 archives의 정책 계약은 당시 이력이며 현재 실행 지침이 아니다.
+현재 계약 요약은 `modules/RL_TRAINING.md`, 구현 기준은
+[`Dg5fPicknPlaceSpec.cs`](../unity/Assets/MLAgents/picknplace/Runtime/Dg5fPicknPlaceSpec.cs)와
+[`Dg5fPicknPlaceAgent.cs`](../unity/Assets/MLAgents/picknplace/Runtime/Dg5fPicknPlaceAgent.cs)다.
+2026-09-07 문서 대조는 코드·씬 설정 기준이며 실물 재시험을 뜻하지 않는다.
