@@ -2,7 +2,7 @@
 
 ## 코드가 무슨 일을 하는지 (모듈 지도)
 
-- **[`MODULE_GUIDE.md`](MODULE_GUIDE.md)** — 전체 데이터 흐름 + 영역별 문서 입구.
+- **[`MODULE_GUIDE.md`](modules/MODULE_GUIDE.md)** — 전체 데이터 흐름 + 영역별 문서 입구.
   "이 스크립트 왜 있지?" 싶을 때 여기부터.
   - [Unity](modules/UNITY.md) · [강화학습](modules/RL_TRAINING.md) ·
     [비전/텔레옵](modules/VISION_TELEOP.md) · [실물 브리지](modules/REAL_BRIDGES.md) ·
@@ -21,7 +21,7 @@
 현재 PicknPlace의 과제는 **파지+들어올리기**이며 운반·내려놓기는 포함하지 않는다.
 RL 자동 조작과 MediaPipe 수동 조작은 제어권을 전환하는 별도 경로다.
 실물에서 카메라 인식부터 자율 파지까지 연결하는 것은 후속 과제이며,
-현재 구현·제한은 [`MODULE_GUIDE.md`](MODULE_GUIDE.md)를 먼저 확인한다.
+현재 구현·제한은 [`MODULE_GUIDE.md`](modules/MODULE_GUIDE.md)를 먼저 확인한다.
 
 ## 지난 세대 (archives/)
 

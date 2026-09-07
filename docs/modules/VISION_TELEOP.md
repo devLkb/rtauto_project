@@ -163,3 +163,90 @@ SDK 브리지는 앞의 관절 20개를 사용한다. 새로운 수신기를 만
 
 배포 파일 구성은 `RunDemo.ps1` 상단에 있다. 빌드 성공이 새 PC 실행 성공을 보장하지 않으며,
 설정 파일 위치는 [BUILD_TOOLING.md](BUILD_TOOLING.md)의 Python·Unity 차이를 따른다.
+
+## 6. 코드 레벨 핵심 — 함수·상수·인자
+
+### 6-1. 계산 파이프라인의 실제 함수 (`dg5f_angles.py`)
+
+한 프레임이 처리되는 순서 그대로다. 새 진입점을 만들 때 이 순서를 그대로 재현해야 한다.
+
+| 순서 | 함수 | 입출력 |
+|---|---|---|
+| ① | `landmarks_to_xyz(hand_landmarks, frame_shape)` | MediaPipe 결과 → 종횡비 등방 보정된 21×3 배열. **이 함수는 `dg5f_angles`가 소유한다** — 진입점에 사본을 만들면 보정과 라이브가 다른 좌표계를 쓰게 된다(2026-07-28 통합) |
+| ② | `compute_raw(lm)` | → 20채널 "동작 신호" 리스트. 대부분 rad 각도지만 `thumb_opp`만 **거리 기반**이다 |
+| ③ | `map_to_dg5f(raw, hand="right", mode="direct")` | → 로봇 20관절각[deg] + 로봇 리밋 clamp |
+| ④ | `OneEuroFilter` 채널별 인스턴스 | 떨림 제거 |
+| ⑤ | `compute_thumb_tip` / `compute_finger_tips` / `compute_wrist_tip_vectors` | 손끝·리치 벡터(정규화). Unity 손가락 IK의 입력 |
+| ⑥ | `struct.pack(PACKET_FMT, ...)` → UDP | `PACKET_FMT = "<72f"`, `PACKET_LEN = 72` |
+
+- 채널 이름 정본: `CHANNEL_NAMES` (= `DG5F_CHANNELS`의 첫 열). **Unity `Dg5fHandDriver.JointLabels`와
+  같은 순서여야 한다** — 한쪽만 고치면 관절이 조용히 어긋난다.
+- `DG5F_CHANNELS`의 각 행 = `(name, hmin, hmax, dg_min, dg_max, gated)`.
+  `dg_min/dg_max`가 **로봇 clamp 경계**이고, `hmin/hmax`(사람 범위)는 `direct` 모드에선 미사용이다.
+- 특수 분기 3개(일반 채널 규칙이 안 통하는 곳): `thumb_cmc`는 `THUMB_CMC_FOLD_DEG(-65°)`↔
+  `THUMB_CMC_SPREAD_DEG(+22°)` 양방향 선형매핑, `thumb_opp`는 `THUMB_OPP_D_OPEN(1.33)`↔
+  `THUMB_OPP_D_FULL(0.31)` 거리 기반 + `THUMB_OPP_GAIN(95.0)`, 벌림 채널
+  (`ABDUCTION_CHANNELS`)은 `ABD_GAIN(1.0)` 게인.
+- 좌우 손: `LEFT_MIRROR_CHANNELS` / `RIGHT_MIRROR_CHANNELS`가 부호를 뒤집을 채널을 정한다
+  (오른손은 `thumb_cmc` 하나뿐).
+- DIP는 측정하지 않고 PIP에서 유도한다: `DIP_PIP_COUPLING = 0.75`
+  (새끼 원위는 로봇 관절이 1개뿐이라 `(1+k)×PIP`).
+
+### 6-2. 진입점 실행 인자
+
+`vision_node_dg5f.py`는 argparse를 쓰지 않고 `sys.argv`를 직접 본다 — 인자 형식이 고정이다.
+
+```text
+python vision/dg5f/vision_node_dg5f.py [right|left] [--bridge] [--map=direct|ratio]
+```
+
+| 인자 | 뜻 |
+|---|---|
+| 위치인자 `right`/`left` | 손 좌우 (기본 `right`) |
+| `--bridge` | **UDP 5008로도 같은 패킷을 보낸다.** 브리지 프로세스를 실행하지는 않는다 |
+| `--map=direct` (기본) / `--map=ratio` | 매핑 방식. `ratio`는 사람 가동범위 보정에 의존 |
+
+주요 상수: `SEND_HZ_CAP = 120`, 창 `1280×720`,
+MediaPipe `model_complexity=1, max_num_hands=1, min_detection/tracking_confidence=0.6`,
+One Euro 각도 채널 `freq=30, min_cutoff=0.6, beta=0.0005` / 손끝 위치 채널 `min_cutoff=0.15, beta=0.5`.
+`USE_WORLD_LANDMARKS = False`가 현재 값이다 — world 랜드마크는 평평한 손가락을 z노이즈로
+15~27° 굽은 것처럼 잡았고, 보정 파일도 이미지 랜드마크 기준이라 False가 보정과 일치한다(2026-07-22).
+
+### 6-3. 파일 경로·보정 파일
+
+| 상수 | 값 | 소스 |
+|---|---|---|
+| `LOG_DIR` | `vision/dg5f/logs/` | `dg5f_paths.py` |
+| `CALIB_PATH` | `vision/dg5f/dg5f_calibration.json` | `dg5f_paths.py` |
+| `unique_log_path(prefix)` | `logs/<prefix>_<초타임스탬프>.csv`, 중복 시 접미사 | 덮어쓰기 방지 |
+| `CALIB_VERSION` | 3 | v3 = `thumb_straight_ratio`. v2의 `thumb_reach_ratio`는 폐기 |
+
+보정 파일이 없으면 `DEFAULT_THUMB_STRAIGHT(0.97)` · `DEFAULT_FINGER_STRAIGHT(0.98)` 기본값으로 동작한다.
+`joint_ranges.py`는 `_LIVE` 플래그로 "지금 표에 보이는 사람 범위가 보정 파일에서 온 값인지"를 구분한다.
+
+### 6-4. 웹캠 없이 배선을 검증하는 법 (`probe_sender.py`)
+
+미리 정의된 20관절 자세를 50Hz로 UDP 5006에 쏜다. 카메라·MediaPipe·매핑을 전부 건너뛰므로
+**"Unity가 안 움직인다"의 원인이 비전인지 수신/구동인지를 한 번에 가른다.**
+내장 자세 상수: `OPEN`(전부 0) · `FIST` · `OK`(OK 사인) 등, 시나리오 키는 `IDX_MODES`.
+왼손은 `mirror_left(vals)`로 부호를 뒤집는다.
+
+### 6-5. 다중 카메라 모듈의 공용 함수 (`camera_calibration.py`)
+
+| 함수 | 하는 일 |
+|---|---|
+| `chessboard_object_points(cols, rows, square_size_mm)` / `find_board_corners(gray, cols, rows)` | 보드 규격은 `.env`의 `RTAUTO_CALIB_BOARD_COLS/ROWS`(9×6)·`RTAUTO_CALIB_SQUARE_SIZE_MM`(25.0) |
+| `save_intrinsics` / `load_intrinsics` / `load_all_intrinsics` | 카메라별 `K`·`dist`. 저장 위치는 `RTAUTO_CALIB_DIR`(기본 `vision/dg5f/camera_calib`) |
+| `save_extrinsics` / `load_extrinsics` / `build_camera_rig(...)` | `(R, t)` = **보드 좌표계 → 카메라 좌표계** |
+| `undistort_normalize(pixel_xy, K, dist)` → `triangulate_point(views)` → `triangulate_landmark_set(..., min_views=2)` | DLT 삼각측량. `min_views=2` 미만인 랜드마크는 버린다 |
+
+라이브 쪽은 `multiview_landmarks.py`의 `hand_landmarks_to_pixels()` → `triangulate_hands(..., rig)`.
+⚠️ 이 경로에 프레임 좌우 반전을 넣으면 안 된다 — 캘리브레이션을 원본 프레임으로 했다.
+
+### 6-6. 분석 도구의 합격 기준 상수 (`analyze_teleop.py`)
+
+`CORR_PASS = 0.90` / `CORR_WARN = 0.70` (사람 동작 재현 상관 — 0.70 미만이면 FAIL),
+`TRACK_RMS_TOL = 3.0°` (Unity 목표각 vs 실측각 — 물리 추종),
+`FOLLOW_RMS_TOL = 10.0°` (송신값 vs 실측각 — 클램프 포함 잔여오차).
+시간 정렬은 `best_lag_corr(..., max_lag=0.6, fs=50.0)`로 ±0.6초 안에서 상관 최대 지연을 찾아 맞춘다.
+채널 키는 `JOINT_KEYS = ["1_1", "1_2", ... "5_4"]`로 `CHANNEL_NAMES`와 같은 순서다.

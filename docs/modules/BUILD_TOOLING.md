@@ -138,3 +138,101 @@ URDF를 Unity에 넣으면 그냥은 못 쓴다. 그 격차를 메우는 4단계
 | `tools/plot_grasp_lift_*.py` | 학습 곡선 그래프 렌더링 → [RL_TRAINING.md](RL_TRAINING.md) 참고 |
 | `.gitattributes` | 저장소 줄바꿈을 LF로 고정. 없으면 Windows에서 커밋한 `.sh`가 Linux에서 `bad interpreter: /bin/bash^M`으로 죽는다 |
 | `requirements-mlagents.txt` / `requirements-vision.txt` | 의존성. 버전 조합 근거는 [`docs/PYTHON_ENV_SETUP.md`](../PYTHON_ENV_SETUP.md) |
+
+## 5. 코드 레벨 핵심 — 설정 API·인자·상수
+
+### 5-1. 설정 읽는 두 구현의 대응표
+
+같은 `.env`를 Python과 C#이 각각 파싱한다. **한쪽만 고치면 조용히 어긋난다**는 게 이 표의 존재 이유다.
+
+| 하는 일 | Python (`config/rtauto_config.py`) | C# (`unity/Assets/Scripts/RtautoConfig.cs`) |
+|---|---|---|
+| 파일 병합 | `_load_dotenv()` → `_merge_dotenv(path)` | `EnsureLoaded()` → `Merge(path)` |
+| 값 읽기 | `_env(name, default)` | `GetString(key, fallback)` / `GetInt(key, fallback)` |
+| 우선순위 | 환경변수 > `.env` > `.env.example` > 코드 기본값 | **같음** — `GetString`이 `Environment.GetEnvironmentVariable`을 먼저 본다 |
+| 관용 처리 | BOM, 값의 따옴표, `export ` 접두사 | **같음**(의도적으로 맞춤) |
+| 저장소 루트 | `config/` 기준 상대 계산 | `ResolveRepositoryRoot()` = `Application.dataPath`의 **두 단계 위** |
+| 실패 처리 | 숫자 변환에서 예외가 날 수 있다 | **절대 예외를 던지지 않는다.** 파싱 실패 시 `fallback` |
+| 진단 | — | `RtautoConfig.SourceLabel` — 이번 세션이 어느 파일에서 읽었는지 문자열로 노출 |
+| 상대경로 해석 | `_repo_path(key, default)` | `GetRepoPath(relativeOrAbsolute)` — 루트를 못 찾으면 `null` |
+
+Unity **빌드 도구**는 런타임과 또 다른 어댑터를 쓴다: `MLAgents/Editor/BuildEnvironment.cs`의
+`Load()` → `GetPath(keys…)` / `GetFileName(keys…)` / `GetPositiveInt(fallback, keys…)`.
+`keys`를 여러 개 받는 이유는 같은 값에 옛 키 이름이 남아 있어도 동작하게 하기 위해서다.
+
+### 5-2. 헬퍼 함수 — IP·경로를 "값 없이" 넘길 수 있는 이유
+
+브리지들이 `--ip`를 값 없이 받아 `.env`로 떨어질 수 있는 것은 아래 함수들 덕분이다.
+
+| 함수 | 하는 일 |
+|---|---|
+| `cfg.resolve_ur_ip(value)` / `cfg.resolve_gripper_ip(value)` | 빈 문자열이면 `.env`의 장비 IP를, 값이 있으면 그 값을 |
+| `cfg.python_exe()` | `RTAUTO_PYTHON`이 비어 있으면 현재 인터프리터로 폴백 |
+| `cfg.picknplace_player_path()` | 출력 폴더 + 플레이어 이름 + **현재 OS의 확장자**를 조합 |
+| `cfg.dg5f_variant()` / `cfg.dg5f_link_prefix()` | `right`/`left` × `short` → URDF 변형 이름과 링크 접두사(`rl_`/`ll_`) |
+| `cfg._repo_path(key, default)` | 저장소 루트 기준 `Path` 객체 |
+
+### 5-3. 포트 지도 (`config/rtauto_config.py`가 정본)
+
+| 상수 | `.env` 키 | 기본 | 보내는 쪽 → 받는 쪽 |
+|---|---|---|---|
+| `PORT_SVH_JOINTS` | `RTAUTO_PORT_SVH_JOINTS` | 5005 | ⛔ 레거시 SVH 손 |
+| `PORT_DG5F_SIM` | `RTAUTO_PORT_DG5F_SIM` | 5006 | 비전 / 손 브리지 echo → Unity `Dg5fReceiver` |
+| `PORT_ZED_TARGET` | `RTAUTO_PORT_ZED_TARGET` | 5007 | ⛔ 폐기(ZED). **재사용 금지** |
+| `PORT_DG5F_BRIDGE` | `RTAUTO_PORT_DG5F_BRIDGE` | 5008 | Unity `Dg5fSender` / 비전 `--bridge` → 손 SDK 브리지 |
+| `PORT_UR_ARM_BRIDGE` | `RTAUTO_PORT_UR_ARM_BRIDGE` | 5009 | Unity `UrArmSender` → 팔 RTDE 브리지 |
+| `PORT_UR_ARM_SIM` | `RTAUTO_PORT_UR_ARM_SIM` | 5010 | 팔 브리지 `--echo-to-unity` → Unity `UrArmReceiver` |
+| `PORT_MLAGENTS_BASE` | `RTAUTO_PORT_MLAGENTS_BASE` | 5100 | `mlagents-learn --base-port` (플레이어 수만큼 위로 소비) |
+
+### 5-4. URDF 결합기 `urdf/build_arm_hand.py`
+
+```text
+python urdf/build_arm_hand.py [--ur-type ur16e] [--hand right|left] [--short]
+                              [--ur-description <경로>] [--out-dir <경로>]
+```
+
+기본값은 전부 `.env`에서 온다(`RTAUTO_UR_TYPE` / `RTAUTO_DG5F_HAND` / `RTAUTO_DG5F_SHORT` /
+`RTAUTO_UR_DESCRIPTION`). 내부 단계는 함수 이름 그대로다:
+
+1. `flatten_ur()` — UR description의 xacro를 단일 URDF로 편다.
+2. `rewrite_mesh()` — `package://` URI를 **상대경로**로 바꾼다(`meshes/ur/…`, `meshes/<variant>/…`).
+3. `copy_meshes()` — **URDF가 실제로 참조하는 하위폴더만** 복사한다.
+   ⚠️ UR16e는 자기 기종보다 짧은 링크를 다른 기종 메시로 공유하는 경우가 있어,
+   `--ur-type` 폴더만 복사하면 일부 링크 메시가 통째로 빠진다. 그래서 URDF에서 긁어서 복사한다.
+4. `merge()` — 두 URDF의 자식 노드를 합치고(중복 `material` 제거),
+   **`tool0` → `<prefix>dg_mount`를 `tool0_to_dg_mount` fixed 조인트로 연결**한다(원점 0, rpy 0).
+   결과 로봇 이름은 `<ur_type>_<variant>`.
+5. `verify()` — 링크·조인트 개수와 접두사 규칙을 검사한다.
+
+산출 폴더가 곧 Unity 임포트 소스다(`urdf/ur16e_dg5f_right_build/`).
+
+### 5-5. 임포트 4단계 도구의 인자와 판정 상수
+
+| 단계 | 명령 | 핵심 인자·상수 |
+|---|---|---|
+| ① 임포트 | `python tools/urdf_hand_import/import_hand.py <urdf…>` | `--project`/`--cli`(기본은 `.env`의 `RTAUTO_UNITY_PROJECT`/`RTAUTO_UNITY_CLI`), `--name`, `--prefab`, `--remove-instance`, `--verify`, `--no-vhacd` |
+| ② 검증 | `phys_compare.py <urdf> [--name …]` | `MASS_TOL 1e-3 kg` · `COM_TOL 1e-4 m` · `INERTIA_RTOL 2%` · `LIM_TOL 0.1°`. `PHYSX_MIN_INERTIA 1e-6`(PhysX 최소 관성 클램프)은 WARN으로 분리. 리밋은 **부호 반전(flip)도 정상으로 인정**한다 |
+| ③ 구동 준비 | `setup_drive.py <prefab…>` | `--stiffness 10000` · `--damping 200` · `--force-limit 100000` · `--components`. **멱등** |
+| ④ 움직임 검증 | `probe_test.py <로봇이름> [--urdf …]` | 판정 `SETTLE_TOL 1.0°` · `P2P_TOL 0.5°` · `LIMIT_MARGIN 0.5°`(침범 0건). 측정창 `SETTLE_WIN 0.3s`/`P2P_WIN 0.5s`, 사각파 `--phases 8` × `--phase-dur 1.5s`, 진폭 `--frac-a 0.8`/`--frac-b 0.15` |
+
+> `--force-limit` 기본값 100000이 §3에서 말한 트레이드오프의 실체다. URDF의 실제 토크값을 넣으면
+> 작은 오차에도 토크가 포화돼 뱅뱅 진동이 나므로 사실상 무제한으로 올려 **하드웨어 토크 상한 재현을
+> 포기**했다. 학습 씬은 이 값을 쓰지 않고 `UrArmLimits.MaxEffortNm`(팔)·
+> `Dg5fPicknPlaceSpec.HandDriveForceLimit`(손, 20)을 쓴다.
+
+### 5-6. 학습 씬 빌더가 고정으로 참조하는 경로
+
+`PicknPlaceTrainingSceneBuilder`의 `const` 값들 — 파일을 옮기면 빌더가 깨진다.
+
+| 상수 | 값 |
+|---|---|
+| `SourceRobotPath` | `Assets/Robots/Prefabs/ur16e_dg5f_right.prefab` |
+| `TrainingPrefabPath` | `Assets/MLAgents/picknplace/PicknPlaceTrainingArea.prefab` |
+| `TrainingScenePath` | `Assets/MLAgents/picknplace/DG5F_PicknPlaceTraining.unity` |
+| `DeployedModelPath` | `Assets/MLAgents/picknplace/Models/DG5FPicknPlace.onnx` |
+| `TrainingAreaCountKey` | `DG5F_PICKNPLACE_TRAINING_AREAS` (기본 40) |
+| `TrainingAreaSpacing` | 3 m, 배치는 `ceil(√N)`열 격자 |
+
+데모 씬 빌더(`PicknPlacePipelineDemoSceneBuilder`)는 학습 씬의 `DG5F_PicknPlaceTrainingArea_00`
+하나를 떼어 `Assets/Scenes/Pipeline_Demo_GraspLift.unity`로 만든다. 손 루트 이름
+`rl_dg_palm`을 확인하고 `ll_dg_palm`(왼손)이면 거부한다 — 구세대 프리팹으로 데모를 만드는 사고 방지.

@@ -136,3 +136,114 @@ DGSDK를 쓰지 않고 표준 Modbus TCP로 직접 관절값을 읽으려 한 �
 
 URSim과 실물 UR16e는 검증 대상을 구분한다. 저장소의 과거 실측 결과·실물 미검증 항목은
 [SIM2REAL_ROADMAP.md](../SIM2REAL_ROADMAP.md)에 기록되어 있으며, 이 문서의 코드 대조는 실물 재시험을 뜻하지 않는다.
+
+## 5. 코드 레벨 핵심 — 인자·패킷·SDK 호출
+
+### 5-1. 팔 브리지 `arm/ur_rtde_bridge.py`
+
+```text
+python arm/ur_rtde_bridge.py [--ip [주소]] [--listen 5009] [--hz 10]
+                             [--max-deg-per-sec 30] [--max-step N]
+                             [--lookahead-time 0.1] [--gain 300]
+                             [--echo-to-unity [--echo-ip ... --echo-port 5010]]
+```
+
+| 인자 | 기본값 | 뜻 |
+|---|---|---|
+| `--ip` | **없음 = 드라이런** | 값 없이 `--ip`만 주면 `.env`의 `RTAUTO_UR_IP` 사용 |
+| `--listen` | `PORT_UR_ARM_BRIDGE`(5009) | Unity `UrArmSender`가 쏘는 포트 |
+| `--hz` | 10 | `servoJ` 송신 상한 |
+| `--max-deg-per-sec` | `RTAUTO_UR_MAX_DEG_PER_SEC`(30) | 속도 제한 → `--max-step`으로 환산 |
+| `--lookahead-time` / `--gain` | 0.1 / 300 | `servoJ` 파라미터 (ur_rtde 권장 0.03~0.2 / 100~2000) |
+| `--echo-to-unity` | off | `getActualQ()`를 읽어 `PORT_UR_ARM_SIM`(5010)으로 송신 |
+
+- 상수: `N_JOINTS = 6`, `MIN_PACKET_BYTES = 24`(=4×6),
+  `JOINT_NAMES = [shoulder_pan, shoulder_lift, elbow, wrist_1, wrist_2, wrist_3]`.
+- 단위 변환은 `deg_to_rad()`/`rad_to_deg()` 두 함수에만 있다 — **UDP는 deg, RTDE는 rad.**
+- **재접속 로직의 핵심**: `servoJ()`는 성공/실패를 bool로 돌려준다. 반환값을 버리면 로봇이
+  명령을 안 받는데도 조용히 도는 것처럼 보인다. `control_alive()`가 이를 감지해
+  `connect_control()`을 `CONTROL_RETRY_SEC`(2.0초) 간격으로 재시도한다.
+  펜던트 Local↔Remote 전환 시 "URSim→Unity만 되고 반대가 안 되는" 증상의 원인이 여기다.
+- 읽기(`RTDEReceiveInterface`)와 쓰기(`RTDEControlInterface`)는 **별도 연결**이라
+  제어가 끊겨도 echo는 계속 살아 있다.
+- 종료 시 `servoStop()` + 제어 스크립트 정리를 시도한다.
+
+### 5-2. 손 SDK 브리지 `vision/dg5f/dg5f_sdk_bridge.py`
+
+```text
+python vision/dg5f/dg5f_sdk_bridge.py [--ip [주소]] [--port 502] [--model 5f_right]
+                                      [--listen 5008] [--dll ...] [--hz 50]
+                                      [--max-deg-per-sec 100] [--lpf 0.3]
+                                      [--echo-to-unity] [--jog IDX:DEG] [--pose ...]
+```
+
+| 인자 | 기본값 | 뜻 |
+|---|---|---|
+| `--ip` | **없음 = 드라이런(DLL 미사용)** | 값 없이 주면 `.env`의 `RTAUTO_DG5F_IP` |
+| `--port` / `--model` | 502 / `5f_right` | 모델 코드는 `MODELS` 딕셔너리(`DGDataTypes.h DG_MODEL`) |
+| `--dll` | `.env`의 `RTAUTO_DG5F_DLL` 또는 상대경로 기본값 | `DGSDK.dll` |
+| `--hz` / `--max-deg-per-sec` / `--lpf` | 50 / 100 / 0.3 | 송신 주기·속도 제한·저역통과 |
+| `--gain-p/-d/-i/-ilimit` | 2.0 / 5.0 / 0.05 / 0.1 | 접속 시 설정하는 서보 게인 (`--no-set-gains`로 생략) |
+| `--jog IDX:DEG` / `--jog-hold 1.5` | — | 관절 하나만 흔들어 실물 가동범위·부호를 실측 |
+| `--echo-to-unity` | off | 실제각을 `PORT_DG5F_SIM`(5006)으로 |
+
+**관절 대응 상수 3종**(2026-08-31 실물 실측으로 확정): `JOINT_ORDER = list(range(20))`(항등),
+`JOINT_SIGN = [1.0]*20`, `JOINT_OFFSET_DEG = [0.0]*20`. 즉 순서·부호·오프셋 변환이 없다.
+실물로 나가는 값을 실제로 제한하는 것은 **`JOINT_CLAMP_RIGHT`** — 채널별 실측 가동범위다.
+`dg5f_angles.URDF_LIMITS_DEG`(Unity 쪽 clamp)와 값이 다른 채널이 있다
+(예: `middle_abd` 설명서 ±30 vs URDF ±25). **실물 clamp가 더 보수적이라는 보장은 없으니 둘 다 본다.**
+
+**SDK 호출 순서**(`Dg5fSdk.connect()`):
+`SetGripperSystem` → `ConnectToGripper` → `SetGripperOption` → `SystemStart`,
+실시간 구동은 `MoveServoJoint(float[20])`. `CONTROL_MODE_DEVELOPER = 1`,
+`COMMUNICATION_MODE_ETHERNET = 0`, 성공 코드는 `DG_RESULT_NONE = 0`.
+수신 데이터 종류는 `receivedDataType[]`에 JOINT(0x01)·CURRENT(0x02)·MODULE_ERROR_CODE(0x07)를 등록한다.
+ctypes 구조체(`GripperSystemSetting`·`GripperSetting`·`ReceivedGripperData` 등)는 **`DGDataTypes.h`
+레이아웃 그대로**라 헤더가 바뀌면 여기도 같이 바꿔야 한다.
+
+### 5-3. 모드 제어 패킷 — 관절 패킷과 길이로 구분한다
+
+| 항목 | 값 |
+|---|---|
+| 매직 | `CONTROL_MAGIC = b"DG5FMODE"` (C#은 `Dg5fTwinModeSwitcher.ControlMagic`) |
+| 페이로드 | 매직 + 1바이트: `0` = sim→real(교시 해제), `1` = real→sim(교시 ON) |
+| 관절 패킷 | `MIN_PACKET_BYTES = 80`(=4×20) 이상 |
+| 구분 방법 | `data.startswith(CONTROL_MAGIC)` — 9바이트 제어 패킷과 80바이트 이상 관절 패킷은 섞이지 않는다 |
+
+실물 전환은 `sdk.dll.ManualTeachMode(1|0)`이다. 교시에서 빠져나올 때 `sdk.read()`로
+현재 자세를 명령 기준으로 다시 잡는다 — 안 그러면 교시 전 마지막 명령으로 홱 되돌아간다.
+
+⚠️ **§2의 제한이 나오는 지점이 정확히 여기다.** main 반복문이 교시 중에는 `continue`로
+관절 패킷 처리를 건너뛰는데, 실제각 읽기·echo가 그 아래에 있어 **교시 중에는 실행되지 않는다.**
+Unity 쪽 `syncTimeout`(2초)·`syncSettle`(0.8초)은 피드백이 없어도 시간이 지나면 진행한다.
+
+### 5-4. readback 브리지 `dg5f_readback_bridge.py`
+
+`bind_readback(dll)`이 `GetReceivedGripperData()`를 바인딩한다(이 저장소에서 처음 만든 바인딩).
+
+| 인자 | 뜻 |
+|---|---|
+| `--capture-pose [파일]` | **자세 캡처 모드.** 파일 생략 시 `.env`의 `RTAUTO_DG5F_GRASP_POSE` |
+| `--pose-name grasp` | 저장할 자세 이름(JSON `name` 필드) |
+| `--teach` / `--rest` / `--rest-sec 2.0` | 교시 모드 진입 / 휴식 자세 / 대기 |
+| `--control-mode developer\|operator` | 접속 모드 |
+| `--probe` / `--probe-top 3` | 어느 데이터 슬롯이 실제 관절값인지 탐색 |
+| `--fake` | 장비 없이 동작 확인 |
+| `--send-ip` / `--send-port` / `--hz 30` | Unity 송신 대상(기본 `UNITY_IP` / 5006) |
+
+캡처된 JSON은 `Dg5fFistButton.LoadGraspPose()`가 읽는다. 필드는 `name`·`hand`·`captured_utc`·
+`source`·`convention`·`channels[20]`·`deg[20]`이고, **Unity가 실제로 검사하는 것은 `deg`의 길이가
+20인지 하나뿐**이다(`channels`는 읽지 않는다). 파일이 없거나 길이가 다르면 예외를 던지지 않고
+Console에 안내만 남긴 뒤 '파지하기' 버튼을 비활성화한다 — 자세 파일이 없다고 데모 씬이 죽으면 안 된다.
+
+### 5-5. Unity 런처가 실제로 실행하는 명령 (`UrArmBridgeLauncher.cs`)
+
+| 인스펙터 필드 | 기본값 |
+|---|---|
+| `scriptRelativePath` | `arm/ur_rtde_bridge.py` |
+| `arguments` | `--ip --echo-to-unity` (값 없는 `--ip` = `.env`의 로봇 IP 사용) |
+| `showWindow` | true |
+
+파이썬 실행파일은 `.env`의 `RTAUTO_PYTHON`(`cfg.PYTHON_EXE`). `Launch()` 성공 여부는 `IsRunning`·
+`Status`로 노출되고, Play 정지·`OnDestroy`에서 `Stop()`이 프로세스를 죽인다 —
+살아남으면 포트를 쥐고 있고, 더 나쁘게는 계속 명령을 보낸다.

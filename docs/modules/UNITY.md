@@ -170,3 +170,104 @@ KDT.GraspLiftTraining (구세대)     ──── 같은 구조
 `com.rainbow.external` 네임스페이스 = Rainbow Robotics 협동로봇 소켓 통신 코드로,
 현재 UR16e 파이프라인 어디에서도 참조되지 않는다. 과거 팀 시절 잔재.
 `JointOperation.cs`의 CCD IK만 `Scripts/ArmTargetIK.cs`로 이식돼 살아 있다.
+
+## 9. 코드 레벨 핵심 — 실제 이름·기본값
+
+파일 역할만으로는 답이 안 나오는 질문("어느 값이 정본인가", "무엇을 호출하면 제어권이 바뀌나",
+"패킷이 몇 바이트여야 하나")을 위한 절이다. 아래 값은 **인스펙터/`.env`로 바뀔 수 있는 기본값**이며,
+정본은 항상 괄호 안의 소스 파일이다.
+
+### 9-1. 통신 컴포넌트의 공개 계약
+
+| 클래스 | 상수·필드 | 기본값 | 비고 |
+|---|---|---|---|
+| `Dg5fReceiver` | `ChannelCount` | 20 | `GetAngles(float[20])`가 유일한 각도 접근 통로 |
+| | `port` / `ActivePort` | 5006 / `.env` | **인스펙터 `port`는 `.env`가 없을 때의 최후 기본값.** 실제 사용 포트는 `ActivePort` |
+| | `secondsSinceLastPacket` | ∞ | 0.5 이상이면 송신 끊김으로 본다 |
+| | `GetThumbTip` / `GetFingerTip` / `GetWristTipVector` / `GetPinchDistance` / `GetRawRadians` | — | 각각 v2~v6 필드. 해당 필드가 안 온 패킷이면 `false` 반환 |
+| `Dg5fSender` | `sendEnabled` | **false** | 안전 기본값 — 씬을 Play했다고 실물이 움직이면 안 된다 |
+| | `bridgeIp` / `bridgePort` / `sendHz` | 127.0.0.1 / 5008 / 50 | |
+| | `sendCommandedAngle` | true | true=`xDrive.target`(목표각), false=실측각 송신 |
+| `UrArmReceiver` | `ChannelCount` / `port` | 6 / 5010 | `GetAngles(float[6])` |
+| `UrArmSender` | `sendEnabled` / `bridgePort` / `sendHz` | **false** / 5009 / 10 | 팔은 10Hz — 브리지 `--hz` 기본값과 짝 |
+| `UrArmTwinDriver` | `driveEnabled` / `lerpSpeed` | **false** / 15 | URSim→Unity 방향을 켜는 스위치 |
+| `Dg5fHandDriver` | `enableTracking` / `lerpSpeed` / `staleTimeout` | true / 12 / 1.0초 | `staleTimeout` 초과 시 **마지막 포즈 유지**(0으로 안 떨어진다) |
+| | `isolateJoint` | `None_전체동작` | 한 관절만 수신값으로 움직이고 19개를 0으로 얼리는 격리 디버그 |
+| | `debugThumbLog` / `logRadiansToFile` | **true** | 디버그용 임시 ON. 시연·측정 전에 끈다 |
+
+**패킷 길이 = 버전**(`Dg5fReceiver` 주석과 `dg5f_angles.PACKET_FMT="<72f"`가 정본):
+20f=v1 / 24f=v2(엄지끝+핀치) / 25f=v3(+끝거리 비율) / 37f=v4(+검지~새끼 리치벡터) /
+52f=v5(+손목→끝 벡터 5개) / **72f=v6(현재 송신 형식, +compute_raw 20채널 라디안)**.
+수신기는 **앞 20개만 있으면 동작**하고 나머지는 길이를 보고 선택적으로 읽는다.
+
+### 9-2. 관절 매핑 규칙 — 이름 매칭이지 순서 매칭이 아니다
+
+`Dg5fHandDriver.Start()`는 자식 `ArticulationBody` 중 이름에 `_dg_`가 들어간 것만 골라
+**접미사 `_dg_<손가락1~5>_<마디1~4>`**로 사전을 만든 뒤 패킷 인덱스 `(f-1)*4+(j-1)`에 꽂는다.
+그래서 오른손(`rl_dg_*`)/왼손(`ll_dg_*`) 프리팹이 같은 코드로 동작한다.
+매핑에 실패하면 `[Dg5fHandDriver] 관절 못 찾음: _dg_f_j` 에러가 Console에 뜨고,
+성공 시 `관절 매핑 20/20, 포트 NNNN 수신 대기` 한 줄이 찍힌다 — **이 로그가 1차 판정 기준**이다.
+
+팔은 `UrArmJointNames.Names`(링크 이름 6개)와 `UrArmLimits.IndexOf(linkName)`으로 찾는다.
+
+### 9-3. 물리·안전 상수의 정본
+
+| 상수 | 값 | 소스 |
+|---|---|---|
+| 팔 관절 최대속도[deg/s] | `{120, 120, 180, 180, 180, 180}` | `UrArmLimits.MaxDegPerSec` |
+| 팔 관절 최대토크[Nm] | `{330, 330, 150, 54, 54, 54}` | `UrArmLimits.MaxEffortNm` |
+| 팔 안전 관절범위[deg] | min `{-180,-120,20,-180,-150,-180}` / max `{180,-20,140,0,-30,180}` | `Dg5fPicknPlaceSpec.ArmSafeMin/MaxDeg` |
+| 홈 자세[deg] | `{0, -60, 90, -120, -30, 0}` | `Dg5fPicknPlaceSpec.HomeArmDeg` |
+| 주먹 자세 20각[deg] | — | `Dg5fPicknPlaceSpec.RightFistDeg` (RL 자동 제어가 쓰는 정본) |
+
+**주의:** `RobotConfig.cs`는 UR5e+SVH 시절 파일이라 현재 학습 물리값이 아니다. 학습 씬의 드라이브는
+`Dg5fPicknPlaceSpec.ArmDriveStiffness/Damping`(10000/200)과 `HandDriveStiffness/Damping/ForceLimit`
+(1500/120/20)이 정본이다.
+
+### 9-4. 제어권을 실제로 바꾸는 메서드
+
+UI 버튼 뒤에서 호출되는 것들. 스크립트로 자동화하거나 새 UI를 붙일 때 이 이름을 쓴다.
+
+| 호출 | 무슨 일이 일어나나 |
+|---|---|
+| `PicknPlaceControlModeSwitcher.SetManualMode(bool)` | 자동↔수동 전환. 수동 진입 시 `agent.PauseForManualControl()`, 자동 복귀 시 `EndEpisode()`. **Agent를 다시 `enabled=true`로 만들지는 않는다**(§0의 저장 씬 제한) |
+| `Dg5fPicknPlaceAgent.PauseForManualControl()` | 에이전트가 `xDrive`에 쓰는 것을 멈춘다 |
+| `Dg5fFistButton.SetFist(bool)` / `SetGrasp(bool)` | 프리셋 자세 재생. 손 제어권을 계속 보유 |
+| `Dg5fFistButton.ReleaseHandToTracking()` | **웹캠 복귀 버튼의 본체.** 이걸 부르기 전엔 웹캠 패킷이 와도 손이 안 움직인다 |
+| `Dg5fFistButton.RecordGraspPose(out string)` | 현재 자세를 `dg5f_grasp_pose.json`으로 저장 |
+| `Dg5fTwinModeSwitcher.SetMode(TwinMode.Off/SimToReal/RealToSim)` | 손 트윈 방향. `Start()`에서 무조건 `Off`로 시작한다(안전) |
+| `PicknPlaceArmJointPanel.SetActive/SyncFromCurrentPose/PullFromUrsim/FullReset` | 팔 패널의 활성화·현재자세 동기화·URSim 자세 끌어오기·초기화 |
+| `UrArmBridgeLauncher.Launch() / Stop()` | 팔 브리지 프로세스 기동·정리. `IsRunning`·`Status`로 상태 확인 |
+
+`Dg5fTwinModeSwitcher`의 인스펙터 `syncTimeout`(기본 2초)·`syncSettle`(0.8초)이
+sim→real 진입 전 자세 동기화 대기값이다 — **피드백이 안 오면 이 시간 뒤 그냥 진행한다**
+([REAL_BRIDGES.md](REAL_BRIDGES.md)의 교시 피드백 제한과 직결).
+
+### 9-5. 로그 파일 규칙
+
+`Dg5fLogFile.Create(prefix, out path)`가 **유일한 CSV 생성 통로**다.
+`Logs/<prefix>_<초단위 타임스탬프>.csv`, 같은 이름이 있으면 접미사를 붙여 **절대 덮어쓰지 않는다.**
+현재 이 통로를 쓰는 것: `Dg5fJointLogger`(`unity_dg5f_*`, 50Hz, 수신/목표/실측 20관절),
+`Dg5fHandDriver`(`rad_dg5f_*`, 비전 라디안 vs 관절 라디안), `Dg5fFingerIK`(IK 디버그).
+타임스탬프가 unix 초라 파이썬 로그와 그대로 시간 정렬된다(`vision/dg5f/analyze_teleop.py`).
+
+### 9-6. 에디터 메뉴 전체 경로
+
+| 메뉴 | 스크립트 |
+|---|---|
+| `KDT > Import UR16e+DG5F-Right Preview Scene` | `Editor/ImportUr16eDg5fRightPreview.cs` |
+| `KDT > Preview Scene에 조작 컴포넌트 추가` | `Editor/SetupPreviewSceneControls.cs` |
+| `Tools > Robots > Create UR16e DG5F Right Prefab` | `Robots/Editor/CreateUr16eDg5fRightPrefab.cs` |
+| `Tools > DG5F > Right / Right Short / Left / Left Short` | `Editor/DG5FVariantSwitcher.cs` |
+| `Tools > ML-Agents > Build DG5F PicknPlace Training Scene` | `picknplace/Editor/PicknPlaceTrainingSceneBuilder.cs` |
+| `Tools > ML-Agents > Build PicknPlace Pipeline Demo Scene` | `picknplace/Editor/PicknPlacePipelineDemoSceneBuilder.cs` |
+| `Tools > ML-Agents > Build DG5F PicknPlace Windows/Linux Player` | `picknplace/Editor/PicknPlaceTrainingBuild.cs` |
+| `Tools > ML-Agents > Diagnose PicknPlace Arm Poses` | `picknplace/Editor/PicknPlacePoseDiagnostic.cs` |
+| `Tools > ML-Agents > Diagnose PicknPlace Thumb Orientation` | `picknplace/Editor/PicknPlaceThumbDiagnostic.cs` |
+
+씬 빌더가 참조하는 고정 경로(바꾸면 빌더가 깨진다):
+입력 프리팹 `Assets/Robots/Prefabs/ur16e_dg5f_right.prefab`,
+학습 씬 `Assets/MLAgents/picknplace/DG5F_PicknPlaceTraining.unity`,
+데모 씬 `Assets/Scenes/Pipeline_Demo_GraspLift.unity`(원본 영역 이름 `DG5F_PicknPlaceTrainingArea_00`),
+배포 모델 `Assets/MLAgents/picknplace/Models/DG5FPicknPlace.onnx`.
+영역 수는 `.env`의 `DG5F_PICKNPLACE_TRAINING_AREAS`(기본 40), 배치는 3m 간격 `ceil(√N)`열 격자다.

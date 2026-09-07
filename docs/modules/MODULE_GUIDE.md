@@ -6,27 +6,27 @@
 
 - 2026-09-07 저장소 코드·씬 설정 대조 기준이다. 이번 문서 갱신은 실물 재시험이나 새 모델의 성능 검증을 뜻하지 않는다.
 - 현재 연결과 제한은 이 문서와 `modules/`를 먼저 본다. 설계 변경 이력·장기 계획은
-  [`SIM2REAL_ROADMAP.md`](SIM2REAL_ROADMAP.md), 실행 명령은 각 README를 참고한다.
+  [`SIM2REAL_ROADMAP.md`](../SIM2REAL_ROADMAP.md), 실행 명령은 각 README를 참고한다.
   과거 기록의 “현재”나 계획된 기능을 오늘의 구현 완료 상태로 해석하지 않는다.
 - 코드가 바뀌면 역할뿐 아니라 입출력·제어권·설정 적용 시점·알려진 제한도 함께 갱신한다.
 
 ## 처음 읽는 순서
 
 1. 이 페이지에서 전체 흐름과 현재 범위를 읽는다.
-2. [Unity](modules/UNITY.md)에서 화면의 자동/수동·트윈 방향·주먹 버튼이 각각 무엇을 바꾸는지 확인한다.
-3. 웹캠 조작은 [비전](modules/VISION_TELEOP.md), 장비 접속은 [브리지](modules/REAL_BRIDGES.md)로 이어 읽는다.
-4. 자동 파지를 이해하려면 [강화학습](modules/RL_TRAINING.md)의 관찰 출처·성공 조건을 읽는다.
-5. 새 PC 인수나 모델·설정 변경 시 [설정·빌드](modules/BUILD_TOOLING.md)의 설정 위치와 재생성 순서를 확인한다.
+2. [Unity](UNITY.md)에서 화면의 자동/수동·트윈 방향·주먹 버튼이 각각 무엇을 바꾸는지 확인한다.
+3. 웹캠 조작은 [비전](VISION_TELEOP.md), 장비 접속은 [브리지](REAL_BRIDGES.md)로 이어 읽는다.
+4. 자동 파지를 이해하려면 [강화학습](RL_TRAINING.md)의 관찰 출처·성공 조건을 읽는다.
+5. 새 PC 인수나 모델·설정 변경 시 [설정·빌드](BUILD_TOOLING.md)의 설정 위치와 재생성 순서를 확인한다.
 
 ## 영역별 문서
 
 | 문서 | 다루는 범위 | 코드 위치 |
 |---|---|---|
-| [modules/UNITY.md](modules/UNITY.md) | Unity 안에서 도는 모든 C# — 로봇 구동, 텔레옵 수신, 데모 HUD, 에디터 툴 | `unity/Assets/**` |
-| [modules/RL_TRAINING.md](modules/RL_TRAINING.md) | 강화학습 에이전트(보상·관찰·행동) + 학습 실행/감시 스크립트 | `unity/Assets/MLAgents/**`, `training/**` |
-| [modules/VISION_TELEOP.md](modules/VISION_TELEOP.md) | 웹캠 → 손 관절각 → UDP 송신(텔레옵), 카메라 캘리브레이션 | `vision/**` |
-| [modules/REAL_BRIDGES.md](modules/REAL_BRIDGES.md) | 실물/시뮬레이터 하드웨어와 붙는 브리지 — UR16e RTDE, DG-5F SDK | `arm/**`, `vision/dg5f/*bridge*.py` |
-| [modules/BUILD_TOOLING.md](modules/BUILD_TOOLING.md) | 설정 정본, URDF 빌드·임포트, 패키징·방화벽 등 주변 도구 | `config/`, `urdf/`, `tools/`, `build-support/` |
+| [UNITY.md](UNITY.md) | Unity 안에서 도는 모든 C# — 로봇 구동, 텔레옵 수신, 데모 HUD, 에디터 툴 | `unity/Assets/**` |
+| [RL_TRAINING.md](RL_TRAINING.md) | 강화학습 에이전트(보상·관찰·행동) + 학습 실행/감시 스크립트 | `unity/Assets/MLAgents/**`, `training/**` |
+| [VISION_TELEOP.md](VISION_TELEOP.md) | 웹캠 → 손 관절각 → UDP 송신(텔레옵), 카메라 캘리브레이션 | `vision/**` |
+| [REAL_BRIDGES.md](REAL_BRIDGES.md) | 실물/시뮬레이터 하드웨어와 붙는 브리지 — UR16e RTDE, DG-5F SDK | `arm/**`, `vision/dg5f/*bridge*.py` |
+| [BUILD_TOOLING.md](BUILD_TOOLING.md) | 설정 정본, URDF 빌드·임포트, 패키징·방화벽 등 주변 도구 | `config/`, `urdf/`, `tools/`, `build-support/` |
 
 ## 전체 데이터 흐름 (한 장 요약)
 
@@ -51,11 +51,11 @@ Unity에서 실물 손 구동
 
 화살표는 사용 가능한 연결을 보여주며, 모든 경로를 동시에 실행하라는 뜻은 아니다.
 웹캠과 손 실제각 echo는 같은 수신 포트를 공유하므로 동시에 송신하지 않는다.
-자동 정책·수동 프리셋·웹캠도 같은 관절에 명령하므로 [제어권 표](modules/UNITY.md)를 확인한다.
+자동 정책·수동 프리셋·웹캠도 같은 관절에 명령하므로 [제어권 표](UNITY.md)를 확인한다.
 
 UDP는 프로그램 사이에서 값을 보내는 통신 방식이며 포트는 받는 프로그램을 구분하는 번호다.
-위 숫자는 기본값이다. 설정은 [`.env.example`](../.env.example)·`.env`를 Python과 C#이 각각 읽으며,
-**배포 실행파일에서 두 프로그램의 설정 탐색 위치가 다른 현재 제한**은 [설정 문서](modules/BUILD_TOOLING.md)에 있다.
+위 숫자는 기본값이다. 설정은 [`.env.example`](../../.env.example)·`.env`를 Python과 C#이 각각 읽으며,
+**배포 실행파일에서 두 프로그램의 설정 탐색 위치가 다른 현재 제한**은 [설정 문서](BUILD_TOOLING.md)에 있다.
 
 ## 현재 할 수 있는 일과 미완료 경계
 
@@ -70,7 +70,7 @@ UDP는 프로그램 사이에서 값을 보내는 통신 방식이며 포트는 
 
 현재 RL은 Unity 내부의 물체 좌표·속도·접촉 정보를 직접 읽는다. 웹캠 손 추적이 이 정보를 대신 제공하지 않는다.
 실물 자세를 녹화한 JSON도 수동 파지 버튼에 쓰이며 자동 정책을 갱신하지 않는다.
-이 두 경계는 [강화학습 문서](modules/RL_TRAINING.md)와 [Unity 문서](modules/UNITY.md)에 설명되어 있다.
+이 두 경계는 [강화학습 문서](RL_TRAINING.md)와 [Unity 문서](UNITY.md)에 설명되어 있다.
 
 ## 현재 주력과 이전 세대
 
@@ -91,7 +91,38 @@ UDP는 프로그램 사이에서 값을 보내는 통신 방식이며 포트는 
   어디에도 연결돼 있지 않은 과거 팀 시절 잔재.
 - `vision/zed_object_detection/**` — **폐기.** ZED 스테레오 카메라 객체 검출 경로. 파이프라인
   어디에도 연결돼 있지 않고 Unity 수신 컴포넌트도 이미 삭제됐다. 되살리는 것을 전제하지 않는다
-  ([비전 문서의 ZED 절](modules/VISION_TELEOP.md)).
+  ([비전 문서의 ZED 절](VISION_TELEOP.md)).
 - `training/archives/**`, `docs/archives/**` — 폐기된 behavior의 설정·문서.
 - 주석·문서에 남아 있는 SVH(SCHUNK 손) 언급 — DG5F 이전에 쓰던 손. 코드는 대부분 제거됐고
   "이 로직은 SVH 때 검증됐다"는 유래 설명으로만 남아 있다.
+
+## 코드 레벨 입구 — "그 값/그 로직은 어느 파일에 있나"
+
+각 모듈 문서 끝에 **"코드 레벨 핵심"** 절을 뒀다(클래스·함수 이름, 실행 인자, 상수 실제값,
+패킷 배치). 여기서는 자주 찾는 것만 한 줄로 건다. 값의 정본은 항상 아래 파일이며,
+**문서에 적힌 숫자와 코드가 다르면 코드가 맞다.**
+
+| 찾는 것 | 정본 파일 | 문서 |
+|---|---|---|
+| 포트·IP·경로 (모든 설정) | `config/rtauto_config.py` + 리포 루트 `.env` | [BUILD_TOOLING §5-1, §5-3](BUILD_TOOLING.md) |
+| 같은 설정을 읽는 C# 구현 | `unity/Assets/Scripts/RtautoConfig.cs` | [BUILD_TOOLING §5-1](BUILD_TOOLING.md) |
+| 손 20채널 순서·이름 | `vision/dg5f/dg5f_angles.py`의 `CHANNEL_NAMES` / `DG5F_CHANNELS` | [VISION_TELEOP §6-1](VISION_TELEOP.md) |
+| 사람 손 → 로봇 각도 변환 | `dg5f_angles.compute_raw()` → `map_to_dg5f()` | [VISION_TELEOP §6-1](VISION_TELEOP.md) |
+| UDP 패킷 배치(72f) | `dg5f_angles.PACKET_FMT` ↔ `unity/Assets/Scripts/Dg5fReceiver.cs` | [VISION_TELEOP §패킷 계약](VISION_TELEOP.md), [UNITY §9-1](UNITY.md) |
+| 실물 손 가동범위 clamp | `vision/dg5f/dg5f_sdk_bridge.py`의 `JOINT_CLAMP_RIGHT` | [REAL_BRIDGES §5-2](REAL_BRIDGES.md) |
+| 팔 속도·토크 한계 | `unity/Assets/Scripts/UrArmLimits.cs` | [UNITY §9-3](UNITY.md) |
+| "무엇이 성공인가"(보상·판정) | `unity/Assets/MLAgents/picknplace/Runtime/Dg5fPicknPlaceSpec.cs` | [RL_TRAINING §7-3](RL_TRAINING.md) |
+| 관찰 57칸의 내용 | `Dg5fPicknPlaceAgent.CollectObservations()` | [RL_TRAINING §7-1](RL_TRAINING.md) |
+| 행동 7칸이 관절에 적용되는 방식 | `Dg5fPicknPlaceAgent.OnActionReceived()` | [RL_TRAINING §7-2](RL_TRAINING.md) |
+| 학습 하이퍼파라미터·커리큘럼 | `training/config/dg5f_picknplace.yaml` | [RL_TRAINING §7-6](RL_TRAINING.md) |
+| 학습 성패 판정 기준 | `training/scripts/picknplace_monitor.py`의 `GATES` | [RL_TRAINING §7-5](RL_TRAINING.md) |
+| 제어권을 바꾸는 메서드 | `PicknPlaceControlModeSwitcher` · `Dg5fTwinModeSwitcher` · `Dg5fFistButton` | [UNITY §9-4](UNITY.md) |
+| 씬·프리팹 생성기의 고정 경로 | `PicknPlaceTrainingSceneBuilder`의 `const` | [BUILD_TOOLING §5-6](BUILD_TOOLING.md) |
+
+**두 곳을 함께 고쳐야 하는 쌍**(한쪽만 바꾸면 에러 없이 조용히 어긋난다):
+
+- `dg5f_angles.CHANNEL_NAMES` ↔ `Dg5fHandDriver.JointLabels` — 손 20채널 순서
+- `config/rtauto_config.py` ↔ `RtautoConfig.cs` ↔ `BuildEnvironment.cs` — 설정 읽기 3구현
+- `Dg5fPicknPlaceSpec.ArmLinks` ↔ `UrArmJointNames.Names` — 팔 관절 이름
+  (어셈블리 순환 참조를 피하려 의도적으로 중복돼 있다, [UNITY §7](UNITY.md))
+- `dg5f_sdk_bridge.JOINT_CLAMP_RIGHT` ↔ `dg5f_angles.URDF_LIMITS_DEG` — 실물/시뮬 clamp

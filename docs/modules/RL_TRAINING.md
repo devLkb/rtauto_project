@@ -156,3 +156,148 @@ PPO 하이퍼파라미터 + 커리큘럼. 파일 이름이 곧 실험 이름이�
 | `MLAgents/GraspLift/Tests/PlayMode/GraspLiftSceneTests.cs` | 위와 같고, 추가로 **물리적 실현 가능성 프로브** — "닫힌 손이 이 블록을 들고 버틸 수 있는가"를 직접 확인한다. PPO는 물리적으로 불가능한 파지를 학습할 수 없으므로 이 질문을 학습 곡선으로 추측하지 않는다 |
 | `MLAgents/GraspLift/Tests/PlayMode/GraspLiftHandGeometryProbe.cs` | 합격/불합격이 아니라 **측정 도구**. 손을 닫았을 때 손끝이 실제로 어디 가는지 재서 블록 크기를 URDF 계산이 아닌 시뮬 실측으로 정한다 |
 | `training/tests/test_*.py` | 파이썬 스크립트와 과거 behavior 계약의 회귀 테스트 |
+
+## 7. 코드 레벨 핵심 — 관찰 57칸·행동 7칸의 실제 내용
+
+"관찰 57개"라는 숫자만으로는 실물 이관도, 모델 호환 판정도 못 한다. 아래가 그 57칸의 실제 배치다.
+정본은 `Runtime/Dg5fPicknPlaceAgent.cs`의 `CollectObservations`이며, 값은 전부 정규화·클램프된다.
+
+### 7-1. 관찰 벡터 배치 (인덱스 → 내용)
+
+| 인덱스 | 내용 | 정규화 방식 |
+|---|---|---|
+| `0..5` | 팔 6관절 실제각 | `ArmSafeMin/MaxDeg` 범위를 −1~+1로 |
+| `6..11` | 팔 6관절 각속도 | `rad/s ÷ π`, ±1 클램프 |
+| `12` | 손 폐합률(closure) | `closure*2−1` (0~1 → −1~+1) |
+| `13..15` | **파지 목표점 − 손 grasp point** (로봇 베이스 좌표) | ÷1.0 m |
+| `16..18` | 물체 선속도 (베이스 좌표) | ÷2.0 |
+| `19..21` | 물체 각속도 (베이스 좌표) | ÷10.0 |
+| `22` | 스폰 높이 대비 물체 상승량 | ÷0.2 m |
+| `23..37` | 손끝 5개 − 물체중심 (**손바닥 좌표**) | ÷0.2 m |
+| `38..42` | 손끝 5개 접촉 플래그 | 0/1 |
+| `43..48` | 팔 6관절 **명령 목표각**(`xDrive.target`) | 관절 범위 정규화 |
+| `49` | 손바닥 접촉 플래그 | 0/1 |
+| `50` | 접촉 지점 수 ÷ 6 | 0~1 |
+| `51` | 파지 확정 진행도 (`_graspSeconds`/0.3초) | 0~1 |
+| `52` | 파지 확정 여부 | 0/1 |
+| `53` | 리프트 진행도 | 0~1 |
+| `54` | 리프트 유지 진행도 | 0~1 |
+| `55` | 파지 거리 ÷ 0.90 m | 0~1 |
+| `56` | 경과 시간 ÷ 20초 | 0~1 |
+
+씬 참조(`cubeTarget`·`robotBase`·`palm`·`graspPoint`·`fingerTips`·`contactSensors`) 중 하나라도 없거나
+물리값이 NaN/∞이면 **57칸 전부 0을 넣고 빠져나온다.** 학습이 안 되는데 에러도 없으면 이 경로를 의심한다.
+
+⚠️ 관찰은 **모두 시뮬레이터 내부 상태**다. `13..21`(물체 위치·속도)과 `38..42`·`49`(접촉)는
+실물에 대응 신호가 없어, 실물 이관 시 이 칸들을 어디서 채울지가 남은 과제다.
+
+### 7-2. 행동 벡터와 그 스케일
+
+`OnActionReceived(ActionBuffers)` — 연속 7개, 각 −1~+1로 클램프된다.
+
+- `[0..5]` 팔 6축의 **각도 증분**. 실제 증분 = `action × MaxDegPerSec[i] × TrainingSpeedFraction(0.5) × 결정주기`.
+  결정주기는 `DecisionRequester.DecisionPeriod`(씬 빌더가 5로 설정) × `fixedDeltaTime`(0.02s) = **0.1초**.
+  즉 관절 0은 한 결정에 최대 `120 × 0.5 × 0.1 = 6°` 움직인다. 관절마다 상한이 다르다는 점이 핵심이다.
+  물체 0.08 m 이내(`NearObjectControlClearance`)에선 `NearObjectArmDeltaScale = 0.35`가 곱해져 미세동작이 된다.
+- `[6]` 손 개폐 증분. `gripDeltaPerDecision = 0.08`을 곱해 폐합률 0~1을 이동시키고,
+  `ApplyGripTargets()`가 "펴진 자세 ↔ `RightFistDeg`" 사이를 스칼라 하나로 보간해 20관절에 쓴다.
+- `DecisionRequester`가 씬에 없으면 결정주기를 1스텝으로 가정해 **의도보다 5배 느리게 움직이고 경고만 찍는다.**
+
+### 7-3. 성공·실패 판정의 실제 상수 (`Dg5fPicknPlaceSpec`)
+
+`SpecVersion = "3.0.0"`, `BehaviorName = "DG5FPicknPlace"`, `ObservationSize = 57`, `ActionSize = 7`.
+
+| 판정 | 함수 | 상수 |
+|---|---|---|
+| 파지 후보 | `IsGraspCandidate(...)` | 접촉 ≥`GraspContactMinimum`(3), 최대 대향각 ≥`GraspOppositionAngleDeg`(90°), 접촉중심-물체중심 ≤`GraspCenterMaxDistance`(0.05 m), 폐합률 ≥`MinimumGraspClosure`(0.30) |
+| 파지 확정 | `IsGraspConfirmed(sec)` | 후보 상태를 `GraspConfirmSeconds`(0.30초) 유지 → +`GraspConfirmReward`(1.0) |
+| 안정 리프트 | `IsStableLift(h, speed)` | 목표 높이 도달 + 물체 속도 ≤`LiftMaximumSpeed`(0.50 m/s) |
+| 성공 | `IsLiftComplete(sec)` | 안정 리프트를 `CurrentLiftHoldSeconds` 유지 → +`LiftSuccessReward`(5.0) |
+| 타임아웃 | `ReachedEpisodeTimeout` | `EpisodeTimeoutSeconds`(20초) |
+
+**커리큘럼(`grasp_stage` 1/2/3)이 바꾸는 값** — `CurrentLiftTargetHeight` 5/8/**10 cm**,
+`CurrentLiftHoldSeconds` 0.25/0.35/**0.50초**, 스폰 반경 `CurrentMinimum/MaximumSpawnRadius`
+(최종 0.37~0.58 m 환형).
+
+**실패 사유 문자열과 페널티** (`FailurePenalty(reason)`):
+`UnsafeSurfaceContact` −2.0 / `SelfCollision` −2.0 / `Dropped` −1.0 / `ObjectOutOfBounds` −1.0 /
+`ObjectPushedAway` −0.5 / `ObjectToppled` −0.3. 이 문자열이 그대로 TensorBoard `Failure/<reason>` 태그가
+되므로, **모니터에서 보이는 태그 이름과 코드가 같은 문자열**이다.
+
+**지속 페널티**: 결정마다 `DecisionTimePenalty`(−0.001), 행동 급변 `ActionRatePenaltyScale`(−0.001),
+물체 근처 행동 크기 `NearObjectActionPenaltyScale`(−0.002), 손이 바닥 긁음
+`HandSurfacePenaltyPerSecond`(−0.05/초), 엄지가 아래를 향함 `ThumbDownPenaltyScale`(−0.05),
+든 물체 기울어짐 `LiftTiltPenaltyScale`(−0.02, 10° 이하 무료·30°에서 포화).
+
+> 페널티 설계 규칙(코드·YAML 주석에 근거가 적혀 있다): **한 에피소드 전체를 최대 비용으로 채워도
+> 리프트 성공 1회의 보상을 넘지 않아야 한다.** 2026-08-28에 −0.10짜리 엄지 페널티가
+> 200결정 × −0.10 = −20으로 최대 획득 가능 보상(+12.2)을 압도해 학습이 정지 정책으로
+> 수렴한 사고가 이 규칙의 출처다.
+
+### 7-4. YAML이 갈아끼울 수 있는 파라미터 이름
+
+`environment_parameters`에 이 이름으로 적으면 `Set*Parameter` 계열이 런타임에 받는다.
+**여기 없는 상수는 재컴파일·재빌드를 해야 바뀐다.**
+
+`grasp_stage` · `cube_width` · `cube_height` · `cube_com_height_fraction` · `topple_limit_deg` ·
+`topdown_potential_max` · `action_rate_penalty_scale` · `hand_surface_penalty_per_second` ·
+`grasp_posture_penalty_scale` · `thumb_down_penalty_scale` · `lift_tilt_penalty_scale`
+
+### 7-5. TensorBoard 태그 — 무엇을 보면 되나
+
+`Dg5fPicknPlaceAgent.RecordOutcome()`이 에피소드마다 기록한다.
+
+- `PicknPlace/Success`, `GraspConfirmed`, `ContactCount`, `BestLiftHeight`, `FinalLiftHeight`,
+  `FinalDistanceMeters`, `GraspSeconds`, `LiftHoldSeconds`, `CompletionSeconds`, `FinalClosure`
+- 자세·품질: `TopDownAngleDegrees`, `MaxPalmFacingAlignment`, `ThumbBelowOtherTipsMeters`,
+  `GraspPostureAngleDegrees`, `ObjectTiltDegrees`, `MaxObjectTiltDegrees`, `MeanArmActionRate`,
+  `HandSurfaceContactSeconds`
+- 커리큘럼: `Curriculum/GraspStage`, `Curriculum/CubeWidth`, `Curriculum/CubeHeight`
+- 실패: `Failure/<reason>` (합계)
+
+`picknplace_monitor.py --gate`가 판정하는 **4개 게이트**(`GATES` 상수, 근거는 `docs/TRAINING_RUN_LEDGER.md`):
+
+| 게이트 | 스텝 | 태그 | 최소 | 못 넘기면 |
+|---|---|---|---|---|
+| G1 접근 | 300k | `MaxPalmFacingAlignment` | >0.0 | 접근 그래디언트 자체가 없음 = 정지 정책 데드락 |
+| G2 접촉 | 800k | `ContactCount` | >0.20 | 파지 학습이 시작조차 안 됨 |
+| G3 파지 | 2M | `GraspConfirmed` | >0.05 | 파지 계약이 이 손·큐브 조합에서 성립 안 함 |
+| G4 성공 | 4M | `Success` | >0.10 | 남은 스텝으로 뒤집히지 않음 |
+
+`--gate` 실패 시 **종료코드 1**만 돌려준다. 학습 프로세스를 죽이지는 않는다.
+
+### 7-6. 학습 실행의 실제 인자
+
+`train_picknplace.py`는 `mlagents_learn_compat.py`를 엔트리포인트로 `mlagents-learn`을 부른다.
+
+| 인자 | 기본값 | 출처 |
+|---|---|---|
+| `--run-id` | **필수** | — |
+| `--config` | `training/config/dg5f_picknplace.yaml` | |
+| `--num-envs` | `.env`의 `RTAUTO_TRAIN_NUM_ENVS` | 동시 플레이어 수 |
+| `--base-port` | 5100 | `cfg.PORT_MLAGENTS_BASE` |
+| `--results-dir` | `training/results` | `cfg.TRAINING_RESULTS_DIR` |
+| `--editor` | off | 플레이어 대신 Unity 에디터에 붙는다 |
+| `--resume` / `--force` / `--dry-run` / `--timeout-wait`(600) | | |
+| `--keep-stale-players` | off | 기본은 **남아 있는 플레이어 프로세스를 먼저 죽인다** |
+
+총 에이전트 수 = `DG5F_PICKNPLACE_TRAINING_AREAS`(빌드에 구워진 값, 기본 40) × `--num-envs`.
+**영역 수는 플레이어 빌드에 고정**되므로 `.env`만 고쳐선 안 바뀐다(씬 재생성 → 재빌드 필요).
+
+현역 학습 설정(`dg5f_picknplace.yaml`)의 핵심: PPO, `batch_size 4096` / `buffer_size 40960` /
+`num_epoch 3` / `learning_rate 3e-4 linear` / `hidden_units 256` × `num_layers 3` /
+`gamma 0.995`(리프트 보상이 파지 후 최대 10초 뒤에 오므로 길게) / `time_horizon 256` /
+`max_steps 20M` / `normalize false` / `device cuda`.
+`num_envs` 10은 측정값이다 — 4/6/8/10/12 envs에서 1643/1932/2206/2390/2266 steps/s로
+10 부근에서 처리량이 꺾인다(8코어를 트레이너와 다투기 시작).
+
+### 7-7. 접촉 센서의 구현 차이
+
+| 센서 | 판정 방식 | 노출 |
+|---|---|---|
+| `PicknPlaceObjectContactSensor` | `OnCollisionEnter/Stay/Exit`, `targetCollider`와의 접촉만 | `IsTouching`, `LastImpulse`, `contactIndex`(손끝 0~4, 손바닥 5) |
+| `PicknPlaceSurfaceContactSensor` | 팔 링크의 바닥 충돌 → `agent.NotifyUnsafeSurfaceContact()` | 즉시 실패 종료 |
+| `PicknPlaceHandSurfaceSensor` | 손의 바닥 접촉 **시간**을 누적 | 실패가 아니라 초당 감점 |
+| `PicknPlaceSelfCollisionSensor` | **`OnTriggerEnter/Stay`** — 물리 충돌을 켜면 진동이 생기므로 트리거 전용 그림자 콜라이더로 겹침만 감지 | `HasViolation`, `IsSelfCollision(a,b)` |
+
+에피소드 시작마다 `ResetContacts()`로 초기화한다 — 새 센서를 추가하면 이 호출도 함께 넣어야 한다.
