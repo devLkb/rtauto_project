@@ -554,9 +554,13 @@ Get-ChildItem -Recurse -Filter *.superdex_bot (& python -c "import sys; sys.path
    (`bots/hands/dg5f_long/right/dg5f_long_right.superdex_bot`)와 일치하는가.
    다르면 그 함수를 실제 경로 형식으로 고치고 docstring의 ⚠️ 주석을 지운다.
 2. **U1** — `assets/bots/hands/dg5f_long/README.md`와 `dg5f_short/README.md`를 읽고
-   손목 길이 치수를 Tesollo DG-5F-M 도면/실물과 대조한다. `short`가 맞으면
-   `.env`에 `RTAUTO_DG5F_SHORT=1`을 넣는다. **이 판정을 미루면 손목 길이만큼 틀린
-   기하로 전 학습이 진행된다.**
+   손목 길이 치수를 Tesollo DG-5F-M 도면/실물과 대조한다. **이 판정을 미루면 손목
+   길이만큼 틀린 기하로 전 학습이 진행된다.**
+
+   > ⚠️ **판정 결과를 바로 `.env`에 반영하지 않는다.** `RTAUTO_DG5F_SHORT`는
+   > `dg5f_variant()`를 통해 **기존 파이프라인의 URDF·메시 선택까지 바꾼다.** 결과는
+   > 먼저 §10 진행 기록에 적고, `.env` 변경은 §12의 절차대로 기존 파이프라인 회귀
+   > 확인과 함께 별도로 처리한다.
 
 ### 0-7. 동봉 예제 실행
 
@@ -612,3 +616,81 @@ python superdex_robotics/examples/control/example_osc_jsc_control.py
 > `superdex/scripts/`와 `superdex/envs/`는 **아직 존재하지 않는다** — 0-8에서 처음
 > 만들어진다. 문서에 적힌 경로가 실제로 없으면 새 PC 사용자가 막히므로(원칙 2), 이
 > 문서는 그 사실을 여기서 명시한다.
+
+---
+
+## 12. 급한 시연이 생겼을 때 — 기존 환경 보전
+
+**SuperDex PoC는 기존 텔레옵·학습 환경을 건드리지 않도록 설계했다.** 시연 요청이 갑자기
+들어와도 되돌릴 것이 없다.
+
+### mediapipe는 영향받지 않는다
+
+이 저장소는 `mediapipe==0.10.11`에 고정돼 있고 그 버전은 **Python 3.12를 지원하지
+않는다.** 상위 버전으로 올리면 protobuf 4.x가 `mlagents`와 충돌한다
+(`vision/requirements-vision-mlagents.constraints.txt`가 이걸 막고 있다).
+
+그래서 **venv를 올리지 않고 따로 만든다.** 기존 환경은 손대지 않는다.
+
+| venv | Python | 용도 | PoC의 영향 |
+|---|---|---|---|
+| `vision/.vision/` | 3.10.11 | mediapipe 텔레옵, ML-Agents, UR RTDE 브리지 | **없음 — 재설치·업그레이드 안 함** |
+| `superdex/.venv/` | 3.12 | SuperDex, RLlib, ONNX | 신규 추가만 |
+
+`requirements-vision.txt`, `requirements-mlagents.txt`,
+`vision/requirements-vision-mlagents.constraints.txt`는 **이 브랜치에서 한 줄도 바뀌지
+않았다.** 3.10.11 인터프리터도 그대로 설치돼 있다 — 3.12를 **추가** 설치하는 것이다.
+
+### 브랜치 전환
+
+브랜치 `SuperDexTest`가 `main`에 대해 바꾼 것은 **문서 4개 + `config/rtauto_config.py`
+추가분 + 신규 파일 2개**뿐이다. `vision/`, `unity/`, `arm/`, `training/scripts/`의
+`.py`/`.cs`/`.unity`/`.prefab`은 **하나도 바뀌지 않았고**,
+`config/rtauto_config.py`도 **삭제·변경 라인이 0인 순수 추가**다(기존 키 그대로).
+
+즉 **`SuperDexTest`에서 그대로 시연해도 동작이 달라지지 않는다.** 그래도 최소 리스크로
+가려면 시연 전에 `main`으로 옮긴다:
+
+**터미널 1 (PowerShell, 리포 루트, 시연 준비)**
+
+```powershell
+git status --short
+```
+
+출력이 비어 있어야 한다(미커밋 변경 없음). 그 다음:
+
+```powershell
+git checkout main
+```
+
+시연이 끝나면 돌아온다:
+
+```powershell
+git checkout SuperDexTest
+```
+
+> Unity 에디터가 열려 있는 상태로 브랜치를 바꾸지 않는다 — 에디터를 먼저 닫고 전환한
+> 뒤 다시 연다. 이 브랜치는 `unity/` 아래를 바꾸지 않으므로 실제로는 재임포트가 없지만,
+> 습관을 여기서 만들어 두면 나중 게이트에서 Unity 파일을 건드릴 때 사고가 없다.
+
+### ⚠️ 진짜 위험한 것은 브랜치가 아니라 `.env`다
+
+`.env`는 **git 비추적**이라 브랜치를 바꿔도 따라 바뀌지 않는다. 게이트 0에서 여기에
+값을 넣으므로, 기존 파이프라인에 영향을 주는 키를 구분해야 한다.
+
+| `.env` 키 | 기존 파이프라인 영향 | 비고 |
+|---|---|---|
+| `RTAUTO_SUPERDEX_*` | **없음** | 기존 코드가 읽지 않는다. 넣어도 안전 |
+| `RTAUTO_DG5F_SHORT` | **있음 — 위험** | 아래 참고 |
+| `RTAUTO_PYTHON` | **있음 — 위험** | Unity "브리지 실행" 버튼이 이걸로 `arm/ur_rtde_bridge.py`를 띄운다. **절대 `superdex/.venv`로 바꾸지 않는다** — 3.12에는 `ur_rtde`가 없어 브리지가 죽는다 |
+
+**`RTAUTO_DG5F_SHORT`** — 게이트 0-6(U1)에서 DG-5F-M의 손목 길이를 판정하는데, `short`로
+드러나면 `dg5f_variant()`의 반환값이 `dg5f_right` → `dg5f_right_short`로 바뀌어
+**기존 URDF·메시 선택 경로가 함께 달라진다.** 이건 오염이 아니라 "기존 설정이 틀렸다"는
+발견이지만, **시연이 걸려 있는 동안 이 값을 뒤집지 않는다.**
+
+- U1 판정 결과는 먼저 **이 문서 §10 진행 기록에만 적는다.**
+- `.env`의 `RTAUTO_DG5F_SHORT` 변경은 시연이 끝난 뒤, 기존 파이프라인 회귀 확인
+  (텔레옵 실행 + URDF 빌드)과 함께 별도로 처리한다.
+- SuperDex 쪽에서 다른 변형을 먼저 써 봐야 하면 `.env`를 고치지 말고 그 세션에서만
+  `superdex_hand_asset()`의 결과를 인자로 덮어쓴다.
