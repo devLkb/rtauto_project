@@ -102,7 +102,9 @@ Unity ML-Agents RL 부분은 어차피 전면 재설계 대상이므로 **"기�
 | 릴리스 | v1.0.0 **2026-08-24**. 저장소 생성 2026-08-20. `stable` 브랜치 존재, `main` 급변 |
 | 라이선스 | 1st-party 코드 **Apache-2.0**, asset/문서 CC-BY-4.0, `superdex_mesh_cli`만 GPLv3 |
 | 플랫폼 | Linux x86_64 / **Windows x86_64** / macOS ARM |
-| Python | **3.12 전용** wheel (`uv pip install superdex`) |
+| Python | **3.12 전용** (`requires_python >=3.12,<3.13`) |
+| 설치 | PyPI pre-built wheel. `superdex` / `superdex-lab` / `superdex-physics` 모두 **1.0.0**. `superdex`는 엄브렐라(py3-none-any), 플랫폼 바이너리는 `superdex-physics`의 `cp312-cp312-win_amd64` 등. **소스 빌드 불필요** — README의 CMake/Ninja/Clang 17+ 경로는 엔진을 직접 고칠 때만 |
+| 실행 진입점 | Studio = `superdex-studio`. 예제는 클론에서 스크립트 직접 실행. 환경변수 `SUPERDEX_ASSETS_PATH`(asset 트리), `SUPERDEX_PRECISION=double`(fp64 빌드) |
 | 구성 | Physics(C++) / Robotics(C++, pybind) / Studio(GUI) / Lab(RL, **pyproject에 Alpha**) |
 | RL | Gymnasium + **Ray/RLlib 새 API 스택(RLModule)**. PPO 권장, SAC 실험적 |
 | 기본 벤치마크 | CartPole / Ant / HalfCheetah **뿐** — 매니퓰레이션 태스크 없음 |
@@ -154,7 +156,7 @@ FR3는 OSC, DG5F는 **JSC**(joint space PD, target joint position → torque)로
 |---|---|---|---|
 | U1 | **DG-5F-M이 long wrist인가 short wrist인가** | SuperDex는 둘 다 제공한다. `config/rtauto_config.py`의 `DG5F_SHORT` 주석도 `"M"이 short면 1`로 미확정 상태다. 잘못 고르면 손목 길이만큼 전 학습이 틀어진다 | 게이트 0. Tesollo 도면/실물 실측 대조 |
 | U2 | **손 단독 asset의 실제 경로** | 조합 asset 경로만 실측했다. 손 단독은 `bots/hands/dg5f_long/right/dg5f_long_right.superdex_bot` 형태로 **추정**한 것이다 | 게이트 0. 클론한 `assets/` 트리에서 직접 확인 |
-| U3 | **PyPI 배포 버전 문자열** | 릴리스 태그는 v1.0.0이지만 wheel 버전 문자열은 확인하지 않았다. 핀을 걸어야 하므로 정확한 값이 필요하다 | 게이트 0 |
+| U3 | ~~PyPI 배포 버전 문자열~~ | **해소 (2026-09-07)** — PyPI 확인: `superdex` `superdex-lab` `superdex-physics` 모두 **1.0.0**, `requires_python >=3.12,<3.13`. `superdex-physics`에 `cp312-cp312-win_amd64.whl`이 있어 **Windows 소스 빌드 불필요**. `requirements-superdex.txt`에 `==1.0.0` 핀 반영 | 완료. `ray`/`onnx` 핀만 게이트 0-4에 남음 |
 | U4 | **Tesollo asset 라이선스 범위** | 시뮬레이션·시각화·학술/비상업 연구·오픈소스 통합은 허용, 물리적 제조·3D 프린팅·하드웨어 복제는 금지. 제한 대상은 **하드웨어 형상 재현**이므로 학습된 가중치가 파생물로 걸릴 가능성은 낮지만, **asset 자체를 상용 제품에 재배포하는 것은 불가**. 공개 문서·영상에는 Tesollo attribution 필요 | **게이트 2 착수 전.** 벤더에 서면 질의 |
 | U5 | **mediapipe의 Python 3.12 지원** | ML-Agents가 빠지면 3.10.11 핀의 근거가 사라지지만 비전 파이프라인이 같은 venv를 쓴다 | 게이트 1. venv를 분리하면 회피 가능(§7) |
 | U6 | **단일 env steps/sec** | 전체 계획의 실현 가능성을 결정하는 숫자인데 공개 벤치마크가 없다 | 게이트 0에서 측정 |
@@ -324,8 +326,9 @@ ML-Agents가 빠지면 3.10.11의 근거가 사라지지만 mediapipe가 같은 
 
 **wheel 버전 핀은 [`../requirements-superdex.txt`](../requirements-superdex.txt)가 정본이다**
 (`requirements-mlagents.txt`와 같은 관례 — 버전 문자열을 `config/rtauto_config.py`에 중복
-타이핑하지 않는다). 2026-09-07 시점에는 **아직 핀이 없다** — 게이트 0 1단계에서 `pip freeze`로
-해석된 버전을 확인해 `==` 로 고정하는 것까지가 그 단계의 완료 조건이다(U3).
+타이핑하지 않는다). `superdex`·`superdex-lab`은 PyPI 확인 결과 **`==1.0.0`으로 이미
+고정**했고(U3 해소), `ray[rllib]`·`onnx`·`onnxruntime`만 게이트 0-4에서 `pip freeze`로
+확인해 채운다.
 
 손 asset 변형은 **새 키를 만들지 않고** 기존 `RTAUTO_DG5F_HAND`(`right`)와
 `RTAUTO_DG5F_SHORT`에서 파생시킨다 — 같은 사실을 두 곳에 타이핑하지 않는다(원칙 1).
@@ -478,31 +481,52 @@ python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 <https://pytorch.org/get-started/locally/>에서 현재 태그를 확인해
 `requirements-superdex.txt`의 주석을 정정한다.
 
-### 0-4. SuperDex 설치와 **버전 핀 고정** (U3 해소)
+### 0-4. SuperDex 설치
+
+> **소스 빌드는 하지 않는다.** README의 "Building from Source"(CMake 3.25+ / Ninja /
+> Clang 17+ / Windows는 MSVC Build Tools)는 **엔진을 직접 고칠 때만** 필요한 경로다.
+> PyPI에 pre-built wheel이 있고 Windows용 `superdex_physics-1.0.0-cp312-cp312-win_amd64.whl`이
+> 실제로 올라와 있다(2026-09-07 확인). 그냥 설치한다.
 
 **터미널 1 (PowerShell, 리포 루트, `(.venv)` 활성 상태)**
 
 ```powershell
 pip install -r requirements-superdex.txt
-pip freeze | Select-String -Pattern "superdex|^ray|^gymnasium|^onnx|^torch"
+python -c "import superdex.physics, superdex.robotics; print('import OK')"
+```
+
+`import OK`가 찍히면 설치 성공이다.
+
+남은 핀을 고정한다 — `superdex` 계열은 `==1.0.0`으로 이미 박혀 있고 `ray`/`onnx`/
+`onnxruntime`만 남았다:
+
+```powershell
+pip freeze | Select-String -Pattern "^ray|^onnx|^gymnasium|^torch"
 ```
 
 ```bash
-pip install -r requirements-superdex.txt
-pip freeze | grep -E "superdex|^ray|^gymnasium|^onnx|^torch"
+pip freeze | grep -E "^ray|^onnx|^gymnasium|^torch"
 ```
 
-> **이 단계의 완료 조건은 설치가 아니라 핀 고정이다.** 위에서 나온 버전으로
-> `requirements-superdex.txt`의 `superdex`, `superdex-lab`, `ray[rllib]`, `onnx`,
-> `onnxruntime` 줄을 `패키지==버전` 형태로 고쳐 넣고, 파일 상단의 ⚠️ 블록을 지운다.
-> 핀을 걸지 않으면 며칠 뒤 `pip install`이 다른 버전을 물어와 재현이 깨진다(§9 R3).
+> 나온 버전으로 `requirements-superdex.txt`의 해당 줄을 `패키지==버전`으로 고치고 파일
+> 맨 아래 ⚠️ 블록을 지운다. 핀을 걸지 않으면 며칠 뒤 `pip install`이 다른 버전을 물어와
+> 재현이 깨진다(§9 R3).
 
-설치된 콘솔 스크립트(Studio 실행 명령 등)의 실제 이름을 확인한다 — 문서에 추정한 이름을
-적지 않기 위한 단계다:
+Studio가 실행되는지 확인한다 (진입점 이름은 `superdex-studio`):
 
 ```powershell
-pip show -f superdex | Select-String -Pattern "Scripts|bin/|console"
+superdex-studio
 ```
+
+창이 뜨면 성공이다. 닫아서 종료한다. 창이 안 뜨고 명령을 못 찾으면 venv가 활성 상태인지
+확인한다(`superdex/.venv/Scripts/` 안에 실행파일이 들어간다).
+
+> **`uv`를 쓰고 싶다면** README가 권하는 경로는 `uv venv` + `uv pip install superdex`이고
+> 실행은 `uv run superdex-studio` / `uv run --no-project <스크립트>`다. 위 절차와 결과는
+> 같다 — `uv run --no-project X`는 "이 venv를 활성화하고 `python X`"와 동등하며,
+> `--no-project`는 클론 안에서 실행할 때 그 저장소의 `pyproject.toml`을 무시하게 하는
+> 옵션이다. 이 리포의 기존 venv들이 `python -m venv` + pip 관례를 쓰므로(원칙 2,
+> `PYTHON_ENV_SETUP.md`) 여기서도 그쪽으로 통일했다.
 
 ### 0-5. 저장소 클론과 asset 경로 설정
 
@@ -589,6 +613,11 @@ cd D:/src/project_superdex
 python superdex_robotics/examples/basic/example_bot_loading.py
 python superdex_robotics/examples/control/example_osc_jsc_control.py
 ```
+
+> README는 같은 것을 `uv run --no-project superdex_robotics/examples/control/example_osc_jsc_control.py`
+> 로 적는다. venv를 활성화한 상태에서는 위처럼 `python <스크립트>`가 동등하다.
+> 접촉이 많은 씬을 물리 검증용으로 돌릴 때 fp64가 필요하면 이 터미널에
+> `$env:SUPERDEX_PRECISION = "double"`을 내보낸 뒤 실행한다(기본은 fp32).
 
 `example_osc_jsc_control.py`는 FR3를 OSC로, DG5F를 JSC(target joint position → torque)로
 제어하며 200 Hz로 스텝한다. `argparse`가 없어 인자를 받지 않는다. 종료는 `Ctrl+C`.
