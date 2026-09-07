@@ -1,11 +1,19 @@
 # 문서 인덱스
 
+## 코드가 무슨 일을 하는지 (모듈 지도)
+
+- **[`MODULE_GUIDE.md`](MODULE_GUIDE.md)** — 전체 데이터 흐름 + 영역별 문서 입구.
+  "이 스크립트 왜 있지?" 싶을 때 여기부터.
+  - [Unity](modules/UNITY.md) · [강화학습](modules/RL_TRAINING.md) ·
+    [비전/텔레옵](modules/VISION_TELEOP.md) · [실물 브리지](modules/REAL_BRIDGES.md) ·
+    [설정·빌드 도구](modules/BUILD_TOOLING.md)
+
 ## DG5FGraspLift 강화학습 (현재 활성 정책)
 
 - **기준 문서**: [`DG5F_GRASP_LIFT.md`](DG5F_GRASP_LIFT.md) — Agent 계약·보상·실행법
 - **실물 이관 계획**: [`SIM2REAL_ROADMAP.md`](SIM2REAL_ROADMAP.md) — 단계별 순서와 리스크
-- 발표자료: [`GRASP_LIFT_발표자료.md`](GRASP_LIFT_발표자료.md)
-- 설명: [`GRASP_LIFT_설명.md`](GRASP_LIFT_설명.md)
+- 발표자료: [`GRASP_LIFT_발표자료.md`](docs2/GRASP_LIFT_발표자료.md)
+- 설명: [`GRASP_LIFT_설명.md`](docs2/GRASP_LIFT_설명.md)
 
 제품 파이프라인은 `목표 좌표 -> RL 파지+들어올리기(GraspLift) -> MediaPipe 손 파지`다.
 
@@ -33,9 +41,9 @@ GraspLift로 완전히 대체되어 Unity 씬·코드가 삭제됐다. 계약 �
 
 ## 이력과 진단
 
-- [`WORKLOG.md`](WORKLOG.md): 프로젝트의 누적 작업 기록과 의사결정
-- [`DEBUG_OSCILLATION_20260707.md`](DEBUG_OSCILLATION_20260707.md): 초기 진동 원인 분석
-- [`DEBUG_OSCILLATION_20260708.md`](DEBUG_OSCILLATION_20260708.md): 관성 수정과 최종 검증
+- [`WORKLOG.md`](archives/WORKLOG.md): 프로젝트의 누적 작업 기록과 의사결정
+- [`DEBUG_OSCILLATION_20260707.md`](archives/DEBUG_OSCILLATION_20260707.md): 초기 진동 원인 분석
+- [`DEBUG_OSCILLATION_20260708.md`](archives/DEBUG_OSCILLATION_20260708.md): 관성 수정과 최종 검증
 
 WORKLOG의 예전 단계형 파지 기록은 당시 이력이며 현재 실행 지침이 아니다. 활성 정책
 계약은 항상 `AGENT_SPEC.md`를 우선한다.

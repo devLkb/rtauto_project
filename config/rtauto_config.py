@@ -97,7 +97,9 @@ def resolve_gripper_ip(value):
 # 둘 다 5007을 써서 같은 PC에서 동시 실행 시 UDP 바인드 충돌이 나는 문제가 있었다 — 2026-08-25 수정).
 PORT_SVH_JOINTS = int(_env("RTAUTO_PORT_SVH_JOINTS", "5005"))    # 레거시 SVH 손 관절 트윈
 PORT_DG5F_SIM = int(_env("RTAUTO_PORT_DG5F_SIM", "5006"))        # → Unity Dg5fReceiver (DG5F 손 관절 트윈)
-PORT_ZED_TARGET = int(_env("RTAUTO_PORT_ZED_TARGET", "5007"))    # → Unity CameraTargetReceiver (ZED 객체 좌표)
+PORT_ZED_TARGET = int(_env("RTAUTO_PORT_ZED_TARGET", "5007"))    # ⛔ 폐기 — ZED 객체 검출 경로 전용.
+# vision/zed_object_detection/은 더 이상 쓰지 않는다(수신 측 Unity CameraTargetReceiver.cs도 이미 삭제됨).
+# 과거 포트 충돌 이력이 있으니 이 번호를 다른 용도로 재사용하지 말 것. 상세: vision/zed_object_detection/DEPRECATED.md
 PORT_DG5F_BRIDGE = int(_env("RTAUTO_PORT_DG5F_BRIDGE", "5008"))  # vision_node --bridge → dg5f_sdk_bridge.py (실물 SDK)
 PORT_UR_ARM_BRIDGE = int(_env("RTAUTO_PORT_UR_ARM_BRIDGE", "5009"))  # Unity UrArmSender → arm/ur_rtde_bridge.py
 PORT_UR_ARM_SIM = int(_env("RTAUTO_PORT_UR_ARM_SIM", "5010"))    # arm/ur_rtde_bridge.py --echo-to-unity → Unity UrArmReceiver (팔 관절 트윈)
