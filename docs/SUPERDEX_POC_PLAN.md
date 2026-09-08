@@ -154,7 +154,7 @@ FR3는 OSC, DG5F는 **JSC**(joint space PD, target joint position → torque)로
 
 | # | 항목 | 왜 문제인가 | 확정 시점 |
 |---|---|---|---|
-| U1 | **DG-5F-M이 long wrist인가 short wrist인가** | SuperDex는 둘 다 제공한다. `config/rtauto_config.py`의 `DG5F_SHORT` 주석도 `"M"이 short면 1`로 미확정 상태다. 잘못 고르면 손목 길이만큼 전 학습이 틀어진다 | 게이트 0. Tesollo 도면/실물 실측 대조 |
+| U1 | ~~DG-5F-M이 long wrist인가 short wrist인가~~ | **해소 (2026-09-07)** — **long wrist / 오른손**으로 확인. 기존 `.env`(`RTAUTO_DG5F_HAND=right`, `RTAUTO_DG5F_SHORT=0`)와 일치하므로 **설정 변경 없음** — 기존 파이프라인에 영향 0(§12 우려 해소) | 완료 |
 | U2 | ~~손 단독 asset의 실제 경로~~ | **해소 (2026-09-07)** — 공식 조합 asset이 손을 `//hands/dg5f_short/right/dg5f_short_right.superdex_bot`으로 참조하는 것을 확인. `superdex_hand_asset()`의 형식이 맞다 | 완료 |
 | U7 | **우리가 만든 asset을 어디에 두는가** | UR16e 팔 asset과 결합 asset은 우리가 만들지만, 공식 asset은 외부 클론 안에 있다. `//` 참조는 `assets/bots/`의 `.superdex_root` 기준이라 **한 asset 루트 안에 우리 것과 공식 것이 함께 있어야** 참조가 성립한다. 그런데 **Tesollo asset은 재배포 제한이 있어 우리 저장소에 커밋할 수 없다**(U4) | 게이트 3 착수 전. §5 게이트 3 참고 |
 | U3 | ~~PyPI 배포 버전 문자열~~ | **해소 (2026-09-07)** — PyPI 확인: `superdex` `superdex-lab` `superdex-physics` 모두 **1.0.0**, `requires_python >=3.12,<3.13`. `superdex-physics`에 `cp312-cp312-win_amd64.whl`이 있어 **Windows 소스 빌드 불필요**. `requirements-superdex.txt`에 `==1.0.0` 핀 반영 | 완료. `ray`/`onnx` 핀만 게이트 0-4에 남음 |
@@ -492,6 +492,59 @@ SuperDex는 **ONNX 뒤에 있는 교체 가능한 학습기**이고, 진짜 지�
 | 날짜 | 게이트 | 결과 |
 |---|---|---|
 | 2026-09-07 | — | 브랜치 `SuperDexTest` 개설, 본 문서·설정 키·`requirements-superdex.txt` 신설 |
+| 2026-09-07 | 0-1~0-5 | **통과.** Python 3.12.0 + `superdex 1.0.0` 전체 + `torch 2.6.0+cu124`. `torch.cuda.is_available()=True`, GPU = RTX 2080. `stable`(=`v1.0.0`, `1d71509`) 클론을 `D:/workspace/project_superdex`에 두고 `.env`에 `RTAUTO_SUPERDEX_REPO` 등록 |
+| 2026-09-07 | 0-6 | **통과. U1·U2 확정** — `dg5f_long_right.superdex_bot`(32.7 KB) + `collision/` + `render/` 디스크 확인 |
+| 2026-09-07 | 0-8(일부) | **하한 throughput 실측**: 단일 env·단일 스레드·컨트롤러/접촉물체 없음에서 **645~659 steps/s**, realtime **3.2x**. 8 runner 집계 추정 **≈5.2k steps/s** — §6 회귀 기준 3(2k steps/s)의 2.6배 |
+
+### 게이트 0 실측 — DG5F long/right 구조 (`superdex/scripts/gate0_hand_probe.py`)
+
+- **링크 28개 / 관절 28개, 그중 REVOLUTE 20개 = 손 20 DOF.**
+  `RL_POLICY_REDESIGN.md`의 행동 v3(팔6 + **손20**)와 **정확히 일치**한다 — 관찰·행동 계약을
+  그대로 재사용할 수 있다는 뜻이다.
+- 손가락별 DOF: `finger 1(엄지) = 0~3`, `2 = 4~7`, `3 = 8~11`, `4 = 12~15`, `5 = 16~19`.
+  링크는 `dg5f_link_<f>_<n>` + `dg5f_link_<f>_tip`, 그 외 `mount`/`base`/`palm`.
+- 질량 합 ≈ 1.6 kg (palm 0.35, base 0.45, mount 0.05, 지골 0.025~0.055, tip 0.005).
+- 관절 한계(rad, 실측): 엄지 `1_1` −22…51°, `1_2`(z축) −180…0°, `1_3`·`1_4` 0…90°.
+  검지~약지 `_2`는 0…109~115°, `_3`·`_4`는 0…90°. `5_1`(z) −1…60°.
+- ⚠️ **`min_limit`/`max_limit`/`effort_limit`은 스칼라가 아니라 축별 `Real3`다.** 관절이 도는
+  축 성분만 뽑아야 한다 — 스칼라로 다루면 `float()`에서 죽는다.
+- ⚠️ **`effort_limit` = −1.0 (무제한 sentinel).** 토크 상한이 관절에 없으므로 포화는
+  컨트롤러 쪽(`ControllerBasicJscPdParams.saturation`)에서 걸어야 한다.
+- ⚠️ **`world_joint`의 타입이 `FREE`다 → root 6 DOF, actor 총 26 DOF.** 손이 기본적으로
+  **자유부양**이다. PoC의 "손목 고정"은 공짜가 아니라 root를 용접하거나 잡아 줘야 한다.
+
+### ⚠️ 파지 대상 물체는 primitive로 만들 수 없다 (실측)
+
+동적 rigid actor에 primitive를 쓰려다 두 번 막혔다:
+
+| 시도 | 결과 |
+|---|---|
+| `ModelData.box` → `create_model_shape` | shape는 생성되나 actor 생성 시 `Not a supported ImplicitRigidShape type` |
+| `create_sphere_shape` → 동적 actor | `Unable to create dynamic rigid actor. The shape must have a surface mesh.` |
+
+즉 **동적 물체는 surface mesh가 있어야 한다** — SDF/메시 우선 엔진의 설계가 API에 그대로
+드러난 것이다(Unity PhysX의 convex-only 제약과 대칭되는, 반대 방향의 제약).
+`create_plane_shape`는 **static** 바닥판으로는 문제없이 쓰인다.
+
+**해결: 동봉 task prefab을 쓴다.** `assets/prefabs/`(자체 `.superdex_root` 보유)에 이미 있다:
+
+- `box_and_blocks/` — **Box and Blocks Test** 표준 벤치마크. `block_red/green/blue/yellow.mochi_prefab`
+  (collision/render/cad 포함) ← **게이트 2의 큐브로 이걸 쓴다**
+- `nine_hole_peg_test/`, `functional_dexterity_test/`, `shape_box/`, `paper_cups/`,
+  `sphere/`, `chain/`, `duck_lamp/`
+- 별도로 `assets/cube/cube_fine_mesh.mochi.h5`
+
+로드는 `physics.prefab.add_to_scene(prefab_path=..., root_path=<assets root>, scene=...,
+params=physics.prefab.PrefabParams(name=..., rotation=..., translation=...))` → `.actors`.
+(`superdex_robotics/examples/basic/example_scene_loading.py` 실측)
+
+### 동봉 예제는 GUI 디버거를 기다린다
+
+`example_bot_loading.py` / `example_osc_jsc_control.py` / `example_scene_loading.py`는 모두
+`if physics.debugger.attach(): while physics.debugger.is_attached(): scene.step(...)` 구조다.
+**디버거 앱이 붙기 전까지 블로킹**하고 스스로 끝나지 않는다(180초 넘겨 확인). 측정·자동화
+스크립트는 `attach()`를 호출하지 말고 그냥 `scene.step()` 루프를 돌린다 — `gate0_hand_probe.py`가
+그렇게 되어 있다.
 
 <!-- 게이트를 진행할 때마다 위 표에 한 줄씩 추가한다. 판정 근거(측정한 steps/sec,
      성공률, 실패 로그)를 함께 적는다 — 회귀 기준(§6) 판단의 근거가 된다. -->
