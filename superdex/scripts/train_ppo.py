@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """SuperDex Gym 환경을 RLlib PPO로 학습한다 (우리 저장소의 학습 진입점).
 
 **왜 동봉 `train_samples.py`를 쓰지 않는가.**
@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -33,6 +34,20 @@ _assets = cfg.superdex_assets_path()
 if _assets is None:
     sys.exit("RTAUTO_SUPERDEX_REPO가 .env에 없다 — docs/SUPERDEX_POC_PLAN.md §11 0-5 참고.")
 os.environ.setdefault("SUPERDEX_ASSETS_PATH", str(_assets))
+
+
+# 우리 저장소가 소유한 환경. SuperDex Lab의 discover 대상이 아니므로 여기서 직접 등록한다.
+OWN_ENVS = {"dg5f_grasp": "dg5f_grasp_env:Dg5fGraspEnv"}
+
+
+def make_own_env(spec, env_config):
+    """superdex/envs/ 아래의 우리 환경을 env runner 프로세스에서 만든다."""
+    import importlib
+
+    sys.path.insert(0, str(REPO_ROOT / "superdex" / "envs"))
+    mod_name, cls_name = spec.split(":")
+    cls = getattr(importlib.import_module(mod_name), cls_name)
+    return cls(env_config)
 
 
 def make_superdex_env(env_id):
@@ -69,6 +84,8 @@ def main() -> None:
                          "torch.distributed libuv 문제를 만날 수 있다")
     ap.add_argument("--gpus-per-learner", type=int, default=None,
                     help="기본값은 config의 SUPERDEX_GPUS_PER_LEARNER")
+    ap.add_argument("--env-config", default=None,
+                    help='환경 설정 JSON, 예: {\"place_jitter\": 0.02}')
     ap.add_argument("--run-name", default=None, help="산출물 폴더 이름")
     args = ap.parse_args()
 
@@ -82,8 +99,17 @@ def main() -> None:
     from ray.rllib.algorithms.ppo import PPOConfig
     from ray.tune.registry import register_env
 
-    env_id = resolve_env_id(args.env)
-    print(f"env       : {args.env} -> {env_id}")
+    env_config = json.loads(args.env_config) if args.env_config else {}
+    if args.env in OWN_ENVS:
+        spec = OWN_ENVS[args.env]
+        print(f"env       : {args.env} -> superdex/envs/{spec}  (우리 소유)")
+        creator = lambda _cfg: make_own_env(spec, env_config)  # noqa: E731
+    else:
+        env_id = resolve_env_id(args.env)
+        print(f"env       : {args.env} -> {env_id}")
+        creator = lambda _cfg: make_superdex_env(env_id)  # noqa: E731
+    if env_config:
+        print(f"env_config: {env_config}")
     print(f"runners   : {runners}   learners: {args.num_learners}   gpu/learner: {gpus}")
 
     # 워커 프로세스에도 asset 경로를 넘긴다 — 안 넘기면 워커가 asset을 못 찾는다.
@@ -91,7 +117,7 @@ def main() -> None:
         ignore_reinit_error=True,
         runtime_env={"env_vars": {"SUPERDEX_ASSETS_PATH": str(_assets)}},
     )
-    register_env("superdex_env", lambda _cfg: make_superdex_env(env_id))
+    register_env("superdex_env", creator)
 
     config = (
         PPOConfig()
