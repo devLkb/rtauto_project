@@ -329,6 +329,13 @@ class Dg5fGraspEnv(gym.Env):
         # --- 보상: 접촉 확보 -> 조임 -> 유지 의 3단 구조.
         # 게이트 0에서 파지 성공 영역이 좁다는 것을 확인했으므로(스윕 5종 중 2종만 성공)
         # 단계를 분리해 탐색이 접촉부터 배우게 한다.
+        # ⚠️ r_reach 가 없으면 학습이 전혀 되지 않는다 (480k 스텝 실측).
+        # 초기 정책은 지문 접촉을 **한 번도** 만들지 못해(평균 지문 접촉 0.00)
+        # r_touch/r_contact/r_hold 가 학습 내내 항상 0이었고, 남은 항 r_near 는 grace 구간에서
+        # 액션과 무관하게 결정된다 -> **액션이 보상에 영향을 주지 못해 gradient가 없다.**
+        # r_reach 는 어떤 자세에서도 액션에 반응하는 밀집 신호를 주어
+        # "다가가기 -> 접촉 -> 유지"의 계단을 만든다.
+        r_reach = float(np.exp(-10.0 * float(np.mean(tip_dist))))
         r_near = float(np.exp(-8.0 * dist))                     # 파지중심 근접 유지
         r_touch = n_tips / 5.0                                  # 다지 접촉 비율 (0~1)
         r_contact = float(np.tanh(ncon / 200.0))                # 접촉 규모
@@ -351,7 +358,8 @@ class Dg5fGraspEnv(gym.Env):
         overforce = float(np.sum(np.maximum(0.0, tip_force - self.tip_force_limit)))
         r_force = -float(np.tanh(overforce / self.force_penalty_scale))
 
-        reward = (1.0 * r_near + 1.0 * r_touch + 0.5 * r_contact + 2.0 * r_hold
+        reward = (1.0 * r_reach + 1.0 * r_near + 1.0 * r_touch
+                  + 0.5 * r_contact + 2.0 * r_hold
                   - self.action_rate_penalty * rate
                   + self.force_penalty * r_force)
 
