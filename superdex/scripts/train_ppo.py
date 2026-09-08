@@ -104,6 +104,10 @@ def main() -> None:
                          "torch.distributed libuv 문제를 만날 수 있다")
     ap.add_argument("--gpus-per-learner", type=int, default=None,
                     help="기본값은 config의 SUPERDEX_GPUS_PER_LEARNER")
+    ap.add_argument("--num-envs-per-runner", type=int, default=1,
+                    help="러너(또는 로컬 프로세스) 하나가 벡터화해 돌리는 env 수. "
+                         "Ray 워커가 불안정하므로 --num-env-runners 0 과 함께 써서 "
+                         "한 프로세스 안에서 병렬성을 얻는 경로다")
     ap.add_argument("--env-config", default=None,
                     help='환경 설정 JSON, 예: {\"place_jitter\": 0.02}')
     ap.add_argument("--run-name", default=None, help="산출물 폴더 이름")
@@ -137,6 +141,7 @@ def main() -> None:
         creator = lambda _cfg: make_superdex_env(env_id)  # noqa: E731
     if env_config:
         print(f"env_config: {env_config}")
+    print(f"envs/runner: {args.num_envs_per_runner}")
     print(f"runners   : {runners}   learners: {args.num_learners}   gpu/learner: {gpus}")
 
     # runtime_env는 쓰지 않는다 — asset 경로는 각 env 생성자가 직접 넣는다(위 주석 참고).
@@ -146,7 +151,7 @@ def main() -> None:
     config = (
         PPOConfig()
         .environment(env="superdex_env")
-        .env_runners(num_env_runners=runners)
+        .env_runners(num_env_runners=runners, num_envs_per_env_runner=args.num_envs_per_runner)
         .learners(num_learners=args.num_learners, num_gpus_per_learner=gpus)
         .training(
             # 게이트 1은 ONNX 계약 검증이 목적이라 하이퍼파라미터를 튜닝하지 않는다.

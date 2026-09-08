@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """DG5FGraspEnv — 손목 고정 DG5F 다지 파지 강화학습 환경 (게이트 2).
 
 docs/SUPERDEX_POC_PLAN.md §5 게이트 2. 게이트 0에서 **실측한 값들이 그대로 들어간다**:
@@ -99,6 +99,9 @@ class Dg5fGraspEnv(gym.Env):
         self.tip_force_threshold = float(c.get("tip_force_threshold", 0.05))
         self.min_tips = int(c.get("min_tips", 3))
         self.action_rate_penalty = float(c.get("action_rate_penalty", 0.01))
+        # 목표 평활화 계수. 낮을수록 스텝별 지터가 억제되고 실효 목표가 정책 평균에 수렴한다.
+        # step() 의 실측 근거 주석 참고.
+        self.action_smooth = float(c.get("action_smooth", 0.1))
 
         # ⚠️ 강성 기본값을 1e3에서 3.0으로 내렸다. 1e3에서는 완전 폐쇄 시 지문 접촉력이
         # **4,000~6,000 N**까지 올라간다 — 15.6 g 블록에 대해 물리적으로 불가능한 값이고,
@@ -114,7 +117,9 @@ class Dg5fGraspEnv(gym.Env):
         self.force_penalty = float(c.get("force_penalty", 1.0))
         self.force_penalty_scale = float(c.get("force_penalty_scale", 50.0))
 
-        _ensure_physics(int(c.get("physics_threads", 0)))
+        # SuperDex 내부 스레딩. 실측: 0(단일) 311 steps/s vs -1(자동) 468 steps/s = 1.5배.
+        # 기본값을 -1로 둔다 — 공짜로 얻는 속도다.
+        _ensure_physics(int(c.get("physics_threads", -1)))
         self._build_scene()
 
         n_obs = 20 + 20 + 3 + 4 + 3 + 3 + 5 + 5 + 1 + 1
@@ -279,8 +284,29 @@ class Dg5fGraspEnv(gym.Env):
             except Exception:
                 tip_force[k] = 0.0
 
+        # ⚠️ 관찰 정규화는 **환경 안에서 고정 상수로** 한다. 근거 두 가지:
+        #
+        # (1) 안 하면 학습이 되지 않는다. 실측 스케일(무작위 롤아웃 660 샘플):
+        #       q          |mean| 0.60  max   1.4
+        #       qd         |mean| 6.14  max  40.8   <- 100배
+        #       blk상대위치 |mean| 0.04  max   0.10
+        #       blk각속도   |mean| 5.47  max  34.9   <- 100배
+        #       지문거리    |mean| 0.11  max   0.30
+        #     RLlib 새 API 스택은 관찰 정규화를 기본으로 하지 않는다(게이트 1에서 커넥터
+        #     구성을 실측해 확인: env_to_module에 필터가 없다). 정규화 없는 MLP는 속도
+        #     채널에 지배되고 정작 과제에 중요한 위치·거리 채널에 눈이 먼다.
+        # (2) running filter(MeanStdFilter)를 쓰면 통계가 커넥터에 살아 ONNX 밖으로 새어나간다.
+        #     게이트 1에서 정한 원칙 — 변환은 전부 그래프 안에 상수로 박는다 — 을 지키려면
+        #     스케일이 **고정 상수**여야 한다.
         obs = np.concatenate([
-            q, qd, bt - center, bq, bv, bw, tip_force, tip_dist,
+            q,                                  # 이미 O(1) (rad)
+            qd / 20.0,                           # ±41 -> ±2
+            (bt - center) * 10.0,                # ±0.1 -> ±1
+            bq,                                  # 쿼터니언, 이미 O(1)
+            bv / 2.0,                            # ±2 -> ±1
+            bw / 20.0,                           # ±35 -> ±1.75
+            tip_force / max(self.tip_force_limit, 1e-6),   # N -> 한계 대비 비율
+            tip_dist * 10.0,                     # 0.04~0.30 -> 0.4~3.0
             [self._steps / max(1, self.max_steps)],
             [1.0 if self._steps >= self.grace_steps else 0.0],
         ])
@@ -293,6 +319,7 @@ class Dg5fGraspEnv(gym.Env):
         self.scene.set_gravity([0, 0, 0])
         self._steps = 0
         self._prev_action = None
+        self._target = None
 
         start = self._pose_at(self.start_frac)
         arr = physics.DynamicArrayReal(start.tolist())
@@ -312,7 +339,23 @@ class Dg5fGraspEnv(gym.Env):
 
     def step(self, action):
         a = np.clip(np.asarray(action, dtype=np.float64), self.joint_low, self.joint_high)
-        self.actor.set_articulated_target_pose(physics.DynamicArrayReal(a.tolist()))
+
+        # ⚠️ 목표 평활화(EMA)가 없으면 학습이 되지 않는다 — 실측 근거:
+        # 평균을 '완전 폐쇄'로 고정하고 정규화 공간에서 지터만 줬을 때 리턴이
+        #   std 0.0 -> 432.1,  0.1 -> 369.8,  0.3 -> 260.3,  0.5 -> 136.7,  1.0 -> 111.2
+        # 로 무너진다. RLlib PPO의 초기 log_std=0은 정규화 공간 std=1.0, 즉 최악 지점이다.
+        # 완벽한 정책 평균조차 111밖에 못 받고 좋은/나쁜 평균의 차이가 9.6배에서 2.4배로
+        # 압축돼 gradient가 소멸한다(v1·v2 모두 평평하게 끝난 원인).
+        #
+        # 부드러운 자세 컨트롤러(stiffness 3.0)는 **응답**을 저역통과하지만 지령 목표 자체의
+        # 지터는 남는다. 목표를 EMA로 평활화하면 실효 목표가 정책 평균에 수렴해
+        # 평균의 효과가 복원된다.
+        self._target = a if self._target is None else (
+            (1.0 - self.action_smooth) * self._target + self.action_smooth * a
+        )
+        self.actor.set_articulated_target_pose(
+            physics.DynamicArrayReal(self._target.tolist())
+        )
 
         if self._steps == self.grace_steps:
             self.scene.set_gravity([0, 0, -9.81])
