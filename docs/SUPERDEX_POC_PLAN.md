@@ -496,6 +496,7 @@ SuperDex는 **ONNX 뒤에 있는 교체 가능한 학습기**이고, 진짜 지�
 | 2026-09-07 | 0-6 | **통과. U1·U2 확정** — `dg5f_long_right.superdex_bot`(32.7 KB) + `collision/` + `render/` 디스크 확인 |
 | 2026-09-07 | 0-8(일부) | **하한 throughput 실측**: 단일 env·단일 스레드·컨트롤러/접촉물체 없음에서 **645~659 steps/s**, realtime **3.2x**. 8 runner 집계 추정 **≈5.2k steps/s** — §6 회귀 기준 3(2k steps/s)의 2.6배 |
 | 2026-09-07 | **0-8** | **✅ 게이트 0 통과 — 스크립트 파지 성공.** `superdex/scripts/gate0_grasp_test.py --place 0.03,0.0,0.04`. 접촉점 **594~604점 유지**, 양방향 1g(±Z) 2초에서 블록 드리프트 **1.3 mm**(0.0243 → 0.0256 m), 블록 속도 **0.001~0.002 m/s**(흔들림·관통 없음). 접촉 포함 throughput **534 steps/s**, realtime 2.67x, 8 runner 집계 **≈4.3k steps/s** — 회귀 기준의 2.1배. **U6 해소** |
+| 2026-09-08 | 1 | **✅ 게이트 1 통과 — ONNX 3자 파리티.** 래퍼 vs RLlib 커넥터 경로 **0.000e+00**, onnxruntime 1.431e-06, **Unity Inference Engine 9.537e-07** (허용 1e-5). 산출물 `superdex/policies/cart_pole_ppo.onnx`. 도중 블로커 3개 발견·처리(wheel의 json 누락 / Ray 2.58 `checkpoint_frequency` / Windows libuv) → 학습 진입점을 `superdex/scripts/train_ppo.py`로 자체 소유 |
 
 ### 게이트 0 실측 — DG5F long/right 구조 (`superdex/scripts/gate0_hand_probe.py`)
 
@@ -538,6 +539,114 @@ SuperDex는 **ONNX 뒤에 있는 교체 가능한 학습기**이고, 진짜 지�
 로드는 `physics.prefab.add_to_scene(prefab_path=..., root_path=<assets root>, scene=...,
 params=physics.prefab.PrefabParams(name=..., rotation=..., translation=...))` → `.actors`.
 (`superdex_robotics/examples/basic/example_scene_loading.py` 실측)
+
+### 게이트 1 결과 — ONNX 3자 파리티 통과
+
+**판정: 통과.** 같은 32개 관찰 벡터에 대해 세 런타임의 액션이 일치한다.
+
+| # | 비교 | 최대 오차 | 허용 |
+|---|---|---|---|
+| 1 | 래퍼 `nn.Module` vs **RLlib 실제 커넥터 경로** | **0.000e+00** | 1e-5 |
+| 2 | `onnxruntime` vs RLlib 경로 | 1.431e-06 | 1e-5 |
+| 3 | **Unity Inference Engine (C#)** vs Python 기준값 | **9.537e-07** | 1e-5 |
+
+3번 실측 예: `unity 2.833229 vs python 2.833228`. 즉 **다이어그램에서 유일하게 "될지
+모르는" 구간이 닫혔다** — SuperDex에서 학습한 정책이 Unity와 ROS2 양쪽에서 같은 값을 낸다.
+
+산출물: `superdex/policies/cart_pole_ppo.onnx`(268 KB) + `.parity.json`(fixture),
+`unity/Assets/Editor/PolicyParityCheck.cs`, `unity/Assets/Policies/`(ONNX 임포트 자산).
+
+#### ⚠️ 커넥터가 액션을 되돌린다 — 실측으로 확인된 함정
+
+체크포인트의 커넥터 구성을 실측한 결과:
+
+```
+env_to_module : AddObservationsFromEpisodesToBatch, AddTimeDimToBatchAndZeroPad,
+                AddStatesFromEpisodesToBatch, BatchIndividualItems, NumpyToTensor
+                -> 관찰 정규화 없음 (state.pkl 5바이트 = 빈 상태)
+module_to_env : GetActions, TensorToNumpy, UnBatchToIndividualItems,
+                RemoveSingleTsTimeRankFromBatch,
+                NormalizeAndClipActions {normalize_actions: True, clip_actions: False},
+                ListifyDataForVectorEnv
+```
+
+**`NormalizeAndClipActions`가 기본으로 켜져 있다.** 신경망은 **[-1,1] 정규화 공간**의
+액션을 내고 커넥터가 실제 공간으로 되돌린다(`ray.rllib.utils.spaces.space_utils.unsquash_action`):
+
+```
+a = low + (a_norm + 1.0) * (high - low) / 2.0 ;  a = clip(a, low, high)
+```
+
+RLModule만 ONNX로 내보내면 이 되돌림이 빠져 **조용히 잘못된 정책**이 배포된다 —
+cart_pole(`Box(-3,3)`)이면 3배 작은 액션, DG5F 관절 지령이면 단위가 아예 틀린다.
+`superdex/scripts/export_onnx.py`는 이 변환을 **래퍼 `nn.Module`의 버퍼 상수로 그래프 안에
+박아** 내보내고, 그래서 위 1번 비교가 오차 0이다. 계획 §5 게이트 1에서 예측한 함정이
+실제로 존재함을 확인했다.
+
+관찰 정규화는 cart_pole에서 비활성이었다. **DG5FGraspEnv에서 `MeanStdFilter` 등을 켜면
+그 통계도 같은 방식으로 그래프에 박아야 한다** — JSON으로 빼서 Unity C#·ROS2 Python에
+각각 구현하면 구현이 셋으로 갈라진다.
+
+#### Unity 다리 실행 방법
+
+- 패키지: **`com.unity.ai.inference` 2.5.0** (구 Sentis), 네임스페이스 `Unity.InferenceEngine`.
+  ML-Agents 4.0.0이 `com.unity.ai.inference` 2.2.1을 의존해 이미 들어와 있다.
+- **ML-Agents를 거치지 않는다.** `ModelLoader.Load(ModelAsset)` → `new Worker(model,
+  BackendType.CPU)` → `SetInput("obs", tensor)` → `Schedule()` → `PeekOutput("action")`
+  → `ReadbackAndClone().DownloadToArray()`.
+- ⚠️ **런타임 ONNX 로드는 지원되지 않는다.** ONNX는 임포트 시점에 `ModelAsset`으로 변환되므로
+  `Assets/` 안에 있어야 한다. 그래서 `superdex/policies/*.onnx`를 `unity/Assets/Policies/`로
+  복사한다. fixture(JSON)는 저장소 원본을 `RtautoConfig.GetRepoPath()`로 직접 읽어
+  중복을 만들지 않는다(원칙 1).
+- 배치모드 실행 (첫 실행은 임포트로 수 분 걸린다):
+
+```powershell
+& "C:\Program Files\Unity\Hub\Editor\6000.4.0f1\Editor\Unity.exe" -batchmode -nographics `
+    -projectPath unity `
+    -executeMethod RtAuto.EditorTools.PolicyParityCheck.RunFromCommandLine `
+    -logFile parity.log
+```
+
+종료 코드 0 = 통과 / 2 = 오차 초과 / 3 = 자산·fixture 문제. 에디터에서는 상단 메뉴
+`RtAuto > Policy Parity Check`.
+
+#### 게이트 1 재현
+
+산출물(체크포인트·ONNX·fixture)은 **재생성 가능하므로 git에 넣지 않는다**(`.gitignore`).
+새 PC에서 아래 4단계로 그대로 재현된다 — 1~3은 각각 1분 내, 4는 첫 임포트만 수 분이다.
+
+**터미널 1 (PowerShell, 리포 루트, `superdex/.venv` 활성)**
+
+```powershell
+python superdex/scripts/sync_lab_configs.py
+python superdex/scripts/train_ppo.py --env cart_pole --iters 4
+python superdex/scripts/export_onnx.py --checkpoint superdex/results/cart_pole_ppo
+Copy-Item superdex/policies/cart_pole_ppo.onnx unity/Assets/Policies/ -Force
+```
+
+`export_onnx.py`가 1·2번 비교를 스스로 판정하고(불일치면 종료 코드 2) fixture를 낸다.
+그 다음 위 배치모드 명령으로 3번(Unity) 비교를 돌린다.
+
+### ⚠️ 게이트 1 블로커 3개 — 동봉 샘플 앱을 쓰지 않기로 결정한 이유
+
+`superdex_lab/apps/rllib/train_samples.py`(외부 클론의 **샘플 앱**)로 학습을 돌리려다
+연달아 3개를 만났다:
+
+| # | 증상 | 원인 | 처리 |
+|---|---|---|---|
+| 1 | `No samples to train, exitting...` | **`superdex-lab==1.0.0` wheel에 `.json`이 0개.** 학습 레시피(`*.train.json`)와 config variant가 클론에만 있다. `load_env_config()`가 `inspect.getfile(env_cls)` 옆을 보므로 설치본에서는 못 찾는다 → **공식 RL 워크플로가 wheel만으로는 돌지 않는다** | `superdex/scripts/sync_lab_configs.py`로 클론 → 설치본 복사(11개). 상위 버전에서 고쳐지면 no-op |
+| 2 | `DeprecationWarning: checkpoint_frequency is deprecated` (예외로 던져짐) | **Ray 2.58.0 비호환.** `CheckpointConfig(checkpoint_frequency=...)`가 `ray.train.v2`에서 거부된다. SuperDex 1.0.0은 구버전 Ray 기준으로 작성됨 | 자체 학습기로 회피 (아래) |
+| 3 | `use_libuv was requested but PyTorch was build without libuv support` | **Windows torch.distributed.** `num_learners>=1`이 분산 learner를 띄운다 | 자체 학습기 기본값 `num_learners=0` |
+
+**결론: 학습 진입점을 우리가 소유한다.** `superdex/scripts/train_ppo.py`를 만들어
+PPO를 직접 구성했다. 게이트 2에서 DG5FGraspEnv용 학습기를 어차피 우리가 써야 하므로,
+외부 샘플 앱에 환경변수(`RAY_TRAIN_V2_ENABLED=0`, `USE_LIBUV=0`)로 맞추는 대신 정공법을
+택했다 — 레시피 discover를 쓰지 않고, 폐기된 인자를 쓰지 않고, 분산 learner를 쓰지 않으니
+**블로커 1~3이 모두 사라진다.**
+
+> `ray[rllib]`·`onnx`·`onnxruntime` 핀이 아직 비어 있던 것이 블로커 2의 직접 원인이다
+> (R3 리스크가 실제로 발생). 실측 버전은 `ray 2.58.0`, `onnx 1.22.0`,
+> `onnxruntime 1.29.0`, `torch 2.6.0+cu124`.
 
 ### 게이트 0 파지 테스트 결과와 시나리오 설계 (`gate0_grasp_test.py`)
 

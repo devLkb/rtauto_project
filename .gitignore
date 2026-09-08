@@ -104,3 +104,11 @@ unity/MUJOCO_LOG.TXT
 # 저장소 루트 Logs/ — Unity 에디터 로그와 브리지 산출물(--track CSV 등)이 섞여 쌓이는 곳.
 # 실행할 때마다 달라지는 실측 기록이라 추적하지 않는다.
 /Logs/
+
+# SuperDex PoC 산출물 — 전부 재생성 가능하므로 추적하지 않는다.
+# 재현: superdex/scripts/train_ppo.py -> export_onnx.py -> (Unity 검증 시 Assets/Policies로 복사)
+# 절차는 docs/SUPERDEX_POC_PLAN.md "게이트 1 재현" 참고.
+superdex/results/
+superdex/policies/
+unity/Assets/Policies/
+unity/Assets/Policies.meta
