@@ -37,7 +37,16 @@ os.environ.setdefault("SUPERDEX_ASSETS_PATH", str(_assets))
 
 
 # 우리 저장소가 소유한 환경. SuperDex Lab의 discover 대상이 아니므로 여기서 직접 등록한다.
-OWN_ENVS = {"dg5f_grasp": "dg5f_grasp_env:Dg5fGraspEnv"}
+#
+# max_runners: 환경별 러너 수 상한. SuperDex 물리 씬 하나가 프로세스당 ~600 MB를 쓰므로
+# cfg.SUPERDEX_ENV_RUNNERS(= cpu_count-4 = 이 머신에서 8)를 그대로 쓰면 Ray 워커까지 합쳐
+# 32 GB RAM을 압박해 **이터레이션이 한 번도 끝나지 않는다**(실측: 러너 8개로 3분간 진척 0,
+# python 프로세스 52개 × ~600 MB, 로그에 access violation). 러너 4개로는 정상 동작한다.
+# 기본값으로 실행해도 멈추지 않아야 하므로(원칙 2) 여기서 캡을 둔다 — --num-env-runners로
+# 명시하면 이 캡을 넘길 수 있다.
+OWN_ENVS = {
+    "dg5f_grasp": {"spec": "dg5f_grasp_env:Dg5fGraspEnv", "max_runners": 4},
+}
 
 
 def make_own_env(spec, env_config):
@@ -101,7 +110,14 @@ def main() -> None:
 
     env_config = json.loads(args.env_config) if args.env_config else {}
     if args.env in OWN_ENVS:
-        spec = OWN_ENVS[args.env]
+        entry = OWN_ENVS[args.env]
+        spec = entry["spec"]
+        cap = entry.get("max_runners")
+        if cap is not None and args.num_env_runners is None and runners > cap:
+            print(f"[정보] {args.env} 는 러너 상한 {cap} 이다 (메모리 실측 근거는 "
+                  f"OWN_ENVS 주석). {runners} -> {cap} 으로 낮춘다. "
+                  f"--num-env-runners 로 덮어쓸 수 있다.")
+            runners = cap
         print(f"env       : {args.env} -> superdex/envs/{spec}  (우리 소유)")
         creator = lambda _cfg: make_own_env(spec, env_config)  # noqa: E731
     else:
