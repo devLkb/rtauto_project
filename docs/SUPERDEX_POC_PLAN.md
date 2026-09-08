@@ -1,4 +1,4 @@
-# SuperDex PoC 계획 — DG5F 다지 파지 RL 이관 평가
+﻿# SuperDex PoC 계획 — DG5F 다지 파지 RL 이관 평가
 
 작성 2026-09-07 (v1). 브랜치 `SuperDexTest`에서만 진행한다.
 상위 정본은 [`SIM2REAL_ROADMAP.md`](SIM2REAL_ROADMAP.md) — 이 문서와 상충하면 로드맵이 우선한다.
@@ -158,9 +158,9 @@ FR3는 OSC, DG5F는 **JSC**(joint space PD, target joint position → torque)로
 | U2 | ~~손 단독 asset의 실제 경로~~ | **해소 (2026-09-07)** — 공식 조합 asset이 손을 `//hands/dg5f_short/right/dg5f_short_right.superdex_bot`으로 참조하는 것을 확인. `superdex_hand_asset()`의 형식이 맞다 | 완료 |
 | U7 | **우리가 만든 asset을 어디에 두는가** | UR16e 팔 asset과 결합 asset은 우리가 만들지만, 공식 asset은 외부 클론 안에 있다. `//` 참조는 `assets/bots/`의 `.superdex_root` 기준이라 **한 asset 루트 안에 우리 것과 공식 것이 함께 있어야** 참조가 성립한다. 그런데 **Tesollo asset은 재배포 제한이 있어 우리 저장소에 커밋할 수 없다**(U4) | 게이트 3 착수 전. §5 게이트 3 참고 |
 | U3 | ~~PyPI 배포 버전 문자열~~ | **해소 (2026-09-07)** — PyPI 확인: `superdex` `superdex-lab` `superdex-physics` 모두 **1.0.0**, `requires_python >=3.12,<3.13`. `superdex-physics`에 `cp312-cp312-win_amd64.whl`이 있어 **Windows 소스 빌드 불필요**. `requirements-superdex.txt`에 `==1.0.0` 핀 반영 | 완료. `ray`/`onnx` 핀만 게이트 0-4에 남음 |
-| U4 | **Tesollo asset 라이선스 범위** | 시뮬레이션·시각화·학술/비상업 연구·오픈소스 통합은 허용, 물리적 제조·3D 프린팅·하드웨어 복제는 금지. 제한 대상은 **하드웨어 형상 재현**이므로 학습된 가중치가 파생물로 걸릴 가능성은 낮지만, **asset 자체를 상용 제품에 재배포하는 것은 불가**. 공개 문서·영상에는 Tesollo attribution 필요 | **게이트 2 착수 전.** 벤더에 서면 질의 |
+| U4 | **Tesollo asset 라이선스 범위** *(2026-09-07: 사용자 판단으로 진행 차단 요인에서 제외 — 게이트를 여기서 멈추지 않는다)* | 시뮬레이션·시각화·학술/비상업 연구·오픈소스 통합은 허용, 물리적 제조·3D 프린팅·하드웨어 복제는 금지. 제한 대상은 **하드웨어 형상 재현**이므로 학습된 가중치가 파생물로 걸릴 가능성은 낮지만, **asset 자체를 상용 제품에 재배포하는 것은 불가**. 공개 문서·영상에는 Tesollo attribution 필요 | **게이트 2 착수 전.** 벤더에 서면 질의 |
 | U5 | **mediapipe의 Python 3.12 지원** | ML-Agents가 빠지면 3.10.11 핀의 근거가 사라지지만 비전 파이프라인이 같은 venv를 쓴다 | 게이트 1. venv를 분리하면 회피 가능(§7) |
-| U6 | **단일 env steps/sec** | 전체 계획의 실현 가능성을 결정하는 숫자인데 공개 벤치마크가 없다 | 게이트 0에서 측정 |
+| U6 | ~~단일 env steps/sec~~ | **해소 (2026-09-07)** — 접촉 없는 하한 645~659 steps/s, **실제 파지(접촉 594점) 상태 534 steps/s**(realtime 2.67x). 8 runner 집계 ≈4.3k steps/s로 회귀 기준 2k의 2.1배 | 완료 |
 
 > ⚠️ **SuperDex의 fidelity 주장은 3자 검증이 없다.** 인용 논문이 미출간이고 저장소의
 > Lab 벤치마크는 CartPole/Ant/HalfCheetah뿐이다. 마케팅을 신뢰하지 말고 게이트 0·2에서
@@ -495,6 +495,7 @@ SuperDex는 **ONNX 뒤에 있는 교체 가능한 학습기**이고, 진짜 지�
 | 2026-09-07 | 0-1~0-5 | **통과.** Python 3.12.0 + `superdex 1.0.0` 전체 + `torch 2.6.0+cu124`. `torch.cuda.is_available()=True`, GPU = RTX 2080. `stable`(=`v1.0.0`, `1d71509`) 클론을 `D:/workspace/project_superdex`에 두고 `.env`에 `RTAUTO_SUPERDEX_REPO` 등록 |
 | 2026-09-07 | 0-6 | **통과. U1·U2 확정** — `dg5f_long_right.superdex_bot`(32.7 KB) + `collision/` + `render/` 디스크 확인 |
 | 2026-09-07 | 0-8(일부) | **하한 throughput 실측**: 단일 env·단일 스레드·컨트롤러/접촉물체 없음에서 **645~659 steps/s**, realtime **3.2x**. 8 runner 집계 추정 **≈5.2k steps/s** — §6 회귀 기준 3(2k steps/s)의 2.6배 |
+| 2026-09-07 | **0-8** | **✅ 게이트 0 통과 — 스크립트 파지 성공.** `superdex/scripts/gate0_grasp_test.py --place 0.03,0.0,0.04`. 접촉점 **594~604점 유지**, 양방향 1g(±Z) 2초에서 블록 드리프트 **1.3 mm**(0.0243 → 0.0256 m), 블록 속도 **0.001~0.002 m/s**(흔들림·관통 없음). 접촉 포함 throughput **534 steps/s**, realtime 2.67x, 8 runner 집계 **≈4.3k steps/s** — 회귀 기준의 2.1배. **U6 해소** |
 
 ### 게이트 0 실측 — DG5F long/right 구조 (`superdex/scripts/gate0_hand_probe.py`)
 
@@ -537,6 +538,46 @@ SuperDex는 **ONNX 뒤에 있는 교체 가능한 학습기**이고, 진짜 지�
 로드는 `physics.prefab.add_to_scene(prefab_path=..., root_path=<assets root>, scene=...,
 params=physics.prefab.PrefabParams(name=..., rotation=..., translation=...))` → `.actors`.
 (`superdex_robotics/examples/basic/example_scene_loading.py` 실측)
+
+### 게이트 0 파지 테스트 결과와 시나리오 설계 (`gate0_grasp_test.py`)
+
+**판정: 통과.** SuperDex 접촉 물리가 DG5F로 2.5 cm 블록(15.6 g)을 잡고 **양방향 1g를
+버틴다.** 2초간 드리프트 1.3 mm, 블록 속도 0.001~0.002 m/s — 흔들림도 관통도 없다.
+
+시나리오를 이렇게 만든 이유(전부 실패를 거쳐 정한 것):
+
+| 설계 | 왜 |
+|---|---|
+| 손목을 `joints[0].type = HARD`로 용접 | 기본 `FREE`면 손이 자유부양한다. 용접 시 DOF가 정확히 **20** |
+| 컨트롤러는 `MOCHI_ARTICULATED_POSE` | `BASIC_*_PD`는 중력 항이 없어 링크 중력을 꺼야 한다. 중력을 뒤집어 판정하므로 중력 항이 있는 암시적 컨트롤러가 필요 |
+| 물체를 **떨어뜨리지 않고** 배치 | 손 기본 방향이 손가락 +Z, 손바닥 +X라 수평 손바닥이 없다. 떨어뜨리면 손을 지나쳐 바닥까지 간다(실측) |
+| 배치를 **손바닥 링크 좌표계**로 | 손 자세와 무관하게 적기 위해. 성공 조합은 `palm + [0.03, 0, 0.04]` (차선: `[0.04, 0, 0.06]`) |
+| 지문 중심이 아니라 **손바닥 앞 포켓** | 지문 중심에 두면 f=0.30에 닿았다가 더 조일 때 **밖으로 밀려난다**. 5지 파워 그립은 물체가 손바닥 쪽에 있어야 성립 |
+| 닫는 동안 **중력 0** | 손가락이 닫히는 1.25초 동안 자유낙하하면(≈7.7 m) 파지가 성립하지 않는다 |
+| **접촉이 생길 때까지** 조금씩 닫고, 뒤에 `grip_margin` 추가 | 고정 폐쇄율은 케이지가 블록보다 커서 닿지도 않는다. 성공 케이스는 f=0.62에서 접촉 → f=0.72로 조임 |
+| 판정 = 파지중심 거리 + 접촉점 수 | 거리만 보면 "손 밑면에 걸려 있는 것"도 성공으로 오판한다(초기 버전에서 실제로 겪었다) |
+
+배치 스윕 결과 (`--place`):
+
+| palm 좌표계 오프셋 | 접촉 시작 f | 최종 f | 최종 드리프트 | 판정 |
+|---|---|---|---|---|
+| `0.03, 0.00, 0.04` | 0.62 | 0.72 | **0.0256 m** | ✅ 성공 |
+| `0.04, 0.00, 0.06` | 0.54 | 0.64 | 0.0376 m | ✅ 성공 |
+| `0.05, 0.00, 0.09` | 0.28 | 0.38 | 0.0538 m | ❌ |
+| `0.03, 0.00, 0.02` | 0.18 | 0.28 | 4.37 m | ❌ |
+| `0.045, 0.02, 0.07` | 0.44 | 0.54 | 4.42 m | ❌ |
+
+> **게이트 2(RL)에 그대로 넘어가는 교훈**: 파지 성공 영역이 좁다. 손바닥 앞 3~4 cm ×
+> 높이 4~6 cm 구간만 잡히고, 조금만 벗어나면 놓친다. 이건 **정책이 학습해야 하는
+> 문제가 실재한다**는 뜻이기도 하다(스크립트로는 튜닝으로만 맞출 수 있다) — 보상 설계에서
+> **접촉 확보 → 조임 → 유지**의 단계 구분이 필요하다는 근거로 쓴다.
+
+### ⚠️ 접촉점 조회는 스텝 전에 쿼리를 등록해야 한다
+
+`actor.get_contact_points_world()`는 그냥 부르면 예외가 난다. 시뮬레이션 스텝 **전에**
+`actor.register_query(physics.QueryType.CONTACT_POINTS)`를 호출해야 결과가 채워진다.
+접촉력은 `get_contact_force_world()` / `get_contact_force_from_actor_world()`도 있다 —
+게이트 2의 관찰(지문 접촉·접촉력)에 쓸 경로다.
 
 ### 동봉 예제는 GUI 디버거를 기다린다
 
