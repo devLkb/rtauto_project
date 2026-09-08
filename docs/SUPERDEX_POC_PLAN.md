@@ -634,23 +634,37 @@ params=physics.prefab.PrefabParams(name=..., rotation=..., translation=...))` �
 → 양의 최대 +4.5. 힘 페널티는 포화형이라 −1로 묶인다. 정책별 리턴 분리(15 에피소드):
 무작위 **25.6**, 고정 폐쇄 **272.3**.
 
-#### ⚠️ 발견 3 — 러너 수가 메모리에 묶인다 (§8 계산의 실제 상한)
+#### ⚠️ 발견 3 — `ray.init(runtime_env=...)` 가 SuperDex 워커를 죽인다
 
-`SUPERDEX_ENV_RUNNERS` 기본값(= `cpu_count - 4` = 이 머신에서 **8**)으로 dg5f_grasp를
-돌리면 **이터레이션이 한 번도 끝나지 않는다.** 실측: 3분간 진척 0, python 프로세스
-**52개 × 약 600 MB**, 로그에 `Windows fatal exception: access violation`. 32 GB RAM에서
-SuperDex 물리 씬 8개 + Ray 워커 오버헤드가 한계를 넘는다. **러너 4개에서는 정상 동작한다**
-(스모크 3 이터레이션 완료).
+dg5f_grasp 학습이 **이터레이션을 한 번도 끝내지 못했다.** 증상: 3분 이상 진척 0,
+python 프로세스 **44~52개**(러너는 4~8개인데), CPU만 계속 소비, 로그에
+`Windows fatal exception: access violation` — 스택은 `ray/_private/worker.py`의
+`disconnect`/`shutdown`, 즉 **워커 종료 경로**였다. 워커가 죽고 재생성되는 루프였다.
 
-→ `train_ppo.py`의 `OWN_ENVS`에 환경별 `max_runners`(dg5f_grasp = 4)를 두고, 기본 실행에서
-자동으로 낮춘다. `--num-env-runners`로 덮어쓸 수 있다. 기본값으로 돌려도 멈추지 않아야
-한다는 원칙 2를 지키기 위한 것이다.
+**처음엔 메모리 문제로 진단했지만 오진이었다.** 러너를 8→4로 줄여도 같은 증상이 났다.
+진짜 원인은 asset 경로를 워커에 넘기려고 쓴
+`ray.init(runtime_env={"env_vars": {"SUPERDEX_ASSETS_PATH": ...}})` 였다. Ray가 워커를
+별도 런타임 컨텍스트에서 만들고, SuperDex 물리가 로드된 워커가 종료될 때 access
+violation으로 죽는다.
 
-> **§8 throughput 계산을 이 값으로 정정해야 한다.** 하한 추정에 쓴 "8 runner 집계"는
-> cart_pole(가벼운 씬) 기준이고, **DG5F 접촉 씬에서는 실효 러너가 4개**다. 즉 집계
-> throughput 추정을 절반으로 봐야 한다 — cart_pole 기준 ≈4.3k steps/s가 아니라
-> DG5F 기준으로는 게이트 2 실측을 기다려야 한다. 메모리가 CPU보다 먼저 병목이 된 것이
-> 이 프로젝트에서 예상하지 못한 제약이다.
+**해결:** `runtime_env`를 쓰지 않고 **각 env 생성자가 `os.environ`에 직접 넣는다.**
+우리 환경(`dg5f_grasp_env.py`)은 이미 `rtauto_config`에서 읽어 스스로 설정하므로
+`runtime_env`가 애초에 불필요했다. 제거 후 실측:
+
+| 구성 | 결과 |
+|---|---|
+| 러너 4 + `runtime_env` | 이터레이션 0 (무한 재생성) |
+| 러너 0 (로컬 샘플링) | 3 이터레이션 정상 |
+| **러너 4, `runtime_env` 제거** | **3 이터레이션(12k 스텝)이 startup 포함 37 초** → 집계 **≈480 steps/s** |
+
+> **§8 throughput 계산을 이 값으로 정정한다.** cart_pole(가벼운 씬)의 하한 추정
+> ≈4.3k steps/s는 DG5F 접촉 씬에 적용되지 않는다. **DG5F 실측은 러너 4개 집계
+> ≈480 steps/s**다 — 1e7 스텝에 약 5.8 시간, 5e7에 약 29 시간. PoC 목표 규모의
+> 하단(1e7)은 하룻밤 안에 들어오지만, 게이트 4의 DR 확대는 러너 수를 늘리거나
+> 에피소드를 줄이는 조정이 필요하다.
+
+`train_ppo.py`의 `OWN_ENVS`에는 환경별 `max_runners`(dg5f_grasp = 4)를 남겨 뒀다 —
+32 GB에서 물리 씬 8개는 여전히 여유가 없기 때문이고, `--num-env-runners`로 덮어쓸 수 있다.
 
 > **성공 기준을 계획 원안에서 조정했다.** §5 게이트 2의 원안은 "lift 후 2초 유지 ≥80 %"
 > 였지만, 손목이 고정이라 **lift 동작 자체가 없다.** 대신 중력 하 유지 + 다지 접촉으로

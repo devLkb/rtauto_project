@@ -39,11 +39,14 @@ os.environ.setdefault("SUPERDEX_ASSETS_PATH", str(_assets))
 # 우리 저장소가 소유한 환경. SuperDex Lab의 discover 대상이 아니므로 여기서 직접 등록한다.
 #
 # max_runners: 환경별 러너 수 상한. SuperDex 물리 씬 하나가 프로세스당 ~600 MB를 쓰므로
-# cfg.SUPERDEX_ENV_RUNNERS(= cpu_count-4 = 이 머신에서 8)를 그대로 쓰면 Ray 워커까지 합쳐
-# 32 GB RAM을 압박해 **이터레이션이 한 번도 끝나지 않는다**(실측: 러너 8개로 3분간 진척 0,
-# python 프로세스 52개 × ~600 MB, 로그에 access violation). 러너 4개로는 정상 동작한다.
+# cfg.SUPERDEX_ENV_RUNNERS(= cpu_count-4 = 이 머신에서 8)는 32 GB RAM에서 여유가 없다.
+# 4개에서는 3 이터레이션(12k 스텝)이 startup 포함 37초에 끝나는 것을 실측했다.
 # 기본값으로 실행해도 멈추지 않아야 하므로(원칙 2) 여기서 캡을 둔다 — --num-env-runners로
 # 명시하면 이 캡을 넘길 수 있다.
+#
+# ⚠️ 처음에 러너 8개로 "3분간 진척 0, python 프로세스 52개"를 보고 메모리 문제로 진단했는데
+# **오진이었다.** 진짜 원인은 `ray.init(runtime_env=...)`였다 — 아래 make_superdex_env
+# 주석 참고. runtime_env를 제거하자 러너 4개가 정상 동작했다.
 OWN_ENVS = {
     "dg5f_grasp": {"spec": "dg5f_grasp_env:Dg5fGraspEnv", "max_runners": 4},
 }
@@ -66,6 +69,14 @@ def make_superdex_env(env_id):
     gym.make가 그 id를 모른다.
     """
     import gymnasium as gym
+
+    # 워커 프로세스에도 asset 경로가 필요하다. ray runtime_env로 넘기는 대신 여기서
+    # 직접 넣는다 — runtime_env를 쓰면 Ray가 워커를 별도 런타임 컨텍스트에서 만들고,
+    # SuperDex 물리가 들어간 워커가 종료 시 access violation으로 죽어 재생성 루프에
+    #빠지는 것을 실측했다(계획 문서 "발견 4").
+    if _assets is not None:
+        os.environ.setdefault("SUPERDEX_ASSETS_PATH", str(_assets))
+
     from superdex.lab.gym.utils.env_discovery import register_all_envs
 
     register_all_envs()
@@ -128,11 +139,8 @@ def main() -> None:
         print(f"env_config: {env_config}")
     print(f"runners   : {runners}   learners: {args.num_learners}   gpu/learner: {gpus}")
 
-    # 워커 프로세스에도 asset 경로를 넘긴다 — 안 넘기면 워커가 asset을 못 찾는다.
-    ray.init(
-        ignore_reinit_error=True,
-        runtime_env={"env_vars": {"SUPERDEX_ASSETS_PATH": str(_assets)}},
-    )
+    # runtime_env는 쓰지 않는다 — asset 경로는 각 env 생성자가 직접 넣는다(위 주석 참고).
+    ray.init(ignore_reinit_error=True)
     register_env("superdex_env", creator)
 
     config = (
