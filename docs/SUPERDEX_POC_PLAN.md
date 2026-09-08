@@ -6,6 +6,101 @@
 
 ---
 
+## 0. 인수인계 — 여기부터 읽어라 (2026-09-08 작업 종료 시점)
+
+### 게이트 판정 현황
+
+| 게이트 | 판정 | 근거 |
+|---|---|---|
+| **0** 물리 전제 | ✅ **통과** | 스크립트 파지 성공. 양방향 1g 2초에서 드리프트 **1.3 mm**, 접촉점 594~604 유지, 블록 속도 0.001~0.002 m/s |
+| **1** ONNX 3자 파리티 | ✅ **통과** | 래퍼 vs RLlib 커넥터 **0.000e+00**, onnxruntime 1.431e-06, **Unity Inference Engine 9.537e-07** (허용 1e-5) |
+| **2** DG5FGraspEnv + PPO | ⚠️ **미해결** | 환경·기준선·진단은 완료. **학습 4회 전부 정책이 초기값에서 움직이지 않음** |
+| **3** UR16e 결합 | 🔶 **선행 검증 완료** | 팔 단독 URDF 로드 확인(REVOLUTE 6, 한계 스펙 일치, `tool0` 생존). Studio SDF bake + 결합 JSON + U7만 남음 |
+
+**엔진 선택 판단은 끝났다.** 게이트 0·1이 "SuperDex 접촉 물리가 DG5F 파지를 표현·유지하고,
+정책을 Unity·ROS2로 넘기는 계약이 닫힌다"를 증명했다. 게이트 2의 미해결은 **엔진과 무관한
+일반 RL 문제**이므로 SuperDex 채택 근거를 무너뜨리지 않는다(§"게이트 2 중간 결론" 참고).
+
+### 내일 바로 이어서 할 것 — 진단 워크플로 재실행
+
+게이트 2 학습 실패의 원인을 **독립 관점 5개(탐색/보상/RLlib설정/과제가해성/마르코프성)로
+병렬 진단 → 관점별 적대적 반증 2표 → 종합 계획** 하는 워크플로를 작성해 실행했으나,
+**세션 종료로 5개 에이전트가 모두 `started` 상태에서 중단**됐다(결과 0건, 살릴 것 없음).
+
+스크립트는 남아 있다:
+
+```text
+C:\Users\helen\.claude\projects\D--workspace-KDT-1-AX-rtauto\0afc8a76-4334-4d1e-9a34-295af2505326\workflows\scripts\dg5f-rl-diagnose-wf_9f891380-558.js
+```
+
+재실행: `Workflow({scriptPath: "<위 경로>"})`
+(`resumeFromRunId: "wf_9f891380-558"` 를 붙여도 완료된 에이전트가 없어 캐시 이득은 없다.)
+
+> ⚠️ 워크플로 프롬프트에 이미 "리포 파일 수정 금지 / 긴 학습 금지 / 동시 python 1개"
+> 제약이 들어 있다. 에이전트 5개가 각자 SuperDex 씬(~600 MB)을 띄우면 32 GB에서
+> 압박이 생기므로 그 제약을 지워서는 안 된다.
+
+**이 워크플로가 답해야 하는 갈림길 하나**: 과제 자체가 이 예산에서 안 풀리는 것인지
+(`is_task_infeasible`), 아니면 학습 설정 문제인지. 오라클 그리드 탐색으로 "각 시드에서
+성공시키는 개루프 궤적이 존재하는가"를 확인하는 것이 가장 결정적이다.
+
+### 사용자 결정이 필요한 2건 (임의로 진행하지 않았다)
+
+1. **액션 차원 축소** — 20관절 동시 제어 → 손가락별 폐쇄율 5차원.
+   남은 유력 가설(20차원에서 "지문 3개 동시 접촉"이라는 희소 사건에 탐색이 도달하지 못함)의
+   처방이지만, **관찰·행동 계약 변경**이라 [`RL_POLICY_REDESIGN.md`](RL_POLICY_REDESIGN.md)와
+   ONNX 스펙 버전(`POLICY_SPEC_VERSION`)을 함께 올려야 한다.
+2. **U7 — 우리가 만든 asset을 어디에 두는가.** 게이트 3의 Studio bake 전에 필요.
+   유력안: `superdex/assets/bots/`를 asset 루트로 삼고 우리 UR16e asset은 커밋,
+   공식 Tesollo asset은 `.gitignore` + 복사 스크립트.
+
+### 재현 명령 모음
+
+**터미널 1 (PowerShell, 리포 루트)** — venv 활성화가 매번 필요하다:
+
+```powershell
+superdex/.venv/Scripts/Activate.ps1
+```
+
+| 목적 | 명령 |
+|---|---|
+| 손 구조·하한 속도 실측 | `python superdex/scripts/gate0_hand_probe.py --steps 2000` |
+| 게이트 0 파지 테스트 | `python superdex/scripts/gate0_grasp_test.py --place 0.03,0.0,0.04` |
+| 기준선 평가 (18 %) | `python superdex/scripts/eval_policy.py --baseline --episodes 40 --env-config '{\"episode_seconds\": 1.0}'` |
+| 학습 (로컬 샘플링만 신뢰 가능) | `python superdex/scripts/train_ppo.py --env dg5f_grasp --iters 120 --num-env-runners 0 --env-config '{\"episode_seconds\": 1.0}' --run-name dg5f_grasp_v5` |
+| 정책 평가 | `python superdex/scripts/eval_policy.py --checkpoint superdex/results/dg5f_grasp_v5 --episodes 20 --env-config '{\"episode_seconds\": 1.0}'` |
+| 게이트 1 재현 | §"게이트 1 재현" 절 참고 (4단계) |
+| 게이트 3 팔 URDF 준비 | `python superdex/scripts/gate3_prepare_arm_urdf.py` |
+
+### 알려진 함정 — 다시 밟지 마라
+
+| 함정 | 증상 | 대응 |
+|---|---|---|
+| **Ray env-runner 워커** | 비결정적 정지, `access violation`, python 프로세스 44~52개 | `--num-env-runners 0` (로컬 샘플링)만 쓴다. 러너 4개는 한 번 되고 다음에 멈춘다 |
+| `ray.init(runtime_env=...)` | 워커 무한 재생성 | 절대 쓰지 마라. asset 경로는 env 생성자가 `os.environ`에 직접 넣는다 |
+| **stdout 버퍼링** | 로그가 멈춘 것처럼 보임 → "정지"로 오진 | 항상 `python -u` 로 띄운다 |
+| **긴 작업이 세션을 끊는다** | Unity 배치모드·40분 학습 중 세션 종료 | 반드시 `run_in_background` + `Monitor` 조합으로 띄우고 폴링하지 않는다 |
+| `superdex-lab` wheel의 json 누락 | `No samples to train` | `python superdex/scripts/sync_lab_configs.py` |
+| 동봉 예제가 안 끝남 | `physics.debugger.attach()` 대기 | 자동화 스크립트는 `attach()` 호출하지 않는다 |
+
+### 오늘 남긴 커밋 (8개, 브랜치 `SuperDexTest`)
+
+```text
+7c34c59  게이트 2 중간 결론 — 엔진 판단 종결, 회귀 기준 3 재판정
+ef06d03  게이트 2 보상 밀집 reach 항 — v1 학습 실패 분석
+d9f5c43  Ray env-runner 불안정성을 게이트 2 실효 병목으로 기록
+788c0d8  ray runtime_env 제거 — 워커 access violation 재생성 루프 해소
+4f76b86  게이트 3 선행 검증 — UR16e 팔 단독 URDF, 런타임 로더 확인
+1eede25  게이트 2 환경 DG5FGraspEnv 신설 — 접촉·힘 실측으로 태스크 보정
+e589ae2  게이트 1 통과 — ONNX 3자 파리티, 학습 진입점 자체 소유
+0667abb  게이트 0 통과 — DG5F 파지 테스트 성공, U6 해소
+```
+
+`main`에는 별도로 `cedcc45`(v14 범위 제한 + 관찰/행동 v3 재설계)가 커밋돼 있고
+`SuperDexTest`는 그 위에 올라가 있다.
+
+---
+
 ## 1. 결정 요약
 
 **DG5F 다지 파지 강화학습을 [Project SuperDex](https://github.com/facebookresearch/project_superdex)로
@@ -515,6 +610,13 @@ SuperDex는 **ONNX 뒤에 있는 교체 가능한 학습기**이고, 진짜 지�
 | 2026-09-07 | 0-8(일부) | **하한 throughput 실측**: 단일 env·단일 스레드·컨트롤러/접촉물체 없음에서 **645~659 steps/s**, realtime **3.2x**. 8 runner 집계 추정 **≈5.2k steps/s** — §6 회귀 기준 3(2k steps/s)의 2.6배 |
 | 2026-09-07 | **0-8** | **✅ 게이트 0 통과 — 스크립트 파지 성공.** `superdex/scripts/gate0_grasp_test.py --place 0.03,0.0,0.04`. 접촉점 **594~604점 유지**, 양방향 1g(±Z) 2초에서 블록 드리프트 **1.3 mm**(0.0243 → 0.0256 m), 블록 속도 **0.001~0.002 m/s**(흔들림·관통 없음). 접촉 포함 throughput **534 steps/s**, realtime 2.67x, 8 runner 집계 **≈4.3k steps/s** — 회귀 기준의 2.1배. **U6 해소** |
 | 2026-09-08 | 1 | **✅ 게이트 1 통과 — ONNX 3자 파리티.** 래퍼 vs RLlib 커넥터 경로 **0.000e+00**, onnxruntime 1.431e-06, **Unity Inference Engine 9.537e-07** (허용 1e-5). 산출물 `superdex/policies/cart_pole_ppo.onnx`. 도중 블로커 3개 발견·처리(wheel의 json 누락 / Ray 2.58 `checkpoint_frequency` / Windows libuv) → 학습 진입점을 `superdex/scripts/train_ppo.py`로 자체 소유 |
+| 2026-09-08 | 2 | **환경 신설 + 기준선 확정.** `DG5FGraspEnv`(관찰 65 / 행동 20). 고정 폐쇄 정책 기준선 **7/40 = 18 %**, 낙하 0/40, 평균 지문 접촉 1.82 — 실패 원인이 낙하가 아니라 **지문 접촉 부족**임을 확인 |
+| 2026-09-08 | 2 | **학습 v1 실패.** 480k 스텝, 곡선 18~24 평평. 평가 0/20, 지문 접촉 0.00. 원인: 접촉 기반 보상이 학습 내내 0이어서 **gradient 부재** |
+| 2026-09-08 | 2 | **학습 v2 실패.** `r_reach` 밀집항 추가, 160k 스텝, 곡선 35~40 평평 |
+| 2026-09-08 | 2 | **학습 v3 실패.** 목표 EMA 평활화(α=0.1, 신호비 1.46x→3.03x), 84k 스텝, 곡선 83~87 평평 |
+| 2026-09-08 | 2 | **학습 v4 중단.** 관찰 고정상수 정규화(스케일 100배→37배), 48k 스텝, 곡선 81~87 완만 |
+| 2026-09-08 | 2 | **회귀 기준 3 재판정.** 집계 2,000 steps/s는 이 스택에서 도달 불가(Ray 워커 불안정). 신뢰 가능한 실효값 **단일 env 468 steps/s**(`physics_threads=-1`). 새 기준 "1e7 step이 ≤12 h" → 약 6 h로 **통과**. Unity 회귀 사유 아님 |
+| 2026-09-08 | 2 | **진단 워크플로 중단.** 5개 렌즈 병렬 진단 + 적대적 반증 워크플로를 실행했으나 세션 종료로 전 에이전트 `started` 상태에서 멈춤(결과 0건). 스크립트 보존, §0에 재실행 경로 기록 |
 
 ### 게이트 0 실측 — DG5F long/right 구조 (`superdex/scripts/gate0_hand_probe.py`)
 
