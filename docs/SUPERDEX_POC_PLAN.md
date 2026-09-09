@@ -20,7 +20,7 @@
 | **증거 2** | **실제 DG5F 정책**(관찰 65/행동 20)의 ONNX가 3개 런타임에서 동일 — 0.0 / 5.96e-07 / **7.18e-07**(Unity). 정책을 Unity·ROS2로 넘길 수 있고, SuperDex가 실망시키면 **학습기만 교체 가능** |
 | **증거 3** | 접촉 기반 다지 파지가 **학습된다**. 파지 성립률 **100 %**(스크립트 87 %), 최악 슬립 **4.5 cm**(스크립트 17.5 cm). 약 110만 스텝 ≈ 1시간 |
 | **최대 제약** | 실효 throughput **≈470 steps/s** (Ray 워커 불안정으로 병렬 샘플링 불가). 1e7 스텝 ≈ 6시간 — PoC엔 충분, **게이트 4의 광범위 DR에서는 병목** |
-| **다음 착수점** | ① 게이트 3: `ur16e_arm_only.urdf` → Studio SDF bake → 결합 JSON ② **U7 결정**(asset 위치) ③ 게이트 4(DR) |
+| **다음 착수점** | **게이트 3에 남은 것은 Studio SDF bake 하나뿐이고, 그것은 사람이 GUI로 해야 한다.** 배선·결합 파일·선행 검증은 끝났다. 그 다음이 게이트 4(DR) |
 
 ### 게이트 판정 현황
 
@@ -29,7 +29,7 @@
 | **0** 물리 전제 | ✅ **통과** | 스크립트 파지 성공. 양방향 1g 2초에서 드리프트 **1.3 mm**, 접촉점 594~604 유지, 블록 속도 0.001~0.002 m/s |
 | **1** ONNX 3자 파리티 | ✅ **통과 (실제 정책까지)** | cart_pole: 0.0 / 1.431e-06 / 9.537e-07. **DG5F 실제 정책(관찰 65/행동 20)**: **0.000e+00** / **5.960e-07** / **7.176e-07**(Unity, 2회 재현) |
 | **2** DG5FGraspEnv + PPO | ✅ **통과 (2026-09-09)** | 학습 정책이 **파지 성립률 100 %**(스크립트 87 %), **최악 슬립 4.5 cm**(스크립트 17.5 cm, 4배 개선). 약 110만 스텝 ≈ 1시간 |
-| **3** UR16e 결합 | 🔶 **선행 검증 완료** | 팔 단독 URDF 로드 확인(REVOLUTE 6, 한계 스펙 일치, `tool0` 생존). Studio SDF bake + 결합 JSON + U7만 남음 |
+| **3** UR16e 결합 | 🔶 **Studio bake만 남음 (사람 작업)** | **U7 해소**(`@tag/` 교차 트리 참조 실측), 배선·결합 파일 작성 완료 + 대역 로드 통과, 결합 URDF 물리 검증 통과(REVOLUTE 26 = 팔 6 + 손 20, 한계 스펙 일치, `tool0` 생존, 5초 정지 수렴, **팔 충돌 메시 전부 watertight**) |
 
 **엔진 선택 판단은 끝났다.** 게이트 0·1이 "SuperDex 접촉 물리가 DG5F 파지를 표현·유지하고,
 정책을 Unity·ROS2로 넘기는 계약이 닫힌다"를 증명했다. 게이트 2의 미해결은 **엔진과 무관한
@@ -154,30 +154,107 @@ Copy-Item superdex/policies/dg5f_grasp_v8.onnx unity/Assets/Policies/ -Force
 에디터에서 하려면 상단 메뉴 `RtAuto > Policy Parity Check` (기본 정책 이름이
 `cart_pole_ppo`이므로 `kDefaultName`을 바꾸거나 배치모드 인자를 쓴다).
 
-### 다음 착수점 — 게이트 3 (2026-09-09 기준)
+### 다음 착수점 — 게이트 3 (2026-09-09 갱신)
 
-**1. Studio SDF bake (사람 조작 필요).** 입력 URDF는 이미 만들어져 있다:
-`urdf/ur16e_dg5f_right_build/ur16e_arm_only.urdf` (14개 메시 경로 리라이트 완료,
-`package://` 잔여 0, primitive collision 0개 — 런타임 로더로 REVOLUTE 6개·관절 한계
-UR16e 스펙 일치·`tool0` 생존까지 확인했다). 재생성이 필요하면:
+> **남은 것은 Studio SDF bake 하나다.** 그 앞뒤는 전부 끝났고, bake 산출물이 정해진
+> 자리에 떨어지면 바로 로드된다. 아래 1번만 사람이 하고, 나머지는 스크립트가 한다.
 
-`python superdex/scripts/gate3_prepare_arm_urdf.py`
+**1. Studio SDF bake — 사람이 GUI로 해야 한다 (자동화 불가, 확인함).**
 
-Studio(`superdex-studio`)에서 이 URDF를 import → remesh → watertight → SDF bake 하여
-`bots/arms/ur16e/ur16e.superdex_bot` 을 만든다. 공식 `bots/arms/fr3/` 와 같은 구조
-(`.superdex_bot` + `collision/` + `render/`).
+자동화를 시도했고 **세 경로가 모두 막혔다**:
 
-**2. 결합 JSON 작성.** 공식 조합 asset이 571바이트 JSON이고 형식을 실측해 뒀다 —
-§5 게이트 3-3 참고. `parentLinkName` 은 **`tool0`**(우리 결합 URDF의
-`tool0_to_dg_mount` 가 parent `tool0`/origin identity). 손 asset 참조는
-`config/rtauto_config.py` 의 `superdex_hand_asset_ref()` 가 만들어 준다(원칙 1).
+| 시도 | 결과 |
+|---|---|
+| `superdex.physics.mesh` 로 프로그램 bake | `NativeModuleNotFoundError: mochi_mesh` — 이 확장은 **Studio 앱 안에만** 있고 파이썬 패키지로 배포되지 않는다 |
+| `superdex_mesh_cli.exe` | 사용자 CLI 가 아니라 Studio 가 쓰는 **바이너리 프레임 헬퍼**다 (`--help` → `malformed request frame`) |
+| 런타임 로드 후 prefab 저장 | robotics 바인딩에 **저장 API 가 없다** (`load_bot_prefab_from_file` / `..._from_urdf_file` 뿐) |
 
-**3. U7 결정 — 우리 asset을 어디에 두는가.** §4 U7 참고. 유력안은 `superdex/assets/bots/`
-를 asset 루트로 삼고 우리 UR16e asset 은 커밋, 재배포 제한이 있는 공식 Tesollo asset 은
-`.gitignore` + 복사 스크립트.
+입력 URDF는 준비돼 있다: `urdf/ur16e_dg5f_right_build/ur16e_arm_only.urdf`
+(재생성: `python superdex/scripts/gate3_prepare_arm_urdf.py`).
+**팔 충돌 메시 7개는 전부 watertight 임을 실측했다** — bake 입력이 깨끗하다.
+
+Studio(`superdex-studio`)에서 import → remesh → watertight → SDF bake 하여
+공식 `bots/arms/fr3/` 와 같은 구조(`.superdex_bot` + `collision/` + `render/`)로 굽고,
+아래 경로에 넣는다:
+
+```text
+superdex/assets/bots/arms/ur16e/ur16e.superdex_bot
+```
+
+끝나면 `python -u superdex/scripts/gate3_setup_asset_root.py --verify-only`.
+
+**2. ✅ 배선과 결합 파일 — 끝났다.** `gate3_setup_asset_root.py` 가 만든다:
+
+| 산출물 | git | 내용 |
+|---|---|---|
+| `superdex/assets/bots/.superdex_root` | 비추적 | `{"@superdex": "<클론>/assets/bots"}` — 머신마다 다르므로 생성물 |
+| `superdex/assets/bots/arm_hand_combos/ur16e_dg5f_long/right/ur16e_dg5f_long_right.superdex_bot` | 커밋 | `base: //arms/ur16e/...` + `path: @superdex/hands/...`, `parentLinkName: tool0` |
+
+**팔 asset 이 없는 지금도 배선이 성립함을 확인했다** — 결합 파일의 `base` 만 공식 fr3
+팔로 바꾼 대역 로드가 통과한다(links=38). 즉 남은 실패 원인은 **팔 asset 부재 하나뿐**이다.
+
+> ⚠️ 새 머신에서는 이 스크립트를 **한 번 돌려야 한다**(`.superdex_root` 생성). 원칙 2.
+
+**3. ✅ U7 — 해소됐다 (실측으로 후보 3번 확정).** 아래 "U7 해소" 절 참고.
 
 **4. 게이트 4 (DR).** 착수 전 판단 사항: 실효 throughput ≈470 steps/s 에서 광범위 DR 은
 비싸다. 다중 프로세스 학습 자체 구현이나 Ray 워커 안정화가 필요할 수 있다.
+
+### U7 해소 (2026-09-09) — 공식 asset을 복사하지 않는다
+
+U7은 "우리 asset을 어디에 두는가"였고, 걸림돌은 **공식 Tesollo asset을 재배포할 수
+없는데(U4) 결합 bot은 팔과 손을 둘 다 참조해야 한다**는 것이었다. 원안의 유력안은
+"공식 asset을 복사해 우리 루트를 채우고 `.gitignore`"였다. **더 나은 답이 있었다.**
+
+`superdex/scripts/gate3_asset_root_probe.py` 로 참조 표기 6가지를 직접 로드해 판정했다:
+
+| 표기 | 결과 |
+|---|---|
+| 공식 조합 그대로 (대조군) | 통과 (links=38) |
+| `//arms/...` 로 다른 트리 | 실패 — `//` 는 자기 루트를 벗어나지 못한다 |
+| 절대경로 | 실패 — *"Absolute bot paths are not allowed"* |
+| `../` 상대경로 | 실패 — *"Bot path ascends beyond the permitted ... '..'"* |
+| **`@superdex/arms/...`** | **통과 (links=38)** |
+| **`@superdex/...`, 태그 대상을 상대경로로** | **통과 (links=38)** |
+
+**절대경로 거부 메시지가 답을 알려줬다** — *"use `//`, `@tag/`, or a file-relative path"*.
+`@tag/` 는 원안에 없던 표기이고, 이는 **`.superdex_root` 가 빈 마커가 아니라
+`{"@tag": "경로"}` JSON 사전**임을 뜻한다(네이티브 문자열: *"Failed to deserialize
+.superdex_root JSON (expected object of @tag : path)"*). 태그 대상 폴더에도 마커가
+있어야 하고, 공식 `assets/bots/` 에는 있다.
+
+**결정**: 후보 3번(다중 검색 경로) 채택. 우리 리포에 팔 asset과 결합 파일만 두고 공식
+asset은 **한 바이트도 복사하지 않는다.** 라이선스·용량 문제가 동시에 사라진다.
+머신 의존 값은 `.superdex_root` 하나에 격리되고, 그 파일은 생성물이라 git 비추적이다
+(원칙 1). 결합 파일에는 머신 의존 값이 없어 커밋할 수 있다.
+
+관련 설정은 `config/rtauto_config.py` 의 "U7" 블록:
+`SUPERDEX_OUR_ASSETS_DIR`, `SUPERDEX_OFFICIAL_TAG`, `SUPERDEX_HAND_MOUNT_QUAT`,
+`superdex_hand_asset_tagged_ref()`, `superdex_arm_asset()`, `superdex_combo_asset()`.
+
+### 게이트 3 선행 검증 2 (2026-09-09) — 결합 URDF 물리 검증 통과
+
+Studio bake 전에 **결합체 자체가 성립하는지**를 사람 조작 없이 먼저 답했다
+(`superdex/scripts/gate3_verify_combined_urdf.py`, 결합 URDF를 런타임 로더로 로드):
+
+| 항목 | 결과 |
+|---|---|
+| 링크/조인트 | 41 / 41, **REVOLUTE 26 = 팔 6 + 손 20** |
+| `tool0` 생존 | ✅ — 결합 파일의 `parentLinkName` 기준이 살아 있다 |
+| 팔 6축 관절 한계 | ✅ UR16e 스펙 일치 (±360°, elbow ±180°) |
+| actor DOF | 26 (베이스 용접, root DOF 0) |
+| 5초 시뮬 | ✅ 정지 수렴 — 후반 절반 추가 이동 **0.000 mm** |
+| 중력 처짐 | 0.99 mm (강성 1e5에서의 정상상태 오차) |
+| **팔 충돌 메시 watertight** | ✅ **7개 전부** — bake 입력이 깨끗하다 |
+| 손 충돌 메시 | 13개가 열린 메시 — 이 URDF를 직접 시뮬할 때만 문제다(최종 결합체는 공식 baked 손을 쓴다) |
+| 자기충돌 | ⏸ **측정 불가** — 아래 참고 |
+
+**자기충돌은 bake 후로 미룰 수밖에 없다.** 접촉점 쿼리를 등록하면 네이티브가 거부한다:
+*"Contact queries are only supported for actors with contact sample points."*
+contact sample point 는 bake 산출물에 들어 있는 것이고 런타임 URDF 로더는 만들지 않는다.
+
+> **한계**: 이 검증의 손은 **우리 자체 DG5F 메시**이지 게이트 0·2가 쓴 공식 baked
+> asset이 아니다. 결합 기하·관절·안정성을 판정하지, 파지 품질을 판정하지 않는다.
 
 ### ~~진단 워크플로 재실행~~ (2026-09-09 불필요해짐)
 
@@ -208,15 +285,30 @@ C:\Users\helen\.claude\projects\D--workspace-KDT-1-AX-rtauto\0afc8a76-4334-4d1e-
 (`is_task_infeasible`), 아니면 학습 설정 문제인지. 오라클 그리드 탐색으로 "각 시드에서
 성공시키는 개루프 궤적이 존재하는가"를 확인하는 것이 가장 결정적이다.
 
-### 사용자 결정이 필요한 2건 (임의로 진행하지 않았다)
+### 사람이 해야 하는 일 / 열린 결정 (2026-09-09 갱신)
 
-1. **액션 차원 축소** — 20관절 동시 제어 → 손가락별 폐쇄율 5차원.
-   남은 유력 가설(20차원에서 "지문 3개 동시 접촉"이라는 희소 사건에 탐색이 도달하지 못함)의
-   처방이지만, **관찰·행동 계약 변경**이라 [`RL_POLICY_REDESIGN.md`](RL_POLICY_REDESIGN.md)와
-   ONNX 스펙 버전(`POLICY_SPEC_VERSION`)을 함께 올려야 한다.
-2. **U7 — 우리가 만든 asset을 어디에 두는가.** 게이트 3의 Studio bake 전에 필요.
-   유력안: `superdex/assets/bots/`를 asset 루트로 삼고 우리 UR16e asset은 커밋,
-   공식 Tesollo asset은 `.gitignore` + 복사 스크립트.
+**사람 작업 1건 — 이것만 하면 게이트 3이 닫힌다:**
+
+1. **Studio SDF bake.** GUI 조작이 불가피하다(자동화 3경로가 모두 막힌 것을 확인했다 —
+   위 "다음 착수점" 1번 표). 산출물을
+   `superdex/assets/bots/arms/ur16e/ur16e.superdex_bot` 에 넣고
+   `python -u superdex/scripts/gate3_setup_asset_root.py --verify-only`.
+
+**열린 결정 1건 (막고 있지는 않다):**
+
+2. **손 장착 회전(`SUPERDEX_HAND_MOUNT_QUAT`) 확정.** 현재 기본값은 **identity(회전
+   없음)** 이고, 우리 결합 URDF의 `tool0_to_dg_mount` 가 origin identity 로 붙이는 것과
+   일치하는 출발점이다. 공식 fr3 조합은 Z축 180°를 쓰지만 그것은 fr3 플랜지 규약이라
+   베끼면 안 된다. **Studio 에서 엄지 방향을 눈으로 확인해 확정**하고, 다르면 `.env` 의
+   `RTAUTO_SUPERDEX_HAND_MOUNT_QUAT` 로 덮어쓴다(원칙 1 — 값의 정본은
+   `config/rtauto_config.py`).
+
+**해소된 것:**
+
+- ~~**U7 — asset 위치**~~ → **해소.** `@tag/` 교차 트리 참조가 실측으로 확인돼 공식
+  asset 복사가 불필요해졌다. 위 "U7 해소" 절 참고.
+- ~~**액션 차원 축소**~~ → **폐기.** 20차원 동시 제어로 게이트 2가 통과해 5차원으로 줄일
+  이유가 없어졌다(위 "계획 변경" 3번). 관찰·행동 계약(v3)을 그대로 유지한다.
 
 ### 재현 명령 모음
 
@@ -235,6 +327,9 @@ superdex/.venv/Scripts/Activate.ps1
 | 정책 평가 | `python superdex/scripts/eval_policy.py --checkpoint superdex/results/dg5f_grasp_v5 --episodes 20 --env-config '{\"episode_seconds\": 1.0}'` |
 | 게이트 1 재현 | §"게이트 1 재현" 절 참고 (4단계) |
 | 게이트 3 팔 URDF 준비 | `python superdex/scripts/gate3_prepare_arm_urdf.py` |
+| **U7 판정**(참조 표기 6종 로드) | `python -u superdex/scripts/gate3_asset_root_probe.py` |
+| **게이트 3 배선 생성·검증** | `python -u superdex/scripts/gate3_setup_asset_root.py` (검사만: `--verify-only`) |
+| **결합 URDF 물리 검증** | `python -u superdex/scripts/gate3_verify_combined_urdf.py` |
 | **과제 가해성 판정**(오라클) | `python superdex/scripts/gate2_oracle_search.py --seeds 10` |
 | **성공 조건 분해**(거리/슬립 병행) | `python superdex/scripts/gate2_success_breakdown.py --baseline --episodes 30` |
 | **이어서 학습** | `... train_ppo.py --resume-from superdex/results/<체크포인트> --iters 300` |
@@ -255,6 +350,9 @@ superdex/.venv/Scripts/Activate.ps1
 | **곡선이 평평해 보인다** | 20 이터레이션 창에서 정체 | `--checkpoint-every` 로 중간 체크포인트를 남겨 **결정론적 성공률**로 판정한다. 학습 중 `return_mean` 은 확률적 정책 값이라 실제 성능을 약 2배 과소평가한다 |
 | **임계값이 물체에 안 맞는다** | 평균 지표는 다 좋은데 성공률이 낮다 | `hold_radius` 같은 절대 거리 임계값은 물체 크기에 의존한다. `gate2_success_breakdown.py` 로 조건별 병목을 가르고, 물체 크기 무관 지표(슬립)를 함께 본다 |
 | **Unity 배치모드가 조용히 끝난다** | 로그 30 KB 미만, 우리 출력 없음 | startup 실패다. **재실행하면 된다** (4회 중 2회 성공) |
+| **손 게인을 팔에 그대로 쓴다** | 홈 자세에서 로봇이 9 cm 처져 "결합 결함"처럼 보인다 | 900 mm 팔은 중력 토크가 손과 자릿수가 다르다. **강성에 정확히 반비례하면 발산이 아니라 P제어 정상상태 오차다**(1e3→92 mm, 1e4→9.9 mm, 1e5→0.99 mm). 판정은 "수렴하는가"와 "처짐이 얼마인가"로 **갈라서** 한다 |
+| **trimesh 로 watertight 판정** | 닫힌 메시까지 전부 "열림"으로 나온다 | `process=False` 를 쓰면 안 된다. STL 은 삼각형마다 정점을 따로 저장해 **병합 없이는 전부 열려 보인다**(35/35 vs 실제 13). 기본값(`process=True`)으로 로드한다 |
+| **`//` 로 다른 asset 트리 참조** | `Unable to open file` | `//` 는 자기 루트를 못 벗어난다. 절대경로·`../` 도 거부된다. **`.superdex_root` 에 `{"@tag": "경로"}` 를 정의하고 `@tag/...` 로 참조**한다 (§"U7 해소") |
 
 ### 오늘 남긴 커밋 (8개, 브랜치 `SuperDexTest`)
 
@@ -425,7 +523,7 @@ FR3는 OSC, DG5F는 **JSC**(joint space PD, target joint position → torque)로
 | U1 | ~~DG-5F-M이 long wrist인가 short wrist인가~~ | **해소 (2026-09-07)** — **long wrist / 오른손**으로 확인. 기존 `.env`(`RTAUTO_DG5F_HAND=right`, `RTAUTO_DG5F_SHORT=0`)와 일치하므로 **설정 변경 없음** — 기존 파이프라인에 영향 0(§12 우려 해소) | 완료 |
 | U2 | ~~손 단독 asset의 실제 경로~~ | **해소 (2026-09-07)** — 공식 조합 asset이 손을 `//hands/dg5f_short/right/dg5f_short_right.superdex_bot`으로 참조하는 것을 확인. `superdex_hand_asset()`의 형식이 맞다 | 완료 |
 | U8 | **DG-5F-M 지문 파지력 상한** | 시뮬 기본 강성으로는 4,000~6,000 N이 나온다(비현실적). 강성 3.0에서 34.7 N까지 내렸으나 **실제 하드웨어 상한을 모른다** — 이 값이 보상의 힘 페널티와 sim2real 정합성을 좌우한다 | Tesollo 스펙/실측 확인. 게이트 4(DR) 전 |
-| U7 | **우리가 만든 asset을 어디에 두는가** | UR16e 팔 asset과 결합 asset은 우리가 만들지만, 공식 asset은 외부 클론 안에 있다. `//` 참조는 `assets/bots/`의 `.superdex_root` 기준이라 **한 asset 루트 안에 우리 것과 공식 것이 함께 있어야** 참조가 성립한다. 그런데 **Tesollo asset은 재배포 제한이 있어 우리 저장소에 커밋할 수 없다**(U4) | 게이트 3 착수 전. §5 게이트 3 참고 |
+| U7 | ~~우리가 만든 asset을 어디에 두는가~~ | **해소 (2026-09-09)** — `.superdex_root`가 빈 마커가 아니라 `{"@tag": "경로"}` JSON 사전이고 **`@tag/` 표기로 다른 asset 트리를 참조할 수 있다**(실측: `gate3_asset_root_probe.py`). 우리 리포에 팔 asset·결합 파일만 두고 **공식 Tesollo asset은 복사하지 않는다** — U4 재배포 제한과 무관해진다 | 완료. §0 "U7 해소" |
 | U3 | ~~PyPI 배포 버전 문자열~~ | **해소 (2026-09-07)** — PyPI 확인: `superdex` `superdex-lab` `superdex-physics` 모두 **1.0.0**, `requires_python >=3.12,<3.13`. `superdex-physics`에 `cp312-cp312-win_amd64.whl`이 있어 **Windows 소스 빌드 불필요**. `requirements-superdex.txt`에 `==1.0.0` 핀 반영 | 완료. `ray`/`onnx` 핀만 게이트 0-4에 남음 |
 | U4 | **Tesollo asset 라이선스 범위** *(2026-09-07: 사용자 판단으로 진행 차단 요인에서 제외 — 게이트를 여기서 멈추지 않는다)* | 시뮬레이션·시각화·학술/비상업 연구·오픈소스 통합은 허용, 물리적 제조·3D 프린팅·하드웨어 복제는 금지. 제한 대상은 **하드웨어 형상 재현**이므로 학습된 가중치가 파생물로 걸릴 가능성은 낮지만, **asset 자체를 상용 제품에 재배포하는 것은 불가**. 공개 문서·영상에는 Tesollo attribution 필요 | **게이트 2 착수 전.** 벤더에 서면 질의 |
 | U5 | **mediapipe의 Python 3.12 지원** | ML-Agents가 빠지면 3.10.11 핀의 근거가 사라지지만 비전 파이프라인이 같은 venv를 쓴다 | 게이트 1. venv를 분리하면 회피 가능(§7) |
@@ -594,27 +692,40 @@ Studio에서 위 URDF를 import → remesh → watertight → SDF bake →
 >
 > 손 방향(엄지 위치)은 FR3의 Z축 180°를 그대로 베끼지 말고 Studio에서 눈으로 확인해 정한다.
 
-`AttachBot.path`에 넣을 손 asset 참조는 `config/rtauto_config.py`의
-`superdex_hand_asset_ref()`가 만들어 준다 — 경로를 손으로 다시 타이핑하지 않는다(원칙 1).
+> **✅ 2026-09-09: 결합 파일은 작성됐다.** `gate3_setup_asset_root.py` 가
+> `config/rtauto_config.py` 에서 생성한다. `parentLinkName` 은 `tool0`,
+> `AttachBot.path` 는 `superdex_hand_asset_tagged_ref()` (= `@superdex/hands/...`),
+> 장착 회전은 `SUPERDEX_HAND_MOUNT_QUAT`(기본 identity, 미확정).
+> **팔 asset 없이도 배선이 성립함을 대역 로드로 확인했다** — 위 §0 "다음 착수점" 2번.
 
-#### 3-4. U7 — asset을 어디에 두는가 (착수 전 결정)
+#### 3-4. U7 — asset을 어디에 두는가
+
+> **✅ 해소됐다 (2026-09-09). 후보 3번(다중 검색 경로) 채택.** 판정 근거와 실측 표는
+> §0 "U7 해소" 절에 있다. 요지: `.superdex_root` 는 빈 마커가 아니라 `{"@tag": "경로"}`
+> JSON 사전이고, `@tag/` 표기로 **다른 asset 트리를 참조할 수 있다.** 따라서 공식
+> Tesollo asset 을 복사하지 않고 우리 리포에 팔 asset 과 결합 파일만 둔다.
+> 아래 원안 후보 목록은 기록으로 남긴다.
 
 `//` 참조는 `assets/bots/`의 `.superdex_root` 기준이므로 **우리 팔 asset과 공식 손 asset이
 한 asset 루트 안에 있어야** 결합이 성립한다. 그런데 **Tesollo asset은 재배포 제한이 있어
 우리 저장소에 커밋할 수 없다**(U4).
 
-후보:
+후보 (원안):
 
 1. **우리 리포를 asset 루트로 삼는다** — `superdex/assets/bots/`에 `.superdex_root`를 두고
    `RTAUTO_SUPERDEX_ASSETS`를 그쪽으로 지정. 우리 `arms/ur16e/`와 결합 파일은 커밋하고,
    클론에서 복사해 오는 공식 `hands/`·`sensors/`는 **`.gitignore`로 제외**하고 복사
-   스크립트를 둔다. ← 라이선스와 원칙 2를 동시에 만족시키므로 **현재 유력안**
+   스크립트를 둔다. ← 당시 유력안. **채택되지 않았다** — 3번이 되므로 복사가 불필요하다
 2. 클론 안에 우리 asset을 넣고 클론 쪽에서 관리 — 외부 저장소를 오염시키고 새 PC 재현이 깨진다
 3. SuperDex가 **다중 asset 검색 경로**를 지원하는지 확인 — 지원하면 가장 깔끔하다.
-   게이트 3에서 먼저 조사할 것
+   ← **지원한다(`@tag/`). 채택.**
 
 **판정**: 결합 bot이 로드되고, 관절 한계가 UR16e 스펙과 일치하며, 충돌 형상이 깨지지
 않았고 자기충돌이 정상인가. 관절 순서·부호·영점은 로드맵 v11의 URSim 검증 결과와 대조한다.
+
+> **판정 항목 중 3개는 이미 답했다** (§0 "게이트 3 선행 검증 2"): 관절 한계 일치,
+> 충돌 형상 무결(팔 메시 전부 watertight), 시뮬 안정성. **자기충돌만 bake 후로 남는다**
+> — 접촉점 쿼리에 contact sample point 가 필요한데 런타임 URDF 로더는 만들지 않는다.
 
 ### 게이트 4 — 일반화와 domain randomization
 
@@ -1465,6 +1576,27 @@ python -c "import sys; sys.path.insert(0,'config'); import rtauto_config as c; p
 ```
 
 `None`이 아니라 실제 `...\project_superdex\assets` 경로가 찍혀야 한다.
+
+**이어서 asset 루트 배선을 만든다 — 새 머신에서 반드시 한 번 돌린다(원칙 2).**
+우리 결합 asset이 공식 손 asset을 `@superdex` 태그로 참조하는데, 그 태그를 정의하는
+`superdex/assets/bots/.superdex_root`가 **클론 위치를 담아 머신마다 다르므로 git에
+없다.** 없으면 결합 bot이 손을 찾지 못한다.
+
+**터미널 1 (PowerShell, 리포 루트, `(.venv)` 활성 상태)**
+
+```powershell
+python -u superdex/scripts/gate3_setup_asset_root.py
+```
+
+**터미널 1 (bash, Linux/WSL2, 리포 루트, venv 활성 상태)**
+
+```bash
+python -u superdex/scripts/gate3_setup_asset_root.py
+```
+
+정상이면 `[생성]` 두 줄과 `통과  대역 배선 확인 ...` 이 찍힌다. 팔 asset이 아직
+없으면(= Studio bake 전) 마지막에 무엇을 어디에 넣어야 하는지 알려주고 끝난다 —
+**정상 동작이며 에러가 아니다.**
 
 ### 0-6. U1·U2 확정 — DG5F asset 경로와 손목 길이
 

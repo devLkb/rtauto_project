@@ -112,3 +112,9 @@ superdex/results/
 superdex/policies/
 unity/Assets/Policies/
 unity/Assets/Policies.meta
+
+# SuperDex asset 루트 마커 — 공식 클론(project_superdex) 위치를 담아 머신마다 다르다.
+# superdex/scripts/gate3_setup_asset_root.py 가 config/rtauto_config.py 에서 생성한다
+# (원칙 1: 경로 리터럴을 커밋하지 않는다 / 원칙 2: 새 머신은 그 스크립트를 한 번 돌린다).
+# 같은 폴더의 arms/·arm_hand_combos/ 는 머신 의존 값이 없으므로 커밋 대상이다.
+superdex/assets/bots/.superdex_root

@@ -389,7 +389,89 @@ def superdex_hand_asset():
 def superdex_hand_asset_ref():
     """위 경로의 .superdex_bot 내부 참조 표기 ("//hands/...").
 
-    결합 asset(arm_hand_combos)을 만들 때 AttachBot.path 에 넣는 값이다 — 같은 사실을
-    두 번 타이핑하지 않기 위해 superdex_hand_asset()에서 파생시킨다(원칙 1).
+    ⚠️ 이 표기는 **공식 asset 트리 안에 있는 결합 파일**에서만 통한다. 우리 결합 파일은
+    우리 리포의 별도 asset 루트에 있으므로 superdex_hand_asset_tagged_ref()를 쓴다
+    (U7 결정, 2026-09-09) — 아래 "U7" 블록 참고.
     """
     return "//" + superdex_hand_asset().removeprefix("bots/")
+
+
+# ---------------- U7 — 우리 asset을 우리 리포에 두고 공식 트리를 태그로 참조한다 ----------
+# (2026-09-09 실측으로 확정. superdex/scripts/gate3_asset_root_probe.py 가 판정 근거다.)
+#
+# 문제: 공식 Tesollo DG5F asset은 재배포 제한이 있어 우리 저장소에 커밋할 수 없는데(U4),
+#       결합 bot은 팔(base)과 손(AttachBot.path)을 둘 다 참조해야 한다.
+#
+# 실측한 참조 규칙 (네이티브 로더가 거부 메시지로 알려준다:
+# "Absolute bot paths are not allowed; use //, @tag/, or a file-relative path"):
+#
+#   //...      결합 파일이 속한 asset 루트 기준. **다른 트리로는 못 넘어간다** (실패)
+#   절대경로   금지 (실패)
+#   ../        루트 밖으로 올라가는 것 금지 (실패)
+#   @tag/...   `.superdex_root` 에 정의된 태그 기준. **다른 트리로 넘어간다** (통과)
+#
+# `.superdex_root` 는 빈 마커가 아니라 **`{"@tag": "경로"}` JSON 사전**이다. 대상 폴더에도
+# `.superdex_root` 가 있어야 한다(공식 assets/bots/ 에 있다 — 확인함).
+#
+# 따라서:
+#   - 우리 팔 asset·결합 파일 -> 우리 리포(SUPERDEX_OUR_ASSETS_DIR)에 커밋. 공식 asset은
+#     한 바이트도 복사하지 않는다.
+#   - `.superdex_root` 는 클론 위치를 담아 **머신마다 다르므로 생성물이고 git 비추적**이다
+#     (superdex/scripts/gate3_setup_asset_root.py 가 만든다 — 원칙 1·2).
+
+# 우리가 만든 SuperDex asset의 루트. 리포 레이아웃이라 저장소 상대 기본값을 준다
+# (SUPERDEX_RESULTS_DIR과 같은 관례).
+SUPERDEX_OUR_ASSETS_DIR = _repo_path("RTAUTO_SUPERDEX_OUR_ASSETS_DIR", "superdex/assets")
+
+# 공식 asset 트리를 가리킬 태그 이름. 네이티브 검증 규칙은 '@' + 영문자/숫자/밑줄이다.
+SUPERDEX_OFFICIAL_TAG = _env("RTAUTO_SUPERDEX_OFFICIAL_TAG", "@superdex")
+
+# 손을 플랜지에 붙일 때의 회전 (쿼터니언 x, y, z, w). 하드코딩이 아니라 캘리브레이션
+# 상수이므로 정본을 여기 하나만 둔다(원칙 1).
+#
+# ⚠️ **아직 확정값이 아니다 — 기본값은 회전 없음(identity)이다.** 공식 fr3 조합은 Z축
+# 180°(0,0,1,~0)를 쓰지만 그것은 fr3 플랜지 규약이라 UR16e에 그대로 베끼면 안 된다.
+# 우리 결합 URDF의 `tool0_to_dg_mount`가 origin identity로 붙이므로 identity가 URDF와
+# 일치하는 출발점이다. Studio에서 엄지 방향을 눈으로 확인해 확정하고, 다르면 .env의
+# RTAUTO_SUPERDEX_HAND_MOUNT_QUAT 로 덮어쓴 뒤 이 주석을 정정한다.
+SUPERDEX_HAND_MOUNT_QUAT = tuple(
+    float(v) for v in _env("RTAUTO_SUPERDEX_HAND_MOUNT_QUAT", "0,0,0,1").split(",")
+)
+
+
+def superdex_our_bots_root():
+    """우리 asset 루트의 `bots/` 폴더 (`.superdex_root` 가 놓이는 곳, 절대경로)."""
+    return SUPERDEX_OUR_ASSETS_DIR / "bots"
+
+
+def superdex_hand_asset_tagged_ref():
+    """공식 손 asset의 `@tag/` 참조 표기 — 우리 결합 파일의 AttachBot.path 에 넣는 값.
+
+    superdex_hand_asset()에서 파생시켜 손 변형(long/short, left/right)을 두 번 타이핑하지
+    않는다(원칙 1). 머신 의존 경로가 없으므로 이 값이 들어간 결합 파일은 **커밋 가능하다**.
+    """
+    return f"{SUPERDEX_OFFICIAL_TAG}/" + superdex_hand_asset().removeprefix("bots/")
+
+
+def superdex_arm_asset():
+    """우리 UR 팔 asset의 우리 루트 기준 상대경로. Studio bake 산출물이 놓일 자리다."""
+    return f"bots/arms/{UR_TYPE}/{UR_TYPE}.superdex_bot"
+
+
+def superdex_arm_asset_ref():
+    """위 팔 asset의 결합 파일 내부 참조 표기 ("//arms/...").
+
+    팔은 **우리 루트 안**에 있으므로 태그가 아니라 `//` 로 가리킨다.
+    """
+    return "//" + superdex_arm_asset().removeprefix("bots/")
+
+
+def superdex_combo_asset():
+    """팔+손 결합 asset의 우리 루트 기준 상대경로.
+
+    공식 조합 asset의 명명 규칙(`fr3_dg5f_short/right/fr3_dg5f_short_right.superdex_bot`,
+    실측)을 그대로 따라 UR 기종·손 변형에서 파생시킨다.
+    """
+    _, _, variant, hand, _ = superdex_hand_asset().split("/")
+    stem = f"{UR_TYPE}_{variant}_{hand}"
+    return f"bots/arm_hand_combos/{UR_TYPE}_{variant}/{hand}/{stem}.superdex_bot"
