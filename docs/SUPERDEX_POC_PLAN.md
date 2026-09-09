@@ -369,6 +369,8 @@ superdex/.venv/Scripts/Activate.ps1
 | **결합 URDF 물리 검증**(bake 전 예행) | `python -u superdex/scripts/gate3_verify_combined_urdf.py` |
 | **게이트 3 본 판정**(구운 결합 bot) | `python -u superdex/scripts/gate3_verify_combined_bot.py` |
 | **손 장착 회전 판정** | `python -u superdex/scripts/gate3_verify_hand_mount.py` |
+| **게이트 4 DR 스윕** | `python -u superdex/scripts/gate4_dr_sweep.py --checkpoint superdex/results/dg5f_grasp_v8_iter0250` |
+| **DR 켜고 학습** | `... train_ppo.py --env dg5f_grasp --iters 300 --num-env-runners 0 --resume-from <체크포인트> --env-config '{\"episode_seconds\": 1.0, \"dr_mass_range\": [0.25, 4.0], \"dr_friction_range\": [0.1, 0.7]}'` |
 | **과제 가해성 판정**(오라클) | `python superdex/scripts/gate2_oracle_search.py --seeds 10` |
 | **성공 조건 분해**(거리/슬립 병행) | `python superdex/scripts/gate2_success_breakdown.py --baseline --episodes 30` |
 | **이어서 학습** | `... train_ppo.py --resume-from superdex/results/<체크포인트> --iters 300` |
@@ -906,6 +908,49 @@ python -u superdex/scripts/gate3_setup_asset_root.py --verify-only
 > **판정 항목 중 3개는 이미 답했다** (§0 "게이트 3 선행 검증 2"): 관절 한계 일치,
 > 충돌 형상 무결(팔 메시 전부 watertight), 시뮬 안정성. **자기충돌만 bake 후로 남는다**
 > — 접촉점 쿼리에 contact sample point 가 필요한데 런타임 URDF 로더는 만들지 않는다.
+
+### 게이트 4 진행 (2026-09-09) — DR 스윕으로 깨지는 지점을 먼저 찾았다
+
+원안은 "DR을 켜고 재학습한다"였지만, **먼저 물어야 할 것이 있었다**: DR 없이 학습한 v8
+정책이 애초에 얼마나 견디는가. 견딘다면 재학습 예산(원 추정 3~10배)이 필요 없다.
+
+`superdex/scripts/gate4_dr_sweep.py` — 재학습 없이 v8@250 을 DR 폭을 넓혀가며 평가
+(30 에피소드, 시드 9000~9029 고정, `episode_seconds=1.0`):
+
+| 단계 | 흔든 범위 | 파지성립 | 슬립중앙 | **슬립최대** | 거리기준 | NaN | steps/s |
+|---|---|---|---|---|---|---|---|
+| 0 없음 | — | 100 % | 0.0134 | **0.0453** | 53 % | 0 | 110 |
+| **1 좁음** | 질량 ×0.5~2, 마찰 0.15~0.5 | 100 % | 0.0151 | **0.0677** (×1.5) | 50 % | 0 | 104 |
+| 2 중간 | 질량 ×0.25~4, 마찰 0.1~0.7 | 100 % | 0.0256 | **0.2270** (×5.0) | 27 % | 0 | 109 |
+| 3 넓음 | 질량 ×0.1~8, 마찰 0.05~1.0 | 100 % | 0.1072 | **0.2413** (×5.3) | 20 % | 0 | 107 |
+
+**깨지는 지점은 1단계와 2단계 사이다.**
+
+- **1단계는 재학습 없이 그냥 된다.** 질량 2배·마찰 2배 변동을 DR 학습 한 번 없이
+  견딘다 — 평균 지표는 사실상 동일하고 최악 슬립만 ×1.5.
+- **2단계에서 무너진다.** 최악 슬립 ×5.0, 거리 기준 성공률 53 % → 27 % 로 반토막.
+- **파지 성립률은 전 구간 100 %** 다. 손은 언제나 3지 접촉을 만든다 — 무너지는 것은
+  **쥐는 것이 아니라 유지하는 것**이다.
+
+**DR 자체의 스텝 비용은 없다: ×1.03** (110 → 107 steps/s). 리셋마다 actor 속성
+(밀도·마찰계수)만 바꾸고 씬을 다시 만들지 않기 때문이다. 즉 §8이 경고한 "DR이
+throughput 병목을 만든다"는 **스텝 비용이 아니라 샘플 요구의 문제**로 좁혀졌다.
+
+> **NaN 0 — 열화는 진짜 정책 실패다.** 2·3단계에서 Mochi 솔버가
+> `Solution explosion detected` 와 `-nan(ind)` 경고를 뱉었다. "정책이 못 버틴 것"과
+> "물리가 터진 것"은 전혀 다른 결론이므로 비정상 수치를 에피소드 단위로 세도록 스윕에
+> 넣었고, **전 단계 0건**이었다. 솔버가 스스로 회복했고 측정은 오염되지 않았다.
+
+**크기(scale)는 흔들지 않았다.** 기하를 바꾸려면 프리팹을 다시 올려야 해서 리셋 비용이
+자릿수로 뛴다 — 물체 종류 교체(`object_prefab`)가 그 자리를 대신한다.
+
+DR 설정은 `Dg5fGraspEnv` 의 `dr_mass_range` / `dr_friction_range` 이고 **기본값은
+꺼짐**이다. 게이트 0~3의 모든 실측이 DR 없는 조건에서 나왔으므로 기본값을 켜면 그
+수치들과 비교가 불가능해진다 — 켜는 것은 항상 `--env-config` 로 명시한다.
+
+**정책에 흔든 값을 관찰로 주지 않는다.** DR의 목적이 "관측되지 않는 변화에 견디는
+정책"이기 때문이고, 덕분에 관찰 차원 65가 그대로여서 게이트 1의 ONNX 계약
+(`dg5f-grasp-1`)이 깨지지 않는다.
 
 ### 게이트 4 — 일반화와 domain randomization
 

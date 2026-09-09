@@ -135,6 +135,24 @@ class Dg5fGraspEnv(gym.Env):
         # 자체 — 를 시험한다.
         self.object_prefab = str(c.get("object_prefab", DUCK_LAMP_PREFAB))
 
+        # --- 게이트 4 — domain randomization -------------------------------------
+        # ⚠️ **기본값은 꺼짐(None)이다.** 게이트 0~3의 모든 실측이 DR 없는 조건에서
+        # 나왔으므로, 기본값을 켜면 그 수치들과 비교가 불가능해진다. 켜는 것은 항상
+        # --env-config 로 명시한다.
+        #
+        # 무엇을 흔드는가 — 리셋마다 actor 속성만 바꾸므로 씬 재생성이 없다(싸다):
+        #   dr_mass_range     : 밀도 배율 (lo, hi). 기준 밀도 1000 kg/m^3, 질량 0.545 kg
+        #   dr_friction_range : coulomb 마찰계수의 **절대** 범위. 기준값 0.25
+        #
+        # 크기(scale)는 여기 없다 — 기하를 바꾸려면 프리팹을 다시 올려야 해서 리셋
+        # 비용이 자릿수로 뛴다. 물체 종류 교체(`object_prefab`)로 대신 다룬다.
+        #
+        # 정책에 이 값들을 **관찰로 주지 않는다.** DR의 목적이 "관측되지 않는 변화에
+        # 견디는 정책"이기 때문이다. 관찰 차원(65)은 그대로다 — 게이트 1의 ONNX 계약
+        # (`dg5f-grasp-1`)이 깨지지 않는다.
+        self.dr_mass_range = c.get("dr_mass_range")
+        self.dr_friction_range = c.get("dr_friction_range")
+
         # SuperDex 내부 스레딩. 실측: 0(단일) 311 steps/s vs -1(자동) 468 steps/s = 1.5배.
         # 기본값을 -1로 둔다 — 공짜로 얻는 속도다.
         _ensure_physics(int(c.get("physics_threads", -1)))
@@ -232,6 +250,12 @@ class Dg5fGraspEnv(gym.Env):
         # 접촉점·접촉력은 스텝 전에 쿼리를 등록해야 채워진다 (게이트 0 실측).
         self.block.register_query(physics.QueryType.CONTACT_POINTS)
         self.block.register_query(physics.QueryType.TOTAL_CONTACT_FORCE)
+
+        # DR 의 기준값. 배율은 이 값에 곱한다 — 리셋마다 곱하면 값이 누적 표류한다.
+        self._base_density = float(self.block.get_density())
+        self._base_friction = float(
+            self.block.get_contact_params().coulomb_friction_coefficient
+        )
 
         # 지문 링크의 개별 actor. 접촉을 거리로 근사하지 않고 여기서 직접 읽는다.
         bot_name = self.bot.get_name()
@@ -359,8 +383,31 @@ class Dg5fGraspEnv(gym.Env):
         self.block.set_root_transform(t)
         self.block.set_velocity([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
 
+        # restore_state 뒤에 적용한다 — 복원이 actor 속성을 되돌리는지 확인하지 않고
+        # 순서에 의존하지 않기 위해서다. 매 리셋 기준값에서 다시 계산하므로 표류가 없다.
+        dr = self._apply_domain_randomization()
+
         obs = self._observe()[0]
-        return obs, {}
+        return obs, dr
+
+    def _apply_domain_randomization(self):
+        """리셋마다 물체 물성을 흔든다. 꺼져 있으면 아무것도 하지 않는다.
+
+        반환값은 이번 에피소드에 실제로 적용된 값이다 — reset() 의 info 로 나가므로
+        평가 스크립트가 "무엇이 흔들렸는지"를 기록할 수 있다(꺼져 있으면 빈 dict).
+        """
+        applied = {}
+        if self.dr_mass_range is not None:
+            lo, hi = (float(v) for v in self.dr_mass_range)
+            self.block.set_density(self._base_density * self.np_random.uniform(lo, hi))
+            applied["mass"] = float(self.block.get_mass())
+        if self.dr_friction_range is not None:
+            lo, hi = (float(v) for v in self.dr_friction_range)
+            cp = self.block.get_contact_params()
+            cp.coulomb_friction_coefficient = float(self.np_random.uniform(lo, hi))
+            self.block.set_contact_params(cp)
+            applied["friction"] = cp.coulomb_friction_coefficient
+        return applied
 
     def step(self, action):
         a = np.clip(np.asarray(action, dtype=np.float64), self.joint_low, self.joint_high)
