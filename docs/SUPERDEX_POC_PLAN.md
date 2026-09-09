@@ -370,6 +370,8 @@ superdex/.venv/Scripts/Activate.ps1
 | **게이트 3 본 판정**(구운 결합 bot) | `python -u superdex/scripts/gate3_verify_combined_bot.py` |
 | **손 장착 회전 판정** | `python -u superdex/scripts/gate3_verify_hand_mount.py` |
 | **게이트 4 DR 스윕** | `python -u superdex/scripts/gate4_dr_sweep.py --checkpoint superdex/results/dg5f_grasp_v8_iter0250` |
+| **DR 회복 곡선**(체크포인트 계열) | `python -u superdex/scripts/gate4_dr_recovery.py --run dg5f_grasp_dr2 --start superdex/results/dg5f_grasp_v8_iter0300` |
+| **물체 일반화 스윕** | `python -u superdex/scripts/gate4_object_sweep.py --checkpoint superdex/results/dg5f_grasp_v8_iter0250` |
 | **DR 켜고 학습** | `... train_ppo.py --env dg5f_grasp --iters 300 --num-env-runners 0 --resume-from <체크포인트> --env-config '{\"episode_seconds\": 1.0, \"dr_mass_range\": [0.25, 4.0], \"dr_friction_range\": [0.1, 0.7]}'` |
 | **과제 가해성 판정**(오라클) | `python superdex/scripts/gate2_oracle_search.py --seeds 10` |
 | **성공 조건 분해**(거리/슬립 병행) | `python superdex/scripts/gate2_success_breakdown.py --baseline --episodes 30` |
