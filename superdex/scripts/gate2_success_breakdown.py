@@ -40,6 +40,8 @@ def main() -> None:
     ap.add_argument("--baseline", action="store_true")
     ap.add_argument("--episodes", type=int, default=30)
     ap.add_argument("--seed0", type=int, default=9000)
+    ap.add_argument("--slip-tol", type=float, default=0.03,
+                    help="슬립 기준 허용 변위 [m]. 게이트 0의 스크립트 파지는 0.0013 이었다")
     ap.add_argument("--env-config", default=None)
     args = ap.parse_args()
 
@@ -76,6 +78,8 @@ def main() -> None:
             "dist": float(info.get("dist", float("nan"))),
             "dropped": bool(term),
             "success": bool(info.get("is_success", False)),
+            "slip": float(info.get("slip", float("nan"))),
+            "established": bool(info.get("grasp_established", False)),
         })
     env.close()
 
@@ -113,6 +117,22 @@ def main() -> None:
         print(f"\n-> **지문 조건이 병목**이다. 물체는 가까이 있는데 접촉을 못 만든다.")
     else:
         print(f"\n-> 두 조건이 비슷하게 병목이다.")
+
+    # --- 슬립 기준: 물체 크기와 무관한 물리적 판정 -----------------------------
+    est = np.array([r["established"] for r in rows])
+    slips = np.array([r["slip"] for r in rows], dtype=float)
+    slip_success = tips_ok & est & (np.nan_to_num(slips, nan=1e9) < args.slip_tol)
+    print(f"\n=== 슬립 기준 (물체 크기 무관) ===")
+    print(f"허용 변위 {args.slip_tol} m  (게이트 0 스크립트 파지는 0.0013 m 였다)")
+    print(f"파지 성립(중력 하 지문 >= {env.min_tips}) : {int(est.sum())}/{n} = {est.mean():.0%}")
+    if est.any():
+        s = slips[est]
+        print(f"성립 후 슬립: 중앙 {np.median(s):.4f}  평균 {np.mean(s):.4f}  "
+              f"최대 {np.max(s):.4f} m")
+    print(f"**슬립 기준 성공** (종료 시 지문 OK + 슬립 < {args.slip_tol}) : "
+          f"{int(slip_success.sum())}/{n} = {slip_success.mean():.0%}")
+    print(f"   (참고: 거리 기준 성공 = {int((tips_ok & dist_ok).sum())}/{n} = "
+          f"{(tips_ok & dist_ok).mean():.0%})")
 
     print(f"\n--- 에피소드별 (지문, 거리) ---")
     for r in rows:

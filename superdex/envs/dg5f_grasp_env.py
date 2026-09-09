@@ -264,6 +264,12 @@ class Dg5fGraspEnv(gym.Env):
         pts.append(np.asarray(tf[self.palm_idx].translation, dtype=float))
         return np.mean(pts, axis=0)
 
+    def _world_to_palm(self, tf, world_pos):
+        """world 좌표를 손바닥 링크 좌표계로. 슬립(파지 후 물체 변위) 측정에 쓴다."""
+        local = physics.TransformRT()
+        local.translation = [float(v) for v in world_pos]
+        return np.asarray((tf[self.palm_idx].inverse() * local).translation, dtype=float)
+
     def _palm_to_world(self, tf, offset):
         local = physics.TransformRT()
         local.translation = [float(v) for v in offset]
@@ -338,6 +344,7 @@ class Dg5fGraspEnv(gym.Env):
         self._steps = 0
         self._prev_action = None
         self._target = None
+        self._slip_ref = None      # 파지 성립 시점의 물체 위치(손바닥 좌표계)
 
         start = self._pose_at(self.start_frac)
         arr = physics.DynamicArrayReal(start.tolist())
@@ -457,8 +464,27 @@ class Dg5fGraspEnv(gym.Env):
             reward -= 5.0
         truncated = self._steps >= self.max_steps
 
+        # --- 슬립 측정 (게이트 0의 드리프트 방식) --------------------------------
+        # ⚠️ 성공 판정의 거리 조건(hold_radius=6cm)은 **2.5cm 블록 기준으로 잡은 값**이라
+        # 큰 물체에 맞지 않는다. duck_lamp 은 반대각선이 약 8.9cm 여서 **완벽한 파지에서도
+        # 물체 중심이 지문·손바닥 중심에서 6cm 를 넘을 수 있다.**
+        # 실측(v8@200, 30 에피소드): 지문 3개 조건 26/30 = 87% 인데 거리 조건은 14/30 = 47%,
+        # 실패 원인이 "지문은 됐지만 거리 초과" 14건 vs "거리는 됐지만 지문 부족" 2건이었다.
+        #
+        # 기준을 임의로 완화하지 않기 위해, 게이트 0에서 쓴 것과 같은 **드리프트(슬립)** 를
+        # 함께 잰다: 중력 하에서 파지가 성립한 시점의 물체 위치를 **손바닥 좌표계**로 기록해
+        # 두고, 이후 같은 좌표계에서의 변위를 본다. 물체 크기와 무관한 물리적 지표다
+        # (게이트 0의 스크립트 파지는 이 값이 1.3mm 였다).
+        tf_now = self._link_positions()
+        obj_palm = self._world_to_palm(tf_now, bt)
+        if self._slip_ref is None and gravity_on and n_tips >= self.min_tips:
+            self._slip_ref = obj_palm.copy()
+        slip = (float(np.linalg.norm(obj_palm - self._slip_ref))
+                if self._slip_ref is not None else float("nan"))
+
         info = {
             "dist": dist, "n_contacts": ncon, "gravity_on": gravity_on,
+            "slip": slip, "grasp_established": self._slip_ref is not None,
             "tips_touching": n_tips,
             "tip_force_max": float(np.max(tip_force)),
             # 성공 = 중력 하에서 파지중심 근처 유지 **그리고** 지문 min_tips개 이상 접촉.
