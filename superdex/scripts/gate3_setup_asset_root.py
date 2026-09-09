@@ -221,14 +221,30 @@ def main() -> None:
         )
         sys.exit(1)
 
+    # 산출물을 넣을 폴더를 미리 만들어 둔다 — Studio 의 URDF Import 마법사가
+    # `.superdex_bot` 을 **Asset Browser 의 현재 폴더**에 쓰므로, 사람이 그 폴더로
+    # 이동할 수 있어야 한다. 빈 폴더는 git 이 추적하지 않으므로 새 머신에서도 이
+    # 스크립트가 만든다(원칙 2).
+    arm.parent.mkdir(parents=True, exist_ok=True)
+    src_urdf = (
+        REPO_ROOT / "urdf" / f"{cfg.UR_TYPE}_dg5f_{cfg.DG5F_HAND}_build"
+        / f"{cfg.UR_TYPE}_arm_only.urdf"
+    )
     print(
         "=== 배선 통과. 남은 것은 팔 asset 하나뿐이다 (사람이 Studio 에서 만든다) ===\n"
-        f"    넣을 위치 : {arm}\n"
-        f"    입력 URDF : {REPO_ROOT / 'urdf' / (cfg.UR_TYPE + '_dg5f_' + cfg.DG5F_HAND + '_build') / (cfg.UR_TYPE + '_arm_only.urdf')}\n"
-        "    절차      : docs/SUPERDEX_POC_PLAN.md §5 게이트 3-2 (Studio import -> remesh\n"
-        "                -> watertight -> SDF bake). 공식 bots/arms/fr3/ 와 같은 구조로\n"
-        "                (.superdex_bot + collision/ + render/) 굽는다.\n"
-        "    끝난 뒤   : python -u superdex/scripts/gate3_setup_asset_root.py --verify-only"
+        "\n"
+        "  Studio 실행:  superdex-studio\n"
+        f"  1) File > Add Folder to Workspace…  ->  {arm.parent}\n"
+        f"  2) File > Import > URDF…            ->  {src_urdf}\n"
+        "  3) 마법사 General 탭에 넣을 값:\n"
+        f"       Name        = {cfg.UR_TYPE}      (-> {arm.name})\n"
+        "       World Joint = Hard         (공식 fr3 asset 과 동일)\n"
+        "       Collision   : Remesh 체크, Bake SDF 체크\n"
+        "  4) Asset Browser 의 현재 폴더가 위 1) 폴더인지 확인하고 마법사를 끝낸다\n"
+        f"       -> {arm.name} + render/*.glb + collision/*.mochi.h5\n"
+        "\n"
+        "  끝난 뒤: python -u superdex/scripts/gate3_setup_asset_root.py --verify-only\n"
+        "  자세한 안내: docs/SUPERDEX_POC_PLAN.md §5 게이트 3-2"
     )
 
 

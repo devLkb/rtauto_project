@@ -173,13 +173,18 @@ Copy-Item superdex/policies/dg5f_grasp_v8.onnx unity/Assets/Policies/ -Force
 (재생성: `python superdex/scripts/gate3_prepare_arm_urdf.py`).
 **팔 충돌 메시 7개는 전부 watertight 임을 실측했다** — bake 입력이 깨끗하다.
 
-Studio(`superdex-studio`)에서 import → remesh → watertight → SDF bake 하여
-공식 `bots/arms/fr3/` 와 같은 구조(`.superdex_bot` + `collision/` + `render/`)로 굽고,
-아래 경로에 넣는다:
+Studio의 **URDF Import 마법사**가 remesh·SDF bake·`.superdex_bot` 저장을 한 번에 한다.
+결과는 공식 `bots/arms/fr3/` 와 같은 구조(`.superdex_bot` + `collision/` + `render/`)로
+아래 경로에 놓인다:
 
 ```text
 superdex/assets/bots/arms/ur16e/ur16e.superdex_bot
 ```
+
+> **클릭 단위 절차는 §5 게이트 3-2에 있다** — "굽는다(bake)"가 무슨 뜻인지, 창·메뉴
+> 이름, 마법사에 넣을 값 표, 성공/실패 판정까지. Studio를 처음 여는 사람 기준으로 썼다.
+> `python -u superdex/scripts/gate3_setup_asset_root.py` 를 돌리면 그 값들이 화면에도
+> 그대로 출력된다.
 
 끝나면 `python -u superdex/scripts/gate3_setup_asset_root.py --verify-only`.
 
@@ -668,16 +673,149 @@ throughput 기록**.
 > URI라 SuperDex가 해석하지 못한다. `build_arm_hand.py`가 결합 URDF를 만들 때 하는 리라이트
 > (`package://ur_description/meshes/` → `meshes/ur/`)를 **팔 단독 URDF에도 적용**해야 한다.
 
-#### 3-2. Studio로 팔 asset 굽기
+#### 3-2. Studio로 팔 asset 만들기 (사람 작업, 약 10분)
 
-Studio에서 위 URDF를 import → remesh → watertight → SDF bake →
-`bots/arms/ur16e/ur16e.superdex_bot`. 공식 `bots/arms/fr3/`와 같은 구조를 따른다
-(`ur16e.superdex_bot` + `collision/` + `render/`).
+##### 용어 — "굽는다(bake)"가 무슨 뜻인가
 
-> runtime `load_bot_prefab_from_urdf_file()`도 있지만 예제 주석이 한계를 명시한다 —
-> mesh collision만 이해하고 primitive는 **조용히 무시**하며, 충돌 메시가 watertight라고
-> 가정하기 때문에 **열린 경계 근처에서 충돌 검출이 불안정**하다. 그래서 production asset은
-> Studio 경유 bake가 공식 권장 경로다.
+URDF는 로봇을 **삼각형 껍데기**(STL 메시)로 설명한다. 물리 엔진이 접촉을 계산하려면
+"이 점이 물체 **안**인가 밖인가, 표면까지 거리가 얼마인가"를 매 스텝 수백~수천 번 물어야
+하는데, 삼각형 목록에 그걸 매번 물으면 느리고 부정확하다.
+
+그래서 미리 물체 주변을 격자로 잘라 **격자점마다 "표면까지 부호 있는 거리"를 계산해
+표로 저장**해 둔다. 이 표가 **SDF**(Signed Distance Field, 부호거리장)이고, 이 표를
+미리 계산해 파일로 굳히는 것을 **bake(굽는다)** 라고 한다. 케이크를 굽듯 한 번 구워
+두면 그 뒤로는 표를 조회만 하면 된다.
+
+굽기 전에 **remesh(껍데기 다시 만들기)** 가 필요하다. SDF의 "안/밖" 부호는 껍데기에
+구멍이 없어야(**watertight**, 물이 새지 않아야) 정의된다. CAD에서 나온 STL은 면이
+살짝 벌어져 있는 경우가 흔해서, 표면을 다시 이어 붙여 닫아 준다.
+
+> **왜 이 단계가 중요한가**: 게이트 0이 증명한 것은 "SuperDex의 접촉 물리가 DG5F 파지를
+> 유지한다"였고, 그 접촉 품질이 바로 이 SDF에서 나온다. 런타임 URDF 로더도
+> SDF를 즉석에서 만들지만(`load_bot_prefab_from_urdf_file`), 메시가 watertight라고
+> **가정만** 하고 검사하지 않아 열린 경계 근처에서 충돌 검출이 불안정하다. 게다가
+> 접촉 샘플점이 없어 접촉 수를 셀 수조차 없다(실측 — §0 "게이트 3 선행 검증 2").
+> 그래서 실사용 asset은 Studio bake가 공식 권장 경로다.
+
+##### 왜 자동화할 수 없는가
+
+세 경로를 다 시도해 막힌 것을 확인했다 — §0 "다음 착수점" 1번 표. 요지는 SDF를 굽는
+`mochi_mesh` 코드가 **Studio 앱 안에만** 들어 있고 파이썬으로 배포되지 않는다는 것이다.
+
+##### 사전 조건
+
+`superdex-studio` 명령이 이미 설치돼 있다(`requirements-superdex.txt`의 `superdex==1.0.0`
+엄브렐라 패키지가 Studio를 함께 설치한다). **GPU와 디스플레이가 필요하다** — 원격
+터미널만 있는 환경에서는 못 돌린다.
+
+##### 절차
+
+**터미널 1 (PowerShell, 리포 루트, 배선 생성 + 안내 출력)**
+
+```powershell
+superdex/.venv/Scripts/Activate.ps1
+```
+
+```powershell
+python -u superdex/scripts/gate3_setup_asset_root.py
+```
+
+**터미널 1 (bash, Linux/WSL2, 리포 루트)**
+
+```bash
+source superdex/.venv/bin/activate
+```
+
+```bash
+python -u superdex/scripts/gate3_setup_asset_root.py
+```
+
+이 스크립트가 **넣을 폴더를 만들고 아래 값들을 그대로 출력한다** — 이 문서와 화면이
+다르면 화면 쪽이 맞다(경로를 `config/rtauto_config.py`에서 계산하므로).
+
+**터미널 2 (PowerShell 또는 bash, 아무 폴더, Studio 실행)**
+
+venv 활성화 후:
+
+```powershell
+superdex-studio
+```
+
+Studio 창이 뜬다. 창은 위쪽에 **메뉴 바(File / Edit / Window)**, 가운데에 3D
+**Viewport**, 아래쪽에 **Asset Browser**와 **Log Console**(탭으로 겹쳐 있다),
+오른쪽에 **Hierarchy**와 그 아래 **Details** 패널이 있다.
+
+1. **작업 폴더 등록** — 메뉴 바 `File > Add Folder to Workspace…` 를 누르고,
+   폴더 선택 창에서 아래 폴더를 고른다(위 스크립트가 만들어 둔 폴더다):
+
+   ```text
+   <리포>/superdex/assets/bots/arms/ur16e
+   ```
+
+   등록되면 화면 아래 **Asset Browser** 패널의 왼쪽 폴더 트리에 이 폴더가 나타난다.
+
+2. **Asset Browser에서 그 폴더를 클릭해 현재 폴더로 만든다.**
+   ⚠️ 마법사는 결과 파일을 **Asset Browser의 현재 폴더**에 쓴다. 이걸 빠뜨리면 엉뚱한
+   곳에 저장된다.
+
+3. **URDF 가져오기** — 메뉴 바 `File > Import > URDF…` 를 누르고 아래 파일을 고른다:
+
+   ```text
+   <리포>/urdf/ur16e_dg5f_right_build/ur16e_arm_only.urdf
+   ```
+
+   (파일을 Studio 창에 **드래그 앤 드롭**해도 같은 마법사가 열린다.)
+
+4. **마법사 `General` 탭에 값을 넣는다.**
+
+   | 필드 | 넣을 값 | 왜 |
+   |---|---|---|
+   | `Name` | `ur16e` | 결과 파일이 `ur16e.superdex_bot` 이 된다. `config/rtauto_config.py`의 `superdex_arm_asset()`이 이 이름을 기대한다. URDF의 `<robot name="ur16e">` 와 같아 기본값 그대로일 가능성이 높다 — **확인만** 하면 된다 |
+   | `World Joint` | **`Hard`** | 베이스를 바닥에 용접한다. 공식 `fr3.superdex_bot`도 `world_joint`가 `Hard`다(실측). `Free`로 두면 로봇이 자유낙하한다 |
+   | `Collision` 섹션의 `Remesh` | **체크** | 위 "용어" 참고 — 표면을 닫는다 |
+   | `Collision` 섹션의 `Bake SDF` | **체크** | 위 "용어" 참고 — 부호거리장을 굽는다 |
+
+   `Render Models` / `Collision Models` 탭은 링크별 세부 설정인데 **손댈 필요 없다**
+   (기본 동작이 링크마다 변환해 주는 것이다).
+
+5. **마법사를 끝낸다.** 굽기는 링크 7개에 대해 도는 무거운 계산이라 수십 초~수 분
+   걸릴 수 있다.
+
+6. **결과 확인** — 1번 폴더 안에 아래가 생겨야 한다. 공식 `bots/arms/fr3/`와 같은 구조다:
+
+   ```text
+   ur16e.superdex_bot
+   collision/  (ur16e 링크별 *.mochi.h5)
+   render/     (링크별 *.glb)
+   ```
+
+   화면 아래 **Log Console** 탭에 에러가 없어야 한다.
+
+##### 끝난 뒤 — 판정
+
+**터미널 1 (venv 활성 상태, 리포 루트)**
+
+```powershell
+python -u superdex/scripts/gate3_setup_asset_root.py --verify-only
+```
+
+`통과  결합 bot 로드  links=... joints=...` 와
+`=== 게이트 3 배선: 통과 ===` 가 나오면 팔+손 결합체가 실제로 로드된 것이다.
+
+실패하면 메시지가 원인을 말해 준다. 가장 흔한 것:
+
+| 증상 | 원인·대응 |
+|---|---|
+| `Unable to open file` | 파일 이름이 `ur16e.superdex_bot`이 아니거나 폴더가 다르다. 위 6번 경로와 대조하라 |
+| `parentLinkName` 관련 실패 | Studio가 `tool0` 링크를 접어 없앴다. `flange`를 대신 쓰고 그 회전을 `SUPERDEX_HAND_MOUNT_QUAT`에 넣는다(§3-3의 경고) |
+
+##### 그 다음 — 손 방향 확인 (열린 결정)
+
+결합 bot이 로드되면 Studio에서 그 결합 파일
+(`superdex/assets/bots/arm_hand_combos/.../ur16e_dg5f_long_right.superdex_bot`)을 열어
+**엄지가 어느 쪽을 향하는지 눈으로 본다.** 방향이 틀렸으면 `.env`에
+`RTAUTO_SUPERDEX_HAND_MOUNT_QUAT`(쿼터니언 `x,y,z,w`)를 넣어 돌린다. 기본값은
+`0,0,0,1`(회전 없음)이고 아직 확정값이 아니다.
 
 #### 3-3. 결합 파일 작성
 
