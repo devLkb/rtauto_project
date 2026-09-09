@@ -49,9 +49,13 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 import torch.nn as nn  # noqa: E402
 
-# 관찰·액션 스펙 버전. ONNX 메타데이터에 박아 Unity/ROS2 쪽이 계약 불일치를 즉시 감지하게
-# 한다. 스펙 정본은 docs/RL_POLICY_REDESIGN.md — 그 문서를 고치면 이 값을 올린다.
-POLICY_SPEC_VERSION = "gate1-cartpole-1"
+# 환경별 스펙 버전. 관찰·행동 계약이 바뀌면 여기서 올린다 — 소비자(Unity/ROS2)가 계약
+# 불일치를 즉시 감지하기 위해 ONNX 메타데이터에 박는다. 스펙 정본은
+# docs/RL_POLICY_REDESIGN.md 다.
+SPEC_VERSIONS = {
+    (4, 1): "gate1-cartpole-1",      # cart_pole 대리 환경 (게이트 1)
+    (65, 20): "dg5f-grasp-1",        # DG5FGraspEnv: 관찰 65 / 행동 20 (게이트 2)
+}
 
 
 def load_spaces(ckpt: Path):
@@ -139,6 +143,15 @@ def main() -> None:
     print(f"unsquash  : a = low + (a_norm+1)*(high-low)/2, clip  "
           f"(low={act_space.low.tolist()}, high={act_space.high.tolist()})")
 
+    spec_version = SPEC_VERSIONS.get((obs_dim, act_dim))
+    if spec_version is None:
+        sys.exit(
+            f"관찰 {obs_dim} / 행동 {act_dim} 조합에 스펙 버전이 등록돼 있지 않다.\n"
+            f"SPEC_VERSIONS 에 추가하고 docs/RL_POLICY_REDESIGN.md 를 함께 갱신할 것 "
+            f"— 계약 변경을 버전 없이 내보내면 소비자가 불일치를 감지할 수 없다."
+        )
+    print(f"spec ver  : {spec_version}")
+
     module = load_module(ckpt)
     module.eval()
 
@@ -179,7 +192,7 @@ def main() -> None:
 
     model = onnx.load(str(onnx_path))
     for k, v in {
-        "policy_spec_version": POLICY_SPEC_VERSION,
+        "policy_spec_version": spec_version,
         "obs_dim": str(obs_dim),
         "act_dim": str(act_dim),
         "action_low": json.dumps(act_space.low.tolist()),
@@ -200,7 +213,7 @@ def main() -> None:
     print(f"[3] onnxruntime vs RLlib 경로 : 최대 오차 {max_ort:.3e}")
 
     fixture = {
-        "policy_spec_version": POLICY_SPEC_VERSION,
+        "policy_spec_version": spec_version,
         "checkpoint": str(ckpt.relative_to(REPO_ROOT)).replace("\\", "/"),
         "obs_dim": obs_dim,
         "act_dim": act_dim,
