@@ -99,6 +99,8 @@ class Dg5fGraspEnv(gym.Env):
         # 프로젝트 목표가 "다지 안정 접촉"이므로 근위 지골로 가두는 것은 성공이 아니다.
         self.tip_force_threshold = float(c.get("tip_force_threshold", 0.05))
         self.min_tips = int(c.get("min_tips", 3))
+        # min_tips 이상 접촉에 주는 직접 보상 가중치. v5의 지역 최적을 깨기 위한 항이다.
+        self.tips_bonus = float(c.get("tips_bonus", 2.0))
         self.action_rate_penalty = float(c.get("action_rate_penalty", 0.01))
         # 목표 평활화 계수. 낮을수록 스텝별 지터가 억제되고 실효 목표가 정책 평균에 수렴한다.
         # step() 의 실측 근거 주석 참고.
@@ -395,6 +397,14 @@ class Dg5fGraspEnv(gym.Env):
         r_reach = float(np.exp(-10.0 * float(np.mean(tip_dist))))
         r_near = float(np.exp(-8.0 * dist))                     # 파지중심 근접 유지
         r_touch = n_tips / 5.0                                  # 다지 접촉 비율 (0~1)
+        # ⚠️ r_tips 가 없으면 정책이 "지문 2개로 안정 유지"라는 지역 최적에 갇힌다.
+        # v5 실측: 학습 곡선은 243 -> 355 (+41%)로 올랐지만 결정론적 성공률이 6/30 = 20%로
+        # 고정 폐쇄 기준선 14/30 = 47% 에 **미달**했다. 평균 지문 접촉 2.73(요구 3),
+        # 힘 2.5N(한계 20N 미발동 -> 페널티 문제 아님), 낙하 1/30(고정 5/30보다 개선).
+        # 원인은 r_touch 의 **부분 점수**다 — 지문 2개로 0.4/스텝을 안정적으로 받는 것이,
+        # 3개를 만들려 더 조이다 물체를 밀어내 r_near 를 잃는 것보다 유리하다.
+        # 성공 기준(min_tips 이상)을 **직접** 보상해 그 지역 최적을 깬다.
+        r_tips = 1.0 if n_tips >= self.min_tips else 0.0
         r_contact = float(np.tanh(ncon / 200.0))                # 접촉 규모
         r_hold = 1.0 if (gravity_on and dist < self.hold_radius
                          and n_tips >= self.min_tips) else 0.0
@@ -416,6 +426,7 @@ class Dg5fGraspEnv(gym.Env):
         r_force = -float(np.tanh(overforce / self.force_penalty_scale))
 
         reward = (1.0 * r_reach + 1.0 * r_near + 1.0 * r_touch
+                  + self.tips_bonus * r_tips
                   + 0.5 * r_contact + 2.0 * r_hold
                   - self.action_rate_penalty * rate
                   + self.force_penalty * r_force)

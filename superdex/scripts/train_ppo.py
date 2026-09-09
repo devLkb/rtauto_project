@@ -110,6 +110,9 @@ def main() -> None:
                          "한 프로세스 안에서 병렬성을 얻는 경로다")
     ap.add_argument("--env-config", default=None,
                     help='환경 설정 JSON, 예: {\"place_jitter\": 0.02}')
+    ap.add_argument("--checkpoint-every", type=int, default=20,
+                    help="N 이터레이션마다 중간 체크포인트를 남긴다(0=끄기). 곡선이 정체했을 때 " +
+                         "그 정책의 결정론적 성능을 eval_policy.py 로 직접 재려면 필요하다")
     ap.add_argument("--run-name", default=None, help="산출물 폴더 이름")
     args = ap.parse_args()
 
@@ -166,6 +169,15 @@ def main() -> None:
         .debugging(log_level="ERROR")
     )
 
+    run_name = args.run_name or f"{args.env}_ppo"
+    out = Path(cfg.SUPERDEX_RESULTS_DIR) / run_name
+    out.mkdir(parents=True, exist_ok=True)
+
+    # ⚠️ 주기적 체크포인트가 필요하다. 학습 종료 시점에만 저장하면 **곡선이 정체했을 때
+    # 그 정책이 실제로 얼마나 잘하는지 확인할 방법이 없다** — v2·v3·v4를 return_mean 만
+    # 보고 중단했는데, 학습 중 return_mean 은 확률적 정책 값이라 결정론적 성능을 과소평가한다
+    # (v1 실측: 학습 중 ~20 vs 결정론적 평가 45.1). 중간 체크포인트가 있으면
+    # eval_policy.py 로 성공률을 직접 재서 판정할 수 있다.
     algo = config.build_algo()
     for i in range(args.iters):
         result = algo.train()
@@ -175,9 +187,15 @@ def main() -> None:
         print(f"iter {i + 1:>3}/{args.iters}  return_mean="
               f"{'n/a' if ret is None else f'{ret:.2f}'}  env_steps={steps}")
 
-    run_name = args.run_name or f"{args.env}_ppo"
-    out = Path(cfg.SUPERDEX_RESULTS_DIR) / run_name
-    out.mkdir(parents=True, exist_ok=True)
+        n = i + 1
+        if args.checkpoint_every > 0 and n % args.checkpoint_every == 0 and n < args.iters:
+            mid = out.parent / f"{run_name}_iter{n:04d}"
+            mid.mkdir(parents=True, exist_ok=True)
+            algo.save_to_path(str(mid))
+            print(f"     중간 체크포인트: {mid.name}  "
+                  f"(평가: python superdex/scripts/eval_policy.py --checkpoint "
+                  f"{mid.relative_to(REPO_ROOT).as_posix()} --episodes 20)")
+
     saved = algo.save_to_path(str(out))
     print(f"\n체크포인트: {saved}")
     print("다음 단계: python superdex/scripts/export_onnx.py --checkpoint "
