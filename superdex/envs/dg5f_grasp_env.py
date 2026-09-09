@@ -101,6 +101,8 @@ class Dg5fGraspEnv(gym.Env):
         self.min_tips = int(c.get("min_tips", 3))
         # min_tips 이상 접촉에 주는 직접 보상 가중치. v5의 지역 최적을 깨기 위한 항이다.
         self.tips_bonus = float(c.get("tips_bonus", 2.0))
+        # 유도 단계(지문 접촉 0)의 보상 배율. 단계 경계 단조성을 이 값으로 유지한다.
+        self.guide_weight = float(c.get("guide_weight", 1.0))
         self.action_rate_penalty = float(c.get("action_rate_penalty", 0.01))
         # 목표 평활화 계수. 낮을수록 스텝별 지터가 억제되고 실효 목표가 정책 평균에 수렴한다.
         # step() 의 실측 근거 주석 참고.
@@ -425,11 +427,29 @@ class Dg5fGraspEnv(gym.Env):
         overforce = float(np.sum(np.maximum(0.0, tip_force - self.tip_force_limit)))
         r_force = -float(np.tanh(overforce / self.force_penalty_scale))
 
-        reward = (1.0 * r_reach + 1.0 * r_near + 1.0 * r_touch
-                  + self.tips_bonus * r_tips
-                  + 0.5 * r_contact + 2.0 * r_hold
-                  - self.action_rate_penalty * rate
-                  + self.force_penalty * r_force)
+        # ⚠️ **단계 게이팅.** 밀집 유도 항을 항상 더하면 그것이 보상 해킹 채널이 된다 —
+        # v6 실측: 학습 return 이 335 -> 441 로 올랐는데 결정론적 성공률은 iter 40/80 모두
+        # **0%**, 낙하 8/20 -> 10/20, 지문 접촉 1.05 -> 1.00 이었다. 손가락을 물체 중심
+        # 근처에 두기만 해도 r_reach = exp(-10*평균거리) 가 높고, r_contact 는 바닥과의
+        # 접촉점까지 세므로 **파지 없이 리턴을 벌 수 있었다.** 성공과 정렬된 항
+        # (r_tips, r_hold)은 한 번도 발동하지 않아 gradient 에 기여하지 못했다 — v1과 같은 구조다.
+        #
+        # 그래서 지문 접촉이 하나라도 생기면 유도 항을 **끊는다.** 단계 경계에서 보상이
+        # 반드시 증가하도록 상수 1.0 을 얹어(유도 단계 최대치와 같음) 단조성을 보장한다:
+        #   유도 단계(접촉 0) 최대 = 0.5 + 0.5 = 1.0
+        #   접촉 단계 최소(지문 1개, 먼 거리) = 1.0 + 0.2 = 1.2  > 1.0
+        # r_contact(전체 접촉점)는 바닥 접촉까지 세므로 **뺐다** — 지문별 접촉력이
+        # 의미 있는 신호이고 r_touch/r_tips 가 그것을 쓴다.
+        if n_tips == 0:
+            reward = self.guide_weight * (0.5 * r_reach + 0.5 * r_near)
+        else:
+            reward = (self.guide_weight * 1.0
+                      + 1.0 * r_touch
+                      + self.tips_bonus * r_tips
+                      + 1.0 * r_near
+                      + 2.0 * r_hold)
+        reward += (-self.action_rate_penalty * rate
+                   + self.force_penalty * r_force)
 
         dropped = gravity_on and dist > 0.25
         terminated = bool(dropped)
