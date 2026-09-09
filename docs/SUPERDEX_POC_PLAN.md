@@ -20,7 +20,7 @@
 | **증거 2** | **실제 DG5F 정책**(관찰 65/행동 20)의 ONNX가 3개 런타임에서 동일 — 0.0 / 5.96e-07 / **7.18e-07**(Unity). 정책을 Unity·ROS2로 넘길 수 있고, SuperDex가 실망시키면 **학습기만 교체 가능** |
 | **증거 3** | 접촉 기반 다지 파지가 **학습된다**. 파지 성립률 **100 %**(스크립트 87 %), 최악 슬립 **4.5 cm**(스크립트 17.5 cm). 약 110만 스텝 ≈ 1시간 |
 | **최대 제약** | 실효 throughput **≈470 steps/s** (Ray 워커 불안정으로 병렬 샘플링 불가). 1e7 스텝 ≈ 6시간 — PoC엔 충분, **게이트 4의 광범위 DR에서는 병목** |
-| **다음 착수점** | **게이트 3에 남은 것은 Studio SDF bake 하나뿐이고, 그것은 사람이 GUI로 해야 한다.** 배선·결합 파일·선행 검증은 끝났다. 그 다음이 게이트 4(DR) |
+| **다음 착수점** | **게이트 0~3이 전부 통과했다.** 다음은 **게이트 4(일반화·domain randomization)** — 착수 전 throughput 병목 판단이 필요하다. 남은 사람 작업은 손 방향(엄지 위치) 눈 확인 1건뿐이고 게이트 4를 막지 않는다 |
 
 ### 게이트 판정 현황
 
@@ -29,7 +29,7 @@
 | **0** 물리 전제 | ✅ **통과** | 스크립트 파지 성공. 양방향 1g 2초에서 드리프트 **1.3 mm**, 접촉점 594~604 유지, 블록 속도 0.001~0.002 m/s |
 | **1** ONNX 3자 파리티 | ✅ **통과 (실제 정책까지)** | cart_pole: 0.0 / 1.431e-06 / 9.537e-07. **DG5F 실제 정책(관찰 65/행동 20)**: **0.000e+00** / **5.960e-07** / **7.176e-07**(Unity, 2회 재현) |
 | **2** DG5FGraspEnv + PPO | ✅ **통과 (2026-09-09)** | 학습 정책이 **파지 성립률 100 %**(스크립트 87 %), **최악 슬립 4.5 cm**(스크립트 17.5 cm, 4배 개선). 약 110만 스텝 ≈ 1시간 |
-| **3** UR16e 결합 | 🔶 **Studio bake만 남음 (사람 작업)** | **U7 해소**(`@tag/` 교차 트리 참조 실측), 배선·결합 파일 작성 완료 + 대역 로드 통과, 결합 URDF 물리 검증 통과(REVOLUTE 26 = 팔 6 + 손 20, 한계 스펙 일치, `tool0` 생존, 5초 정지 수렴, **팔 충돌 메시 전부 watertight**) |
+| **3** UR16e 결합 | ✅ **통과 (2026-09-09)** | Studio bake 완료. **구운 UR16e 팔 + 공식 DG5F 손 결합체**가 로드·구동된다 — REVOLUTE 26 = 팔 6 + 손 20, 팔 관절 한계 UR16e 스펙 일치, `tool0` 생존, **홈 자세 자기접촉 0**(계측기 자기검사로 검증), 5초 정지 수렴, 중력 처짐 0.98 mm |
 
 **엔진 선택 판단은 끝났다.** 게이트 0·1이 "SuperDex 접촉 물리가 DG5F 파지를 표현·유지하고,
 정책을 Unity·ROS2로 넘기는 계약이 닫힌다"를 증명했다. 게이트 2의 미해결은 **엔진과 무관한
@@ -154,10 +154,36 @@ Copy-Item superdex/policies/dg5f_grasp_v8.onnx unity/Assets/Policies/ -Force
 에디터에서 하려면 상단 메뉴 `RtAuto > Policy Parity Check` (기본 정책 이름이
 `cart_pole_ppo`이므로 `kDefaultName`을 바꾸거나 배치모드 인자를 쓴다).
 
-### 다음 착수점 — 게이트 3 (2026-09-09 갱신)
+### 게이트 3 통과 (2026-09-09) — 구운 팔 + 공식 손 결합체
 
-> **남은 것은 Studio SDF bake 하나다.** 그 앞뒤는 전부 끝났고, bake 산출물이 정해진
-> 자리에 떨어지면 바로 로드된다. 아래 1번만 사람이 하고, 나머지는 스크립트가 한다.
+Studio bake 가 끝났고 **본 판정을 통과했다**
+(`superdex/scripts/gate3_verify_combined_bot.py`):
+
+| 판정 항목 | 결과 |
+|---|---|
+| 결합 bot 로드 | ✅ 링크 41 / 조인트 41 |
+| DOF | ✅ **REVOLUTE 26 = 팔 6 + 손 20**, actor DOF 26 (root 0) |
+| `tool0` 생존 | ✅ bake 가 fixed joint 를 접지 않았다 |
+| 팔 관절 한계 | ✅ UR16e 스펙 일치 (±360°, elbow ±180°) |
+| **자기충돌** | ✅ **홈 자세 자기접촉 0** |
+| 시뮬 안정성 | ✅ 5초 후 정지 수렴, 후반 절반 추가 이동 0.000 mm |
+| 중력 처짐 | 0.98 mm (강성 1e5 정상상태 오차) |
+
+**"자기접촉 0"은 계측기 자기검사로 뒷받침했다.** 쿼리가 조용히 비어 있어도 0 으로
+보이므로, 일부러 팔꿈치를 170°로 접어 접촉이 잡히는지 확인한다 — **8,704점**이 잡혔다
+(`upper_arm_link` 4352, `wrist_2_link` 3268, `wrist_3_link` 1084). 즉 홈 자세의 0 은
+측정된 0 이다.
+
+Studio 산출물(`superdex/assets/bots/arms/ur16e/`, 22 MB — `.superdex_bot` +
+`collision/*.mochi.h5` 7개 + `render/*.glb` 7개)은 **커밋한다.** bake 는 GPU·디스플레이와
+GUI 조작이 필요해 새 머신에서 재현하기 비싸다 — 커밋해 두면 클론 즉시 쓸 수 있다(원칙 2).
+리포는 이미 `urdf/.../meshes` 26 MB 를 추적하고 있어 관례도 일치한다.
+
+> **남은 사람 작업 1건 (게이트 4를 막지 않는다)**: 손 방향(엄지 위치)은 수치가 아니라
+> 눈으로 볼 항목이다. Studio 에서 결합 bot 을 열어 확인하고
+> `RTAUTO_SUPERDEX_HAND_MOUNT_QUAT` 를 확정한다. 현재는 identity(회전 없음).
+
+### (기록) 게이트 3 착수 절차 — bake 전 상태
 
 **1. Studio SDF bake — 사람이 GUI로 해야 한다 (자동화 불가, 확인함).**
 
@@ -292,23 +318,22 @@ C:\Users\helen\.claude\projects\D--workspace-KDT-1-AX-rtauto\0afc8a76-4334-4d1e-
 
 ### 사람이 해야 하는 일 / 열린 결정 (2026-09-09 갱신)
 
-**사람 작업 1건 — 이것만 하면 게이트 3이 닫힌다:**
+**열린 결정 1건 (게이트 4를 막지 않는다):**
 
-1. **Studio SDF bake.** GUI 조작이 불가피하다(자동화 3경로가 모두 막힌 것을 확인했다 —
-   위 "다음 착수점" 1번 표). 산출물을
-   `superdex/assets/bots/arms/ur16e/ur16e.superdex_bot` 에 넣고
-   `python -u superdex/scripts/gate3_setup_asset_root.py --verify-only`.
-
-**열린 결정 1건 (막고 있지는 않다):**
-
-2. **손 장착 회전(`SUPERDEX_HAND_MOUNT_QUAT`) 확정.** 현재 기본값은 **identity(회전
+1. **손 장착 회전(`SUPERDEX_HAND_MOUNT_QUAT`) 확정.** 현재 기본값은 **identity(회전
    없음)** 이고, 우리 결합 URDF의 `tool0_to_dg_mount` 가 origin identity 로 붙이는 것과
    일치하는 출발점이다. 공식 fr3 조합은 Z축 180°를 쓰지만 그것은 fr3 플랜지 규약이라
-   베끼면 안 된다. **Studio 에서 엄지 방향을 눈으로 확인해 확정**하고, 다르면 `.env` 의
-   `RTAUTO_SUPERDEX_HAND_MOUNT_QUAT` 로 덮어쓴다(원칙 1 — 값의 정본은
+   베끼면 안 된다. **Studio 에서 결합 bot 을 열어 엄지 방향을 눈으로 확인해 확정**하고,
+   다르면 `.env` 의 `RTAUTO_SUPERDEX_HAND_MOUNT_QUAT` 로 덮어쓴다(원칙 1 — 값의 정본은
    `config/rtauto_config.py`).
 
+   > 수치 판정으로는 잡히지 않는 항목이다 — 자기접촉 0, 관절 한계 일치, 시뮬 안정성이
+   > 전부 통과해도 엄지가 반대로 붙어 있을 수 있다.
+
 **해소된 것:**
+
+- ~~**Studio SDF bake**~~ → **완료 (2026-09-09).** 산출물은 커밋됐다. 새 머신은 bake 를
+  다시 할 필요가 없다.
 
 - ~~**U7 — asset 위치**~~ → **해소.** `@tag/` 교차 트리 참조가 실측으로 확인돼 공식
   asset 복사가 불필요해졌다. 위 "U7 해소" 절 참고.
@@ -334,7 +359,8 @@ superdex/.venv/Scripts/Activate.ps1
 | 게이트 3 팔 URDF 준비 | `python superdex/scripts/gate3_prepare_arm_urdf.py` |
 | **U7 판정**(참조 표기 6종 로드) | `python -u superdex/scripts/gate3_asset_root_probe.py` |
 | **게이트 3 배선 생성·검증** | `python -u superdex/scripts/gate3_setup_asset_root.py` (검사만: `--verify-only`) |
-| **결합 URDF 물리 검증** | `python -u superdex/scripts/gate3_verify_combined_urdf.py` |
+| **결합 URDF 물리 검증**(bake 전 예행) | `python -u superdex/scripts/gate3_verify_combined_urdf.py` |
+| **게이트 3 본 판정**(구운 결합 bot) | `python -u superdex/scripts/gate3_verify_combined_bot.py` |
 | **과제 가해성 판정**(오라클) | `python superdex/scripts/gate2_oracle_search.py --seeds 10` |
 | **성공 조건 분해**(거리/슬립 병행) | `python superdex/scripts/gate2_success_breakdown.py --baseline --episodes 30` |
 | **이어서 학습** | `... train_ppo.py --resume-from superdex/results/<체크포인트> --iters 300` |
@@ -357,6 +383,8 @@ superdex/.venv/Scripts/Activate.ps1
 | **Unity 배치모드가 조용히 끝난다** | 로그 30 KB 미만, 우리 출력 없음 | startup 실패다. **재실행하면 된다** (4회 중 2회 성공) |
 | **손 게인을 팔에 그대로 쓴다** | 홈 자세에서 로봇이 9 cm 처져 "결합 결함"처럼 보인다 | 900 mm 팔은 중력 토크가 손과 자릿수가 다르다. **강성에 정확히 반비례하면 발산이 아니라 P제어 정상상태 오차다**(1e3→92 mm, 1e4→9.9 mm, 1e5→0.99 mm). 판정은 "수렴하는가"와 "처짐이 얼마인가"로 **갈라서** 한다 |
 | **trimesh 로 watertight 판정** | 닫힌 메시까지 전부 "열림"으로 나온다 | `process=False` 를 쓰면 안 된다. STL 은 삼각형마다 정점을 따로 저장해 **병합 없이는 전부 열려 보인다**(35/35 vs 실제 13). 기본값(`process=True`)으로 로드한다 |
+| **articulated actor 에 접촉 쿼리** | `Contact queries are only supported for actors with contact sample points` | 쿼리는 **링크 actor 마다** 건다. `scene.for_each_actor` 로 돌며 `is_query_supported()` 로 거른다(결합 bot 에서 34/42 통과 — 나머지는 충돌 형상 없는 프레임 링크). 메서드 이름은 `get_contact_points_world()` |
+| **"자기접촉 0" 을 그냥 믿는다** | 쿼리가 비어 있어도 0 으로 보인다 | **일부러 충돌시켜** 계측기를 검사한다. 팔꿈치 170°로 접으면 8,704점이 잡혀야 한다. 안 잡히면 앞의 0 은 근거가 없다 |
 | **`//` 로 다른 asset 트리 참조** | `Unable to open file` | `//` 는 자기 루트를 못 벗어난다. 절대경로·`../` 도 거부된다. **`.superdex_root` 에 `{"@tag": "경로"}` 를 정의하고 `@tag/...` 로 참조**한다 (§"U7 해소") |
 
 ### 오늘 남긴 커밋 (8개, 브랜치 `SuperDexTest`)
@@ -1732,9 +1760,13 @@ python -u superdex/scripts/gate3_setup_asset_root.py
 python -u superdex/scripts/gate3_setup_asset_root.py
 ```
 
-정상이면 `[생성]` 두 줄과 `통과  대역 배선 확인 ...` 이 찍힌다. 팔 asset이 아직
-없으면(= Studio bake 전) 마지막에 무엇을 어디에 넣어야 하는지 알려주고 끝난다 —
-**정상 동작이며 에러가 아니다.**
+정상이면 `[생성]` 두 줄에 이어
+`통과  결합 bot 로드  links=41 joints=41` 과 `=== 게이트 3 배선: 통과 ===` 이 찍힌다.
+팔 asset(`superdex/assets/bots/arms/ur16e/`)은 **커밋돼 있으므로 새 머신에서도 Studio
+bake 를 다시 할 필요가 없다.**
+
+대신 `통과  대역 배선 확인 (공식 fr3 팔로 대체)` 가 찍히고 "팔 asset 을 Studio 에서
+만들라"는 안내로 끝난다면, 팔 asset 이 없는 것이다 — 클론이 불완전한지 확인하라.
 
 ### 0-6. U1·U2 확정 — DG5F asset 경로와 손목 길이
 
