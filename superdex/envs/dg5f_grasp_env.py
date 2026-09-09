@@ -534,6 +534,11 @@ class Dg5fGraspEnv(gym.Env):
             "slip": slip, "grasp_established": self._slip_ref is not None,
             "tips_touching": n_tips,
             "tip_force_max": float(np.max(tip_force)),
+            # 지문 접촉력의 **합**. 파지가 버틸 수 있는 무게의 상한이 쿨롱 마찰로
+            # 대략 (마찰계수 × 이 합 / g) 이므로, 게이트 4의 "왜 무거우면 실패하는가"를
+            # 1차 원리로 검산하려면 최대값이 아니라 합이 필요하다
+            # (superdex/scripts/gate4_payload_limit.py).
+            "tip_force_sum": float(np.sum(tip_force)),
             # 성공 = 중력 하에서 파지중심 근처 유지 **그리고** 지문 min_tips개 이상 접촉.
             # 거리만 보면 근위 지골로 가둔 것도 성공으로 오판한다(게이트 0에서 겪었다).
             "is_success": bool(truncated and not dropped
