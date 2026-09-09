@@ -6,14 +6,28 @@
 
 ---
 
-## 0. 인수인계 — 여기부터 읽어라 (2026-09-08 작업 종료 시점)
+## 0. 인수인계 — 여기부터 읽어라 (2026-09-09 갱신)
+
+> **한 줄 결론: SuperDex 채택이 정당하다.** 게이트 0·1·2가 통과했고 게이트 3은 선행 검증이
+> 끝났다. 남은 것은 게이트 3의 Studio 작업(사람 조작 필요)과 U7 결정, 게이트 4(DR)다.
+
+### 30초 요약
+
+| | 내용 |
+|---|---|
+| **결정** | Unity 유지 → **SuperDex로 RL 이관**. Unity는 디지털 트윈·시각화·ROS2 통합 계층으로 존속 |
+| **증거 1** | SuperDex 접촉 물리가 DG5F 파지를 유지(드리프트 1.3 mm). **Unity PhysX는 dynamic body에 concave collider가 불가해 이 문제를 표현조차 못 한다** |
+| **증거 2** | **실제 DG5F 정책**(관찰 65/행동 20)의 ONNX가 3개 런타임에서 동일 — 0.0 / 5.96e-07 / **7.18e-07**(Unity). 정책을 Unity·ROS2로 넘길 수 있고, SuperDex가 실망시키면 **학습기만 교체 가능** |
+| **증거 3** | 접촉 기반 다지 파지가 **학습된다**. 파지 성립률 **100 %**(스크립트 87 %), 최악 슬립 **4.5 cm**(스크립트 17.5 cm). 약 110만 스텝 ≈ 1시간 |
+| **최대 제약** | 실효 throughput **≈470 steps/s** (Ray 워커 불안정으로 병렬 샘플링 불가). 1e7 스텝 ≈ 6시간 — PoC엔 충분, **게이트 4의 광범위 DR에서는 병목** |
+| **다음 착수점** | ① 게이트 3: `ur16e_arm_only.urdf` → Studio SDF bake → 결합 JSON ② **U7 결정**(asset 위치) ③ 게이트 4(DR) |
 
 ### 게이트 판정 현황
 
 | 게이트 | 판정 | 근거 |
 |---|---|---|
 | **0** 물리 전제 | ✅ **통과** | 스크립트 파지 성공. 양방향 1g 2초에서 드리프트 **1.3 mm**, 접촉점 594~604 유지, 블록 속도 0.001~0.002 m/s |
-| **1** ONNX 3자 파리티 | ✅ **통과** | 래퍼 vs RLlib 커넥터 **0.000e+00**, onnxruntime 1.431e-06, **Unity Inference Engine 9.537e-07** (허용 1e-5) |
+| **1** ONNX 3자 파리티 | ✅ **통과 (실제 정책까지)** | cart_pole: 0.0 / 1.431e-06 / 9.537e-07. **DG5F 실제 정책(관찰 65/행동 20)**: **0.000e+00** / **5.960e-07** / **7.176e-07**(Unity, 2회 재현) |
 | **2** DG5FGraspEnv + PPO | ✅ **통과 (2026-09-09)** | 학습 정책이 **파지 성립률 100 %**(스크립트 87 %), **최악 슬립 4.5 cm**(스크립트 17.5 cm, 4배 개선). 약 110만 스텝 ≈ 1시간 |
 | **3** UR16e 결합 | 🔶 **선행 검증 완료** | 팔 단독 URDF 로드 확인(REVOLUTE 6, 한계 스펙 일치, `tool0` 생존). Studio SDF bake + 결합 JSON + U7만 남음 |
 
@@ -67,7 +81,7 @@
 |---|---|
 | 래퍼 `nn.Module` vs **RLlib 실제 커넥터 경로** | **0.000e+00** |
 | `onnxruntime` vs RLlib 경로 | **5.960e-07** |
-| Unity Inference Engine | ⛔ **아래 블로커 참고** |
+| **Unity Inference Engine (C#)** | **7.176e-07** |
 
 **2. 성공 기준에 슬립을 정본으로 추가했다.** `hold_radius`(거리) 기준은 **물체 크기에
 의존한다** — 6 cm는 2.5 cm 블록 기준값이고 duck_lamp은 반대각선이 약 8.9 cm여서 완벽한
@@ -78,11 +92,37 @@
 **3. 액션 차원 축소 계획을 폐기했다.** 20차원 동시 제어로 학습이 성립했으므로
 손가락별 5차원으로 줄일 이유가 없어졌다. 관찰·행동 계약(v3: 팔6 + 손20)을 그대로 유지한다.
 
-### ⛔ 블로커 — Unity 라이선스 (사용자 조치 필요)
+> **cart_pole 대리 환경이 아니라 실제 DG5F 파지 정책으로 경로가 닫혔다.**
+> `superdex/policies/dg5f_grasp_v8.onnx` 하나가 `raw_obs(65) -> raw_action(20)` 전체를
+> 담고 있고, Unity(`Unity.InferenceEngine`)와 `onnxruntime` 이 같은 값을 낸다.
 
-DG5F 정책의 **Unity 다리 검증이 막혀 있다.** Unity가 배치모드에서 `-executeMethod` 실행
-**전에** 종료된다. 로그에 우리 스크립트 출력이 전혀 없고 asset 임포트 기록도 없으며,
-라이선스 오류가 찍힌다:
+### ⚠️ Unity 배치모드가 간헐적으로 startup을 못 마친다 — 재시도하면 된다
+
+**실측: 4회 시도 중 2회 성공.** 성공 시 결과는 동일하다(`최대 오차 7.176E-007`, 2회 재현).
+실패 양상은 두 가지이고 **둘 다 우리 코드와 무관하다**:
+
+| 실패 양상 | 로그 증거 |
+|---|---|
+| 라이선스 핸드셰이크 실패 후 종료 | `Failed to handshake to channel: "LicenseClient-helen"` / `Access token is unavailable` |
+| 라이선스는 정상인데 startup 중 종료 | 핸드셰이크 실패 0회, 로그가 24 KB에서 `Refreshing native plugins` 뒤 끊김 (성공 시 34 KB) |
+
+**대응: 그냥 다시 돌린다.** 사용자 조치는 필요하지 않다 — 성공한 실행에서는
+`Successfully connected to LicensingClient ... handshake: 1.45s`가 찍힌다. 판정은 로그에
+`=== 판정: 통과` 줄이 있는지로 하고, **로그 크기가 30 KB 미만이면 startup 실패로 보고
+재실행**한다(우리 스크립트 출력이 아예 없다).
+
+<details><summary>(기록) 처음에 "사용자 조치 필요"로 오판한 경위</summary>
+
+2회 연속 라이선스 실패를 보고 Unity 계정 재로그인이 필요하다고 문서에 적었는데, 3회차에서
+Unity가 스스로 새 라이선스 클라이언트를 띄워 통과했다. **2회 실패를 영구 블로커로
+단정한 것이 성급했다** — 간헐적 실패는 재시도 횟수를 늘려 확인해야 한다.
+
+</details>
+
+### (구) 라이선스 오류 로그 참고
+
+Unity 배치모드가 라이선스 핸드셰이크에 **한 번 실패한 뒤 그대로 종료되는 일이 있다.**
+그때 로그에는 우리 스크립트 출력이 전혀 없고 asset 임포트 기록도 없다:
 
 ```text
 [Licensing::Client] Error: HandshakeResponse reported an error:
@@ -90,11 +130,18 @@ DG5F 정책의 **Unity 다리 검증이 막혀 있다.** Unity가 배치모드�
 [Licensing::Module] Error: Access token is unavailable; failed to update
 ```
 
-**코드 문제가 아니다** — 같은 `PolicyParityCheck.cs`로 게이트 1에서 9.537e-07을 통과했고,
-그때 로그는 `Successfully launched the LicensingClient` 였다. 달라진 것은 ONNX 파일뿐이다.
-`Unity.Licensing.Client` 프로세스를 정리하고 재시도해도 같았다.
+**코드 문제가 아니고, 사용자 조치도 필요하지 않다 — 그냥 다시 돌리면 된다.** 2회 연속
+실패한 뒤 3회차에서 Unity가 스스로 새 라이선스 클라이언트를 띄워 통과했다:
 
-**조치(사용자):** Unity Hub를 열어 로그인/라이선스를 다시 활성화한다. 그 뒤 재실행:
+```text
+[Licensing::Module] Error: Failed to handshake to channel: "LicenseClient-helen"
+[Licensing::Module] Successfully launched the LicensingClient (PId: 31696)
+[Licensing::Module] Successfully connected to LicensingClient on channel:
+                    "LicenseClient-helen-6000.4.0" (handshake: 1.25s)
+```
+
+즉 **로그에 파리티 출력이 없으면 실패로 단정하지 말고 재실행한다.** (이 함정에 한 번
+빠져 "사용자 조치 필요"로 잘못 기록했다.) 재실행 명령:
 
 ```powershell
 Copy-Item superdex/policies/dg5f_grasp_v8.onnx unity/Assets/Policies/ -Force
@@ -106,6 +153,31 @@ Copy-Item superdex/policies/dg5f_grasp_v8.onnx unity/Assets/Policies/ -Force
 
 에디터에서 하려면 상단 메뉴 `RtAuto > Policy Parity Check` (기본 정책 이름이
 `cart_pole_ppo`이므로 `kDefaultName`을 바꾸거나 배치모드 인자를 쓴다).
+
+### 다음 착수점 — 게이트 3 (2026-09-09 기준)
+
+**1. Studio SDF bake (사람 조작 필요).** 입력 URDF는 이미 만들어져 있다:
+`urdf/ur16e_dg5f_right_build/ur16e_arm_only.urdf` (14개 메시 경로 리라이트 완료,
+`package://` 잔여 0, primitive collision 0개 — 런타임 로더로 REVOLUTE 6개·관절 한계
+UR16e 스펙 일치·`tool0` 생존까지 확인했다). 재생성이 필요하면:
+
+`python superdex/scripts/gate3_prepare_arm_urdf.py`
+
+Studio(`superdex-studio`)에서 이 URDF를 import → remesh → watertight → SDF bake 하여
+`bots/arms/ur16e/ur16e.superdex_bot` 을 만든다. 공식 `bots/arms/fr3/` 와 같은 구조
+(`.superdex_bot` + `collision/` + `render/`).
+
+**2. 결합 JSON 작성.** 공식 조합 asset이 571바이트 JSON이고 형식을 실측해 뒀다 —
+§5 게이트 3-3 참고. `parentLinkName` 은 **`tool0`**(우리 결합 URDF의
+`tool0_to_dg_mount` 가 parent `tool0`/origin identity). 손 asset 참조는
+`config/rtauto_config.py` 의 `superdex_hand_asset_ref()` 가 만들어 준다(원칙 1).
+
+**3. U7 결정 — 우리 asset을 어디에 두는가.** §4 U7 참고. 유력안은 `superdex/assets/bots/`
+를 asset 루트로 삼고 우리 UR16e asset 은 커밋, 재배포 제한이 있는 공식 Tesollo asset 은
+`.gitignore` + 복사 스크립트.
+
+**4. 게이트 4 (DR).** 착수 전 판단 사항: 실효 throughput ≈470 steps/s 에서 광범위 DR 은
+비싸다. 다중 프로세스 학습 자체 구현이나 Ray 워커 안정화가 필요할 수 있다.
 
 ### ~~진단 워크플로 재실행~~ (2026-09-09 불필요해짐)
 
@@ -163,6 +235,11 @@ superdex/.venv/Scripts/Activate.ps1
 | 정책 평가 | `python superdex/scripts/eval_policy.py --checkpoint superdex/results/dg5f_grasp_v5 --episodes 20 --env-config '{\"episode_seconds\": 1.0}'` |
 | 게이트 1 재현 | §"게이트 1 재현" 절 참고 (4단계) |
 | 게이트 3 팔 URDF 준비 | `python superdex/scripts/gate3_prepare_arm_urdf.py` |
+| **과제 가해성 판정**(오라클) | `python superdex/scripts/gate2_oracle_search.py --seeds 10` |
+| **성공 조건 분해**(거리/슬립 병행) | `python superdex/scripts/gate2_success_breakdown.py --baseline --episodes 30` |
+| **이어서 학습** | `... train_ppo.py --resume-from superdex/results/<체크포인트> --iters 300` |
+| **실제 정책 ONNX 익스포트** | `python superdex/scripts/export_onnx.py --checkpoint superdex/results/dg5f_grasp_v8_iter0300 --name dg5f_grasp_v8` |
+| **Unity 다리 검증** | ONNX를 `unity/Assets/Policies/` 로 복사 후 배치모드 `-policyName dg5f_grasp_v8` (§"Unity 배치모드" 참고) |
 
 ### 알려진 함정 — 다시 밟지 마라
 
@@ -174,6 +251,10 @@ superdex/.venv/Scripts/Activate.ps1
 | **긴 작업이 세션을 끊는다** | Unity 배치모드·40분 학습 중 세션 종료 | 반드시 `run_in_background` + `Monitor` 조합으로 띄우고 폴링하지 않는다 |
 | `superdex-lab` wheel의 json 누락 | `No samples to train` | `python superdex/scripts/sync_lab_configs.py` |
 | 동봉 예제가 안 끝남 | `physics.debugger.attach()` 대기 | 자동화 스크립트는 `attach()` 호출하지 않는다 |
+| **보상을 바꿨는데 학습이 안 된다** | 리턴은 오르고 성공률은 0 | **랭킹 검증 필수.** 열림/호버/파지/완전폐쇄/무작위의 리턴이 성공률과 단조 정렬되는지 확인한다. v2·v3·v6을 이 검증 없이 돌려 낭비했다 |
+| **곡선이 평평해 보인다** | 20 이터레이션 창에서 정체 | `--checkpoint-every` 로 중간 체크포인트를 남겨 **결정론적 성공률**로 판정한다. 학습 중 `return_mean` 은 확률적 정책 값이라 실제 성능을 약 2배 과소평가한다 |
+| **임계값이 물체에 안 맞는다** | 평균 지표는 다 좋은데 성공률이 낮다 | `hold_radius` 같은 절대 거리 임계값은 물체 크기에 의존한다. `gate2_success_breakdown.py` 로 조건별 병목을 가르고, 물체 크기 무관 지표(슬립)를 함께 본다 |
+| **Unity 배치모드가 조용히 끝난다** | 로그 30 KB 미만, 우리 출력 없음 | startup 실패다. **재실행하면 된다** (4회 중 2회 성공) |
 
 ### 오늘 남긴 커밋 (8개, 브랜치 `SuperDexTest`)
 
@@ -723,6 +804,8 @@ SuperDex는 **ONNX 뒤에 있는 교체 가능한 학습기**이고, 진짜 지�
 | 2026-09-09 | 1(확장) | **실제 DG5F 정책 ONNX 익스포트.** 관찰 65 / 행동 20, 스펙 `dg5f-grasp-1`, 368 KB. 래퍼 vs RLlib 커넥터 **0.000e+00**, onnxruntime **5.960e-07**. `SPEC_VERSIONS` 레지스트리 신설로 계약 변경이 버전 없이 나가는 것을 차단 |
 | 2026-09-09 | — | **⛔ Unity 다리 블로커.** 배치모드가 `-executeMethod` 실행 전에 라이선스 핸드셰이크 실패로 종료. 코드 문제 아님(같은 C#으로 게이트 1 통과, 9.537e-07). **사용자가 Unity Hub 로그인/라이선스 재활성화 후 재실행 필요** |
 | 2026-09-09 | — | **계획 변경 3건.** (1) 게이트 1을 실제 정책으로 확장, (2) 성공 기준에 물체 크기 무관 **슬립**을 정본 추가, (3) **액션 차원 축소 계획 폐기** — 20차원으로 학습이 성립해 불필요해졌다 |
+| 2026-09-09 | 1(확장) | **✅ Unity 다리 통과 — 실제 DG5F 정책.** `spec dg5f-grasp-1`, obs 32x65 → action 32x20, **최대 오차 7.176E-007**(허용 1e-5), **2회 재현**. cart_pole 대리 환경이 아니라 진짜 파지 정책으로 SuperDex → ONNX → Unity·ROS2 경로가 닫혔다 |
+| 2026-09-09 | — | **Unity 배치모드 flakiness 특성화.** 4회 시도 중 2회 성공. 실패 양상 2종(라이선스 핸드셰이크 실패 / 라이선스 정상인데 startup 중 종료, 로그 24 KB). **재시도로 해소되며 사용자 조치 불필요** — 처음에 2회 실패를 보고 "Unity 계정 재로그인 필요"로 단정한 것은 오판이었다 |
 
 ### 게이트 0 실측 — DG5F long/right 구조 (`superdex/scripts/gate0_hand_probe.py`)
 
