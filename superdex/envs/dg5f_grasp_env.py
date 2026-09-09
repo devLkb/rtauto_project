@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """DG5FGraspEnv — 손목 고정 DG5F 다지 파지 강화학습 환경 (게이트 2).
 
 docs/SUPERDEX_POC_PLAN.md §5 게이트 2. 게이트 0에서 **실측한 값들이 그대로 들어간다**:
@@ -57,7 +57,8 @@ import superdex.physics as physics  # noqa: E402
 import superdex.robotics as robotics  # noqa: E402
 from superdex.physics.paths import get_assets_root, resolve_asset  # noqa: E402
 
-BLOCK_PREFAB = "prefabs/box_and_blocks/block_red.mochi_prefab"
+BLOCK_PREFAB = "prefabs/box_and_blocks/block_red.mochi_prefab"       # 2.5cm / 15.6g
+DUCK_LAMP_PREFAB = "prefabs/duck_lamp/duck_lamp_recumbent.mochi_prefab"  # 11.9x11.0x7.5cm / 545g
 PALM_LINK = "dg5f_link_palm"
 TIP_LINKS = tuple(f"dg5f_link_{f}_tip" for f in "12345")
 FLEX_SUFFIXES = ("_2", "_3", "_4")
@@ -86,7 +87,7 @@ class Dg5fGraspEnv(gym.Env):
         self.max_steps = int(self.episode_seconds * self.hz)
         self.grace_steps = int(c.get("grace_steps", 40))
         # 게이트 0 스윕에서 유일하게 안정적으로 잡힌 지점. 리셋마다 이 값 주변을 흔든다.
-        self.place = np.asarray(c.get("place", (0.03, 0.0, 0.04)), dtype=float)
+        self.place = np.asarray(c.get("place", (0.04, 0.0, 0.04)), dtype=float)
         # 배치 흔들림. 난이도를 결정하는 축이다 — 완전 폐쇄만 하는 고정 정책의 성공률
         # (엄격 기준: 지문 3개 + 파지중심 6 cm 내)이 실측으로 다음과 같다:
         #   0.015 -> 13%,  0.025 -> 0%,  0.035 -> 0%
@@ -116,6 +117,19 @@ class Dg5fGraspEnv(gym.Env):
         # 포화형 페널티의 가중치와 스케일. 스텝당 최대 -force_penalty 로 묶인다.
         self.force_penalty = float(c.get("force_penalty", 1.0))
         self.force_penalty_scale = float(c.get("force_penalty_scale", 50.0))
+        # 파지 대상 프리팹. 게이트 4의 다물체 일반화와 오라클 탐색에서 바꿔 끼운다.
+        # 실측 AABB: block_red 2.5cm/15.6g, sphere 3cm/10g, fdt_peg 2.2x2.2x4cm/6.8g,
+        #            paper_cup 9.3x9.4x11.3cm/15g, duck_lamp_recumbent 11.9x11.0x7.5cm/545g
+        # ⚠️ 기본 물체를 2.5cm 블록에서 duck_lamp(11.9x11.0x7.5cm, 545g)로 바꿨다.
+        # 오라클 그리드 탐색(superdex/scripts/gate2_oracle_search.py) 실측 근거:
+        #   block_red 2.5cm : 성공 궤적이 존재하는 시드 1/10, 시드별 최선 tips_best 중앙 2
+        #   duck_lamp        : 성공 궤적이 존재하는 시드 7/10, 최선 고정 궤적 6/10,
+        #                      시드별 최선 tips_best 중앙 4 / max 5
+        # 2.5cm 블록은 사람 크기 손에 너무 작아 **3지 접촉이 기하적으로 성립하지 않는다**
+        # (지문이 1~2개만 닿는다). 큰 물체가 (1) 달성 가능한 상한을 올리고, (2) 실제
+        # 목표인 FOUP에 더 충실하며, (3) 비볼록 접촉 — Unity 대비 SuperDex를 택한 근거
+        # 자체 — 를 시험한다.
+        self.object_prefab = str(c.get("object_prefab", DUCK_LAMP_PREFAB))
 
         # SuperDex 내부 스레딩. 실측: 0(단일) 311 steps/s vs -1(자동) 468 steps/s = 1.5배.
         # 기본값을 -1로 둔다 — 공짜로 얻는 속도다.
@@ -202,7 +216,7 @@ class Dg5fGraspEnv(gym.Env):
         self.pose_ctrl.initialize(True)
 
         physics.prefab.add_to_scene(
-            prefab_path=str(resolve_asset(BLOCK_PREFAB)),
+            prefab_path=str(resolve_asset(self.object_prefab)),
             root_path=str(get_assets_root()),
             scene=self.scene,
             params=physics.prefab.PrefabParams(name="block", translation=[0.0, 0.0, 0.4]),
