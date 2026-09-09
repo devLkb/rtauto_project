@@ -429,11 +429,15 @@ SUPERDEX_OFFICIAL_TAG = _env("RTAUTO_SUPERDEX_OFFICIAL_TAG", "@superdex")
 # 손을 플랜지에 붙일 때의 회전 (쿼터니언 x, y, z, w). 하드코딩이 아니라 캘리브레이션
 # 상수이므로 정본을 여기 하나만 둔다(원칙 1).
 #
-# ⚠️ **아직 확정값이 아니다 — 기본값은 회전 없음(identity)이다.** 공식 fr3 조합은 Z축
-# 180°(0,0,1,~0)를 쓰지만 그것은 fr3 플랜지 규약이라 UR16e에 그대로 베끼면 안 된다.
-# 우리 결합 URDF의 `tool0_to_dg_mount`가 origin identity로 붙이므로 identity가 URDF와
-# 일치하는 출발점이다. Studio에서 엄지 방향을 눈으로 확인해 확정하고, 다르면 .env의
-# RTAUTO_SUPERDEX_HAND_MOUNT_QUAT 로 덮어쓴 뒤 이 주석을 정정한다.
+# ✅ **확정됐다 (2026-09-09): identity(회전 없음).** 결합 bot의 손 자세를 정본인 결합
+# URDF(`tool0_to_dg_mount`, parent `tool0`, origin identity)와 대조해 **최대 차이
+# 1.49e-08**로 일치함을 확인했다 — `superdex/scripts/gate3_verify_hand_mount.py`.
+#
+# ⚠️ 이 값은 **눈으로 판정하면 안 된다.** 손이 플랜지 축으로 180° 돌아가 붙어도 자기접촉
+# 0·관절 한계 일치·시뮬 안정성이 전부 통과하고, 오른손은 여전히 오른손으로 보인다.
+# 공식 fr3 조합은 Z축 180°(0,0,1,~0)를 쓰지만 그것은 fr3 플랜지 규약이라 베끼면 안 된다.
+# 바꿔야 할 일이 생기면 .env의 RTAUTO_SUPERDEX_HAND_MOUNT_QUAT로 주고 위 스크립트로
+# 다시 판정한다.
 SUPERDEX_HAND_MOUNT_QUAT = tuple(
     float(v) for v in _env("RTAUTO_SUPERDEX_HAND_MOUNT_QUAT", "0,0,0,1").split(",")
 )

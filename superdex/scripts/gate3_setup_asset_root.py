@@ -193,7 +193,9 @@ def main() -> None:
         print(f"[생성] {combo.relative_to(REPO_ROOT)}  (커밋 대상)")
         print(f"       base = {cfg.superdex_arm_asset_ref()}")
         print(f"       hand = {cfg.superdex_hand_asset_tagged_ref()}")
-        print(f"       mount quat (x,y,z,w) = {cfg.SUPERDEX_HAND_MOUNT_QUAT}  ← 미확정")
+        # 2026-09-09 확정 — 정본 URDF 와 수치 대조로 판정했다.
+        # 판정 스크립트: gate3_verify_hand_mount.py (최대 차이 1.49e-08)
+        print(f"       mount quat (x,y,z,w) = {cfg.SUPERDEX_HAND_MOUNT_QUAT}")
         print()
 
     if arm.is_file():
@@ -203,7 +205,8 @@ def main() -> None:
         print("=" * 72)
         if ok:
             print("=== 게이트 3 배선: 통과 — 결합 bot 이 로드된다 ===")
-            print("    다음: 관절 한계·자기충돌 검증 (docs/SUPERDEX_POC_PLAN.md §5 게이트 3 판정)")
+            print("    본 판정   : python -u superdex/scripts/gate3_verify_combined_bot.py")
+            print("    손 장착   : python -u superdex/scripts/gate3_verify_hand_mount.py")
         else:
             print("=== 게이트 3 배선: 실패 — 위 에러를 먼저 해소하라 ===")
             sys.exit(1)
@@ -234,7 +237,13 @@ def main() -> None:
         "=== 배선 통과. 남은 것은 팔 asset 하나뿐이다 (사람이 Studio 에서 만든다) ===\n"
         "\n"
         "  Studio 실행:  superdex-studio\n"
-        f"  1) File > Add Folder to Workspace…  ->  {arm.parent}\n"
+        # ⚠️ 여기서 **asset 루트(bots/)** 를 등록해야 한다. 산출물 폴더(arms/<ur>/)만
+        # 등록하면 결합 파일(arm_hand_combos/…)이 Asset Browser 트리에 아예 안 보인다.
+        # 실제로 그렇게 안내해 사용자가 결합 bot 을 못 찾았다(2026-09-09).
+        f"  1) File > Add Folder to Workspace…  ->  {our_bots}\n"
+        f"       (asset 루트다. 여기 아래에 arms/ 와 arm_hand_combos/ 가 함께 보인다)\n"
+        f"  1-1) Asset Browser 트리에서 arms/{cfg.UR_TYPE} 폴더를 클릭해 현재 폴더로 만든다\n"
+        f"       -> {arm.parent}\n"
         f"  2) File > Import > URDF…            ->  {src_urdf}\n"
         "  3) 마법사 General 탭에 넣을 값:\n"
         f"       Name        = {cfg.UR_TYPE}      (-> {arm.name})\n"
