@@ -113,6 +113,10 @@ def main() -> None:
     ap.add_argument("--checkpoint-every", type=int, default=20,
                     help="N 이터레이션마다 중간 체크포인트를 남긴다(0=끄기). 곡선이 정체했을 때 " +
                          "그 정책의 결정론적 성능을 eval_policy.py 로 직접 재려면 필요하다")
+    ap.add_argument("--resume-from", default=None,
+                    help="이 체크포인트에서 이어서 학습한다. CLAUDE.md 원칙 2의 '이어서 시작' " +
+                         "요구사항 — 필요한 파일 조건은 체크포인트 폴더 하나뿐이다. " +
+                         "예: superdex/results/dg5f_grasp_v7_iter0080")
     ap.add_argument("--run-name", default=None, help="산출물 폴더 이름")
     args = ap.parse_args()
 
@@ -179,6 +183,19 @@ def main() -> None:
     # (v1 실측: 학습 중 ~20 vs 결정론적 평가 45.1). 중간 체크포인트가 있으면
     # eval_policy.py 로 성공률을 직접 재서 판정할 수 있다.
     algo = config.build_algo()
+
+    # 이어서 시작 (원칙 2). 체크포인트 폴더 하나만 있으면 되고, 그 외 추가 조건은 없다 —
+    # 환경 설정(--env-config)과 하이퍼파라미터는 이 명령의 인자로 다시 주어야 한다는 점만
+    # 주의한다(체크포인트에 학습 스크립트 인자는 저장되지 않는다).
+    if args.resume_from:
+        rp = Path(args.resume_from)
+        if not rp.is_absolute():
+            rp = REPO_ROOT / rp
+        if not rp.is_dir():
+            sys.exit(f"이어받을 체크포인트 폴더가 없다: {rp}")
+        algo.restore_from_path(str(rp))
+        print(f"이어받음   : {rp.relative_to(REPO_ROOT).as_posix()}")
+
     for i in range(args.iters):
         result = algo.train()
         env_runners = result.get("env_runners", {})
