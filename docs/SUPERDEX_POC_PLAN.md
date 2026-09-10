@@ -428,6 +428,7 @@ superdex/.venv/Scripts/Activate.ps1
 | **DR 회복 곡선**(체크포인트 계열) | `python -u superdex/scripts/gate4_dr_recovery.py --run dg5f_grasp_dr2 --start superdex/results/dg5f_grasp_v8_iter0300` |
 | **물체 일반화 스윕** | `python -u superdex/scripts/gate4_object_sweep.py --checkpoint superdex/results/dg5f_grasp_v8_iter0250` |
 | **DR 실패 원인 분해**(질량/마찰) | `python -u superdex/scripts/gate4_dr_failure_analysis.py --checkpoint superdex/results/dg5f_grasp_dr2_iter0250` |
+| **파지를 눈으로 본다**(뷰어 창) | `python -u superdex/scripts/watch_grasp.py` — `--baseline` 로 학습 전 동작과 비교, `--slowdown 4` 로 느리게, `--record out.mp4` 로 동영상 저장(GPU·디스플레이 필요) |
 | **파지 한계 질량 격자** | `python -u superdex/scripts/gate4_payload_limit.py --checkpoint superdex/results/dg5f_grasp_v8_iter0300` |
 | **DR 켜고 학습** | `... train_ppo.py --env dg5f_grasp --iters 300 --num-env-runners 0 --resume-from <체크포인트> --env-config '{\"episode_seconds\": 1.0, \"dr_mass_range\": [0.25, 4.0], \"dr_friction_range\": [0.1, 0.7]}'` |
 | **과제 가해성 판정**(오라클) | `python superdex/scripts/gate2_oracle_search.py --seeds 10` |
