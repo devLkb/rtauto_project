@@ -70,6 +70,9 @@ from superdex.physics.paths import get_assets_root, resolve_asset  # noqa: E402
 
 BLOCK_PREFAB = "prefabs/box_and_blocks/block_red.mochi_prefab"       # 2.5cm / 15.6g
 DUCK_LAMP_PREFAB = "prefabs/duck_lamp/duck_lamp_recumbent.mochi_prefab"  # 11.9x11.0x7.5cm / 545g
+SPAWN_MODE_PALM = "palm"
+SPAWN_MODE_WORKSPACE = "workspace"
+
 CONTROL_MODE_ARM_HAND26 = "arm_hand26"
 CONTROL_MODE_HAND20 = "hand20"
 ARM_DOFS = 6
@@ -115,6 +118,54 @@ class Dg5fGraspEnv(gym.Env):
         #   0.015 -> 13%,  0.025 -> 0%,  0.035 -> 0%
         # 0.015를 기본값으로 둔다: 학습 여지가 있으면서 완전 불가능하지는 않은 지점.
         self.place_jitter = float(c.get("place_jitter", 0.015))
+
+        # --- 물체 배치 방식 -------------------------------------------------------
+        # ⚠️ `place` 는 **물체마다 사람이 맞춘 상수**다. 게이트 4 에서 이 값이 성공을
+        # 지배했다(paper_cup 은 배치만 바꿔 성립률 30 % -> 100 %). 프로젝트 최종 목적이
+        # 범용 파지로 바뀐 뒤로 이건 편의가 아니라 **고쳐야 할 결함**이다(로드맵 v17).
+        #
+        #   "palm"      : 기존 방식. 손바닥 기준 offset 에 스폰한다 -> 물체가 항상 파지
+        #                 영역 안에 나타나므로 정책이 **접근을 배울 필요가 없다.**
+        #                 게이트 0·2·4 의 모든 실측이 이 조건이라 재현용으로 보존한다.
+        #   "workspace" : 물체를 **지면 위 무작위 위치**에 놓고 팔이 스스로 접근하게 한다.
+        #                 사람이 정한 물체별 상수가 사라진다. 팔 6축이 선행 조건이므로
+        #                 arm_hand26 에서만 쓸 수 있다.
+        #
+        # 기본값은 아직 "palm" 이다 — 전환하려면 학습으로 검증해야 한다(아래 주석 참고).
+        self.spawn_mode = str(c.get("spawn_mode", SPAWN_MODE_PALM))
+        if self.spawn_mode not in (SPAWN_MODE_PALM, SPAWN_MODE_WORKSPACE):
+            raise ValueError(
+                "spawn_mode 는 'palm' 또는 'workspace' 여야 한다 "
+                f"(실제 {self.spawn_mode!r})"
+            )
+        if self.spawn_mode == SPAWN_MODE_WORKSPACE and not self._uses_combined_bot:
+            raise ValueError(
+                "spawn_mode='workspace' 는 팔이 있어야 성립한다 — "
+                "control_mode='arm_hand26' 과 함께 써라. 손 단독(hand20)으로는 "
+                "물체가 손에서 떨어진 곳에 놓이면 접근할 방법이 없다."
+            )
+
+        # 커리큘럼 손잡이. 0 이면 팔 시작 자세 바로 아래(가장 쉬움), 1 이면 측정된 도달
+        # 영역 전체. 계약 §5-3 의 "초기에는 위치를 가까이 두어 손20 의 유효 조절부터
+        # 배운다" 를 이 값으로 구현한다. 학습 중 올려 가며 범위를 넓힌다.
+        self.spawn_radius_frac = float(c.get("spawn_radius_frac", 1.0))
+        if not 0.0 <= self.spawn_radius_frac <= 1.0:
+            raise ValueError(f"spawn_radius_frac 는 0~1 이어야 한다 (실제 {self.spawn_radius_frac})")
+
+        # 접근 보상 — **potential-based shaping** 이다 (Ng et al. 1999).
+        # 물체가 멀어지면 기존 r_reach/r_near 는 exp(-8~10*d) 라 50 cm 에서 사실상 0 이 돼
+        # **gradient 가 사라진다.** 그렇다고 밀집 항을 그냥 더하면 v6 에서 겪은 보상 해킹
+        # 채널이 된다(손을 물체 근처에 두기만 해도 리턴을 벌었다 — step() 주석 참고).
+        # F(s,s') = gamma*Phi(s') - Phi(s), Phi = -dist 형태는 **최적 정책을 바꾸지 않는다**는
+        # 것이 증명돼 있어, 탐색만 돕고 새 해킹 채널을 열지 않는다.
+        # palm 모드에서는 0 이 기본이다 — 기존 실측 조건을 한 톨도 바꾸지 않기 위해서다.
+        default_shaping = 1.0 if self.spawn_mode == SPAWN_MODE_WORKSPACE else 0.0
+        self.approach_shaping = float(c.get("approach_shaping", default_shaping))
+
+        # 낙하 판정 여유. palm 모드의 기존 상수 0.25 m 를 이름만 붙인 것이다.
+        # workspace 모드에서는 물체가 처음부터 멀리 있으므로 **스폰 거리 기준 상대값**으로
+        # 쓴다 — 그렇지 않으면 리셋 직후 dist > 0.25 로 즉시 낙하 판정이 나 버린다.
+        self.drop_margin = float(c.get("drop_margin", 0.25))
         self.start_frac = float(c.get("start_frac", 0.25))
         self.hold_radius = float(c.get("hold_radius", 0.06))
         # 지문 접촉 판정 임계 [N], 그리고 성공에 요구하는 지문 접촉 개수.
@@ -356,8 +407,108 @@ class Dg5fGraspEnv(gym.Env):
                 )
             self.tip_actors.append(a)
 
+        # workspace 스폰에 필요한 두 값을 **실측**한다 — 물체 크기도 팔 도달범위도
+        # 타이핑한 상수로 두지 않는다(원칙 1). 둘 다 생성 시 1회만 계산한다.
+        if self.spawn_mode == SPAWN_MODE_WORKSPACE:
+            self._rest_z = self._measure_rest_height()
+            self._reach_lo, self._reach_hi, self._base_xy = self._measure_reach_envelope()
+
         # 리셋용 기준 상태. 블록 위치는 리셋 때 set_root_transform으로 다시 흔든다.
         self._base_state = self.scene.capture_state()
+
+    def _sample_workspace_spawn(self, tf):
+        """지면 위 무작위 위치를 뽑는다 — 사람이 정한 물체별 offset 없이.
+
+        `spawn_radius_frac` 이 커리큘럼이다:
+          0 -> 팔 시작 자세의 파지중심 **바로 아래** 지면 (가장 쉬움. 팔을 거의 안 움직여도 된다)
+          1 -> 측정된 도달범위 전체에서 균일 샘플
+        두 점을 선형보간하므로 학습 중 값을 올리면 난이도가 연속적으로 넓어진다.
+        """
+        center = self._grasp_center(tf)
+        easy_xy = center[:2]
+
+        r = self.np_random.uniform(self._reach_lo, self._reach_hi)
+        th = self.np_random.uniform(-np.pi, np.pi)
+        far_xy = self._base_xy + r * np.array([np.cos(th), np.sin(th)])
+
+        xy = easy_xy + self.spawn_radius_frac * (far_xy - easy_xy)
+        xy = xy + self.np_random.uniform(-self.place_jitter, self.place_jitter, size=2)
+        return np.array([xy[0], xy[1], self._rest_z], dtype=float)
+
+    def _measure_rest_height(self, settle_steps=400):
+        """물체가 지면에 안착했을 때 root 의 z. 물체마다 다르므로 **측정**한다.
+
+        AABB 를 직접 못 읽는다(rigid actor 에 node position 컴포넌트가 없다 — 실측).
+        그래서 로봇에서 충분히 떨어진 곳에 떨어뜨려 정착시킨 뒤 z 를 읽는다.
+        측정이 끝나면 중력·물체 상태를 원래대로 되돌린다.
+        """
+        saved = self.block.get_root_transform()
+        probe = physics.TransformRT()
+        probe.translation = [5.0, 5.0, 0.5]      # 로봇·지면 다른 물체와 무관한 위치
+        self.block.set_root_transform(probe)
+        self.block.set_velocity([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
+        self.scene.set_gravity([0, 0, -9.81])
+        prev_z = None
+        for _ in range(settle_steps):
+            self.scene.step(self.dt)
+            z = float(self.block.get_root_transform().translation[2])
+            if prev_z is not None and abs(z - prev_z) < 1e-6:
+                break
+            prev_z = z
+        rest_z = float(self.block.get_root_transform().translation[2])
+        # 원상복구 — 이 측정이 이후 상태에 남지 않게 한다.
+        self.scene.set_gravity([0, 0, 0])
+        self.block.set_root_transform(saved)
+        self.block.set_velocity([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
+        return rest_z
+
+    def _measure_reach_envelope(self, samples=400):
+        """팔이 실제로 닿는 수평 거리 범위를 **로봇 모델에서** 얻는다.
+
+        UR16e 리치 900 mm 같은 숫자를 코드에 박지 않는다(원칙 1) — 관절 한계 안에서
+        무작위 자세를 만들어 FK 로 파지중심을 구하고, 베이스 기준 수평거리의 분위수를
+        쓴다. 물리 스텝이 없어 싸다.
+
+        반환: (lo, hi, base_xy) — lo/hi 는 **샘플링용** 수평거리 [m], base_xy 는 베이스 xy.
+        부수효과로 `self._reach_max`(실측 최대 도달거리)를 채운다.
+
+        ⚠️ lo/hi 는 특이점 부근을 피하려고 분위수로 자른 값이라 **실제 최대보다 작다.**
+        "이 위치가 도달 가능한가" 를 판정할 때는 hi 가 아니라 `_reach_max` 를 써야 한다 —
+        예컨대 팔의 영점 자세(거의 완전 신전)는 0.925 m 로 hi(0.874 m)를 넘지만
+        당연히 도달 가능한 자세다.
+        """
+        saved_pose = physics.DynamicArrayReal(self.n_dofs)
+        self.actor.get_articulated_pose(saved_pose)
+
+        tf = self._link_positions()
+        base_xy = np.asarray(tf[0].translation, dtype=float)[:2].copy()
+
+        radii = []
+        arm_lo = self.joint_low[self.arm_dofs]
+        arm_hi = self.joint_high[self.arm_dofs]
+        pose = np.asarray([saved_pose[i] for i in range(self.n_dofs)], dtype=float)
+        rng = np.random.default_rng(0)      # 결정론적 — 같은 로봇이면 같은 envelope
+        for _ in range(samples):
+            q = pose.copy()
+            q[self.arm_dofs] = rng.uniform(arm_lo, arm_hi)
+            arr = physics.DynamicArrayReal(q.tolist())
+            self.actor.set_articulated_pose_from_joints(arr)
+            tf = self._link_positions()
+            c = self._grasp_center(tf)
+            if c[2] <= self._rest_z:
+                continue            # 지면 아래로 내려간 자세는 물체를 놓을 수 없다
+            radii.append(float(np.linalg.norm(c[:2] - base_xy)))
+
+        self.actor.set_articulated_pose_from_joints(saved_pose)
+        if len(radii) < 20:
+            raise RuntimeError(
+                f"도달범위 측정 표본이 너무 적다({len(radii)}) — 관절 한계나 지면 높이를 확인하라."
+            )
+        # 극단 자세(특이점 부근)를 피해 분위수로 자른다.
+        lo = float(np.quantile(radii, 0.25))
+        hi = float(np.quantile(radii, 0.90))
+        self._reach_max = float(np.max(radii))
+        return lo, hi, base_xy
 
     # ------------------------------------------------------------------ helpers
     def _pose_at(self, frac):
@@ -471,12 +622,19 @@ class Dg5fGraspEnv(gym.Env):
         self.actor.set_articulated_pose_from_joints(arr)
 
         tf = self._link_positions()
-        jitter = self.np_random.uniform(-self.place_jitter, self.place_jitter, size=3)
-        spawn = self._palm_to_world(tf, self.place + jitter)
+        if self.spawn_mode == SPAWN_MODE_WORKSPACE:
+            spawn = self._sample_workspace_spawn(tf)
+        else:
+            jitter = self.np_random.uniform(-self.place_jitter, self.place_jitter, size=3)
+            spawn = self._palm_to_world(tf, self.place + jitter)
         t = physics.TransformRT()
         t.translation = [float(v) for v in spawn]
         self.block.set_root_transform(t)
         self.block.set_velocity([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
+
+        # 접근 shaping 과 낙하 판정의 기준. 리셋 시점의 파지중심-물체 거리를 기억한다.
+        self._spawn_dist = float(np.linalg.norm(spawn - self._grasp_center(tf)))
+        self._prev_dist = self._spawn_dist
 
         # restore_state 뒤에 적용한다 — 복원이 actor 속성을 되돌리는지 확인하지 않고
         # 순서에 의존하지 않기 위해서다. 매 리셋 기준값에서 다시 계산하므로 표류가 없다.
@@ -600,7 +758,21 @@ class Dg5fGraspEnv(gym.Env):
         reward += (-self.action_rate_penalty * rate
                    + self.force_penalty * r_force)
 
-        dropped = gravity_on and dist > 0.25
+        # 접근 shaping (potential-based). Phi = -dist, gamma=1 로 두면 F = -(d' - d) 로
+        # **거리를 줄인 만큼만** 보상한다. 합이 telescoping 이라 에피소드 전체 리턴에
+        # 주는 영향이 Phi(끝) - Phi(시작) 뿐이고, 최적 정책이 바뀌지 않는다(Ng et al. 1999).
+        # palm 모드는 가중치 0 이 기본이라 기존 실측 조건이 그대로 보존된다.
+        if self.approach_shaping:
+            reward += self.approach_shaping * (self._prev_dist - dist)
+        self._prev_dist = dist
+
+        # 낙하 판정. palm 모드는 기존 상수(0.25 m)와 동일하다.
+        # workspace 모드는 물체가 처음부터 멀리 있으므로 **스폰 거리 기준 상대값**이어야
+        # 한다 — 절대 0.25 를 쓰면 리셋 직후 즉시 낙하로 종료돼 학습이 시작조차 못 한다.
+        drop_at = self.drop_margin
+        if self.spawn_mode == SPAWN_MODE_WORKSPACE:
+            drop_at = max(drop_at, self._spawn_dist + self.drop_margin)
+        dropped = gravity_on and dist > drop_at
         terminated = bool(dropped)
         if dropped:
             reward -= 5.0
