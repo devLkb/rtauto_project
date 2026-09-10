@@ -83,7 +83,24 @@ def _quat_to_R(q) -> np.ndarray:
 
 
 def hand_pose_in_tool0(prefab, suffixes: dict[str, str]) -> dict[str, np.ndarray]:
-    """베이스를 용접한 홈 자세에서 `tool0` 좌표계로 표현한 손 기하."""
+    """베이스를 용접한 **관절 0 자세**에서 `tool0` 좌표계로 표현한 손 기하.
+
+    ⚠️ `default_pose` 를 반드시 0 으로 맞추고 비교한다 (2026-09-10 수정).
+
+    공식 Tesollo asset(`dg5f_long_right.superdex_bot`)은 `defaultPose` 로 **손가락이 굽은
+    자세**를 갖고 배포된다 — 20 관절 전부 비영(15°, -55°, -6° ...). 반면 URDF 에는
+    defaultPose 개념이 없어 0 자세로 로드된다. 이걸 그대로 비교하면 **서로 다른 자세를
+    비교**하게 돼 손끝이 8.18e-02 m 어긋나고, 스크립트가 이를 "장착 회전 오류"로 오진한다.
+    실제로는 마운트가 정확한데도 그렇다 (손바닥 위치·축은 0 차이로 멀쩡하다).
+
+    default_pose 를 양쪽 다 0 으로 맞추면 최대 차이 **1.49e-08** 로 일치한다 — 이것이
+    2026-09-09 에 기록된 판정값이다. 즉 이 정규화가 그때의 비교 조건을 복원한다.
+    """
+    dp = prefab.default_pose
+    if len(dp) and any(abs(float(v)) > 1e-12 for v in dp):
+        for i in range(len(dp)):
+            dp[i] = 0.0
+        prefab.default_pose = dp
     prefab.joints[0].type = physics.ArticulatedJointType.HARD
     scene = physics.create_scene("hand_mount_cmp")
     ctx = robotics.create_context()

@@ -117,12 +117,52 @@ FOUP 규모·다물체 학습에서 다시 병목이 된다)과 **U8**(DG-5F-M �
 일반에 대한 것이다. 게이트 4 의 **물체 일반화 결과가 이제 부차 확인이 아니라 핵심 지표**가
 된다).
 
-1인 풀타임 체제. 작업 머신 2대 (Windows):
+개정 2026-09-10 (v17.1 — **작업 머신 3대째 추가: 개인 노트북(Linux).** 개발 환경이
+개인용 노트북으로 옮겨졌다. LG gram 16 `16ZD90TP-GX56K` — Intel Core Ultra 5 225H
+(14C/14T), Intel Arc 내장 GPU, 16 GB RAM, **Ubuntu 24.04.4 LTS**. 아래 머신 표와
+[`SUPERDEX_POC_PLAN.md`](SUPERDEX_POC_PLAN.md) §8 에 반영했다.
 
-| | CPU | GPU | RAM |
-|---|---|---|---|
-| **회사** (주 작업, 성능 판정 기준) | Ryzen 5 7600 (6C/12T) | RTX 2080 8 GB (Turing, bf16 불가) | 32 GB |
-| 집 | Ryzen 7 7800X3D (8C/16T) | RTX 4070 Ti 12 GB (Ada) | 32 GB |
+v15.1 이 "두 머신 모두 CUDA GPU가 있다"를 전제로 박아 둔 기본값들이 이 머신에서
+**전부 어긋난다** — `RTAUTO_SUPERDEX_GPUS_PER_LEARNER=1`(CUDA 없음), torch `cu124`
+휠(CPU 휠이어야 함), bf16/fp16 혼합정밀도 논의(CPU learner 라 무의미), 그리고
+"작업 머신 2대 (Windows)"라는 서술(Linux 다). 정정 대상은
+`requirements-superdex.txt`·`.env.example`·`config/rtauto_config.py`·
+[`PYTHON_ENV_SETUP.md`](PYTHON_ENV_SETUP.md) 이며 같은 날 함께 고쳤다.
+
+**성능 판정 기준은 바뀌지 않는다 — 여전히 회사 머신이다.** 개인 노트북은 CPU learner
+에 저전력 코어(2 코어가 2.5 GHz LPE)를 포함하고 RAM 이 절반이라 throughput 비교
+대상이 아니다. 게이트 판정·회귀 기준에 이 머신의 수치를 쓰지 않는다.
+
+✅ **부트스트랩 중 발견하고 해소한 것 — 게이트 3 검증 스크립트의 재현성 버그.** 새
+클론에서 v16 이 든 "손 장착 1.49e-08 일치"가 재현되지 않고 8.18e-02 가 나왔다. 원인은
+로봇도 asset 도 마운트도 아니라 **비교 방법**이었다 — 공식 Tesollo asset 은 `defaultPose`
+로 손가락이 굽은 자세를 갖고 배포되는데(20관절 전부 비영) URDF 는 0 자세라, 서로 다른
+자세를 비교하고 있었다. `default_pose` 를 0 으로 정규화하면 **1.49e-08 로 정확히
+재현**된다. `gate3_verify_hand_mount.py` 를 그렇게 고쳤다(새 머신이면 어디서든 터졌을
+버그라 원칙 2 사안이다). **게이트 3 판정과 v16 의 근거는 유효하며, 이제 Linux 에서
+독립적으로 재확인됐다.** 상세는 [`SUPERDEX_POC_PLAN.md`](SUPERDEX_POC_PLAN.md) 게이트 3
+절의 U9 블록 참고).
+
+1인 풀타임 체제. 작업 머신 3대 (Windows 2 + Linux 1):
+
+| | OS | CPU | GPU | RAM |
+|---|---|---|---|---|
+| **회사** (주 작업, 성능 판정 기준) | Windows | Ryzen 5 7600 (6C/12T) | RTX 2080 8 GB (Turing, bf16 불가) | 32 GB |
+| 집 | Windows | Ryzen 7 7800X3D (8C/16T) | RTX 4070 Ti 12 GB (Ada) | 32 GB |
+| **개인 노트북** (2026-09-10 추가) | Ubuntu 24.04.4 LTS | Core Ultra 5 225H (14C/**14T**, HT 없음) | Intel Arc 내장 (Arrow Lake-P) — **CUDA 없음** | **16 GB** |
+
+> ⚠️ **개인 노트북은 앞의 두 대와 성격이 다르다 — 세 가지가 동시에 깨진다.**
+> (1) **NVIDIA GPU가 없다** — `torch`는 CPU wheel을 쓰고 learner도 CPU다.
+> `RTAUTO_SUPERDEX_GPUS_PER_LEARNER`의 코드 기본값 `1`을 그대로 쓰면 Ray가 GPU를
+> 못 잡아 실패하므로 이 머신의 `.env`에서 **`0`으로 내린다**(원칙 1 — 머신마다 다른
+> 값은 `.env`). (2) **RAM 이 절반(16 GB)** 이라 env runner 를 스레드 수만큼 올리면
+> 앞의 두 대에서 통하던 설정이 여기서 먼저 메모리로 막힌다. (3) **유일한 Linux 머신**
+> 이라 경로·활성화 스크립트가 Windows 예시와 다르다 — 문서의 bash 블록을 쓴다.
+> 상세와 대응은 [`SUPERDEX_POC_PLAN.md`](SUPERDEX_POC_PLAN.md) §8.
+>
+> **성능 판정 기준은 여전히 회사 머신이다.** 개인 노트북의 throughput 수치를 게이트
+> 판정이나 회귀 기준에 쓰지 않는다 — CPU learner + 저전력 코어라 비교 대상이 아니다.
+> 이 머신의 용도는 **코드·문서 작업과 소규모 검증**이다.
 
 정책 계약 상세는 [`DG5F_GRASP_LIFT.md`](DG5F_GRASP_LIFT.md), SDK 실측 근거는
 [`TESOLLO_SDK_기술부채_조사.md`](docs2/TESOLLO_SDK_기술부채_조사.md)를 우선한다.

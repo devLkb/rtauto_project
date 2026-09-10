@@ -186,10 +186,12 @@ IPv4>`를 설정하고 Unity PC의 방화벽에서 UDP 5006 인바운드를 허�
   것이므로 `git rm --cached -r . && git reset --hard`로 재정규화한다.
 - Unity가 반응하지 않음: Unity Play 상태, `.env`의 IP/포트, 방화벽을 확인한다.
 
-## 부록 — SuperDex 전용 가상환경 (브랜치 `SuperDexTest` 한정)
+## 부록 — SuperDex 전용 가상환경 (파지 RL의 현행 경로)
 
-`SuperDexTest` 브랜치에서 진행 중인 SuperDex PoC는 **Python 3.12 전용 wheel**을 쓴다.
-위 §2의 공용 venv(3.10.11 — mediapipe + ML-Agents)와 **섞지 않고 분리**한다.
+DG5F 파지 강화학습은 **SuperDex 로 이관됐고 2026-09-09 채택이 확정돼 `main` 에 머지됐다**
+(이전 판이 적어 둔 "브랜치 `SuperDexTest` 한정"은 더 이상 사실이 아니다). SuperDex 는
+**Python 3.12 전용 wheel** 이라 위 §2의 공용 venv(3.10.11 — mediapipe + ML-Agents)와
+**섞지 않고 분리**한다.
 
 | venv | Python | 용도 | 위치 |
 |---|---|---|---|
@@ -199,6 +201,108 @@ IPv4>`를 설정하고 Unity PC의 방화벽에서 UDP 5006 인바운드를 허�
 `.gitignore`의 `.venv/` 패턴이 모든 깊이에서 매칭하므로 `superdex/.venv/`는 이미 추적
 제외다. 요구사항은 [`../requirements-superdex.txt`](../requirements-superdex.txt)가 정본이다.
 
-생성·설치·검증 절차는 **[`SUPERDEX_POC_PLAN.md`](SUPERDEX_POC_PLAN.md) §11 게이트 0 실행
-절차**에 단계별로 적혀 있다 — 여기서 중복하지 않는다. 이 브랜치를 쓰지 않는다면 이 절은
-건너뛰어도 §2~§5의 텔레옵·학습 절차에 영향이 없다.
+게이트별 배경·판정 기준은 [`SUPERDEX_POC_PLAN.md`](SUPERDEX_POC_PLAN.md) 가 정본이다.
+아래는 **새 머신에서 clone 직후부터 결합 bot 이 로드되기까지** 실제로 밟아야 하는
+최소 경로다(원칙 2). 2026-09-10 개인 노트북(Ubuntu 24.04.4)에서 처음부터 수행해 검증했다.
+
+### A-1. Python 3.12 확인
+
+Windows 는 python.org installer, Ubuntu 24.04 는 **시스템 python3.12 가 이미 있다**
+(`3.12.3` 확인). 없으면 `sudo apt install -y python3.12 python3.12-venv`.
+
+```powershell
+py -3.12 --version
+```
+
+```bash
+python3.12 --version
+```
+
+### A-2. venv 생성·활성화
+
+**터미널 1 (리포 루트)** — 이 터미널을 A-5 까지 계속 쓴다.
+
+```powershell
+py -3.12 -m venv superdex/.venv
+superdex/.venv/Scripts/Activate.ps1
+python -m pip install --upgrade pip wheel
+```
+
+```bash
+python3.12 -m venv superdex/.venv
+source superdex/.venv/bin/activate
+python -m pip install --upgrade pip wheel
+```
+
+프롬프트 앞에 `(.venv)` 가 붙어야 한다.
+
+### A-3. torch 를 **먼저** 설치한다 — 머신마다 다르다
+
+`requirements-superdex.txt` 에 torch 가 없는 것은 의도된 것이다(빌드가 머신마다 다르다).
+
+| 머신 | GPU | 명령 |
+|---|---|---|
+| 회사 / 집 (Windows) | RTX 2080 / 4070 Ti | `pip install torch --index-url https://download.pytorch.org/whl/cu124` |
+| **개인 노트북 (Ubuntu)** | Intel Arc 내장 — **CUDA 없음** | `pip install torch --index-url https://download.pytorch.org/whl/cpu` |
+
+```bash
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+```
+
+- CUDA 머신: `True` 여야 한다.
+- **개인 노트북: `False` 가 정상이다** (실측 `2.14.0+cpu`). CPU learner 로도 진행되지만
+  느리므로 성능 판정 기준으로 쓰지 않는다.
+
+### A-4. SuperDex 설치
+
+```bash
+python -m pip install -r requirements-superdex.txt
+python -m pip check
+python -c "import superdex.physics, superdex.robotics; print('superdex import OK')"
+```
+
+`No broken requirements found.` 와 `superdex import OK` 가 나와야 한다. 소스 빌드는
+필요 없다 — Windows/Linux/macOS 모두 pre-built wheel 이 있다.
+
+### A-5. 공식 asset 클론 + `.env` + asset 루트 생성
+
+공식 Tesollo 손 asset 은 **wheel 에 없고 `project_superdex` 클론 안에만 있다.** 이 단계를
+건너뛰면 결합 bot 이 손을 찾지 못한다.
+
+```bash
+git clone --branch stable https://github.com/facebookresearch/project_superdex.git \
+    ~/workspace/project_superdex
+```
+
+`stable` = `v1.0.0` = 커밋 `1d71509`, 약 **1.2 GB**. 리포 루트 `.env` 에 위치를 적는다
+(머신마다 다르므로 `.env` 에만 — 원칙 1):
+
+```dotenv
+RTAUTO_SUPERDEX_REPO=/home/<user>/workspace/project_superdex
+# CUDA GPU 가 없는 머신만 — 코드 기본값 1 을 0 으로 내린다
+RTAUTO_SUPERDEX_GPUS_PER_LEARNER=0
+```
+
+그다음 **한 번만** 실행해 `.superdex_root`(비추적 생성물)를 만든다:
+
+```bash
+python -u superdex/scripts/gate3_setup_asset_root.py
+```
+
+`=== 게이트 3 배선: 통과 — 결합 bot 이 로드된다 ===` 와 `links=41 joints=41` 이 나오면
+성공이다.
+
+### A-6. 설정이 그 머신 값으로 풀리는지 확인
+
+```bash
+python -c "import sys;sys.path.insert(0,'config');import rtauto_config as c;\
+print(c.superdex_assets_path(), c.SUPERDEX_ENV_RUNNERS, c.SUPERDEX_GPUS_PER_LEARNER)"
+```
+
+개인 노트북 실측: `.../project_superdex/assets 10 0` — runner 10 은
+`os.cpu_count()-4` = 14−4 에서 파생된 값이다. ⚠️ 이 파생은 **스레드만 보고 RAM 을 보지
+않는다.** 16 GB 머신에서 OOM 이 나면 `.env` 의 `RTAUTO_SUPERDEX_ENV_RUNNERS` 를 낮춘다.
+
+> ⚠️ **Studio(`superdex-studio`) 의 SDF bake 는 GUI 앱이라 자동화할 수 없다.** 새 팔
+> asset 을 구울 때만 필요하며, 이미 구운 `superdex/assets/bots/arms/ur16e/` 가 커밋돼
+> 있어 위 절차만으로 결합 bot 이 로드된다. Linux 에서의 Studio 동작은 미확인이다.

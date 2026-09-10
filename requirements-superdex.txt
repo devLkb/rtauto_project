@@ -20,24 +20,41 @@ superdex-lab==1.0.0
 
 # RL 학습 스택. superdex-lab이 자체 의존으로 끌어올 수 있으나, RLlib 새 API 스택
 # (RLModule)을 명시적으로 요구하므로 여기서도 드러낸다.
-ray[rllib]
+# 핀 확정 2026-09-10 — 회사(Windows/CUDA)와 개인 노트북(Linux/CPU) 양쪽이 독립적으로
+# 같은 버전으로 해석됐다. 게이트 1의 `checkpoint_frequency` 블로커가 이 버전 것이다.
+ray[rllib]==2.58.0
 
-# ⚠️ torch는 여기에 넣지 않는다. ray[rllib]은 torch를 끌어오지 않고, PyPI 기본
-#    Windows wheel은 CPU 전용이다. 두 작업 머신 모두 CUDA GPU로 learner를 돌릴 계획이므로
-#    (회사 RTX 2080 8 GB — Turing이라 **bf16 불가**, 집 RTX 4070 Ti 12 GB)
-#    CUDA wheel을 별도 인덱스에서 먼저 설치한다:
-#      pip install torch --index-url https://download.pytorch.org/whl/cu124
-#    설치 후 `python -c "import torch; print(torch.cuda.is_available())"`가 True여야 한다.
-#    False면 learner를 GPU로 못 쓴다 — CPU로 돌려도 게이트 진행은 가능하다.
-#    정확한 CUDA 태그(cu124 등)는 게이트 0에서 확인해 이 주석을 정정할 것.
+# ⚠️ torch는 여기에 넣지 않는다 — **머신마다 빌드가 다르기 때문이다.** ray[rllib]은
+#    torch를 끌어오지 않고, PyPI 기본 wheel은 Windows에서 CPU 전용이다. 그래서 이
+#    파일이 아니라 아래 표대로 **먼저 따로** 설치한다(원칙 1 — 머신마다 다른 값은
+#    코드/공용 파일에 박지 않는다).
+#
+#      머신                    | GPU                      | 설치 명령
+#      ------------------------|--------------------------|------------------------------
+#      회사 (Windows)          | RTX 2080 8 GB (Turing)   | pip install torch --index-url https://download.pytorch.org/whl/cu124
+#      집 (Windows)            | RTX 4070 Ti 12 GB (Ada)  | pip install torch --index-url https://download.pytorch.org/whl/cu124
+#      개인 노트북 (Ubuntu)    | Intel Arc 내장 — CUDA X  | pip install torch --index-url https://download.pytorch.org/whl/cpu
+#
+#    설치 후 확인: `python -c "import torch; print(torch.__version__, torch.cuda.is_available())"`
+#      - CUDA 머신은 True 여야 한다. False면 learner를 GPU로 못 쓴다.
+#      - **개인 노트북은 False가 정상이다** (CUDA GPU가 없다). CPU learner로도 게이트는
+#        진행되지만 느리므로 성능 판정 기준으로 쓰지 않는다.
+#    실측 (2026-09-10): 회사 `torch 2.6.0+cu124`, 개인 노트북 `torch 2.14.0+cpu`.
+#
+#    ⚠️ **CUDA 없는 머신은 `RTAUTO_SUPERDEX_GPUS_PER_LEARNER=0`을 .env에 넣어야 한다.**
+#       코드 기본값이 1이라 그대로 두면 Ray가 GPU를 못 잡는다 — docs/SUPERDEX_POC_PLAN.md §8.
 
 # ONNX 내보내기·검증 (게이트 1의 3자 파리티 테스트).
 # RLlib 새 API 스택은 ONNX export를 지원하지 않아(ray#45526) torch.onnx.export로
 # 래퍼 nn.Module을 직접 내보낸다 — docs/SUPERDEX_POC_PLAN.md §5 게이트 1.
-onnx
-onnxruntime
+# 핀 확정 2026-09-10 — 게이트 1의 3자 파리티(최대 오차 7.18e-07)가 이 버전 조합의 것이다.
+onnx==1.22.0
+onnxruntime==1.29.0
 
-# ⚠️ ray / onnx / onnxruntime는 아직 핀이 없다 — superdex 쪽은 PyPI에서 확인해 == 로
-#    고정했지만 이 셋은 설치 시점의 최신으로 해석된다. 게이트 0-4에서 `pip freeze`로
-#    해석된 버전을 확인해 == 핀을 박고 이 블록을 지운다. 핀 없이 최신을 따라가면
-#    재현이 깨진다 — docs/SUPERDEX_POC_PLAN.md §9 R3.
+# 핀 이력 — 위 세 줄(ray / onnx / onnxruntime)은 원래 핀이 없었다. 게이트 0~4 를 돌린
+# 회사 머신(Windows/CUDA)의 `pip freeze` 실측(docs/SUPERDEX_POC_PLAN.md §9 R3)과
+# 2026-09-10 개인 노트북(Ubuntu 24.04/CPU)의 새 설치가 **독립적으로 같은 버전으로
+# 해석돼** 그 값으로 고정했다. 핀 없이 최신을 따라가면 재현이 깨진다(§9 R3).
+#
+# 참고로 superdex 계열은 처음부터 `==1.0.0` 이고, `gymnasium`·`numpy` 등은 위 패키지들의
+# 전이 의존이라 여기서 직접 핀하지 않는다 (실측: gymnasium 1.2.2, numpy 2.5.3).

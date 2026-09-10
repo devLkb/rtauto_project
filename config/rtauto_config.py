@@ -311,13 +311,18 @@ _SUPERDEX_ASSETS_RAW = _env("RTAUTO_SUPERDEX_ASSETS", "").strip()
 # 접촉 시뮬레이션 품질에 직결되는 값이라 게이트 0에서 검증 대상이다.
 SUPERDEX_SIM_HZ = int(_env("RTAUTO_SUPERDEX_SIM_HZ", "200"))
 
-# Ray env runner 수. SuperDex 기본값 32는 두 작업 머신 어느 쪽의 스레드 수도 넘는다
-# (회사 Ryzen 5 7600 = 6C/12T, 집 Ryzen 7 7800X3D = 8C/16T). train_samples.py가 가용
-# CPU에 맞춰 자동 캡하지만, learner 1개와 OS·Unity 여유를 남긴 값을 여기서 준다.
+# Ray env runner 수. SuperDex 기본값 32는 세 작업 머신 어느 쪽의 스레드 수도 넘는다
+# (회사 Ryzen 5 7600 = 6C/12T, 집 Ryzen 7 7800X3D = 8C/16T,
+#  개인 노트북 Core Ultra 5 225H = 14C/14T). train_samples.py가 가용 CPU에 맞춰 자동
+# 캡하지만, learner 1개와 OS·Unity 여유를 남긴 값을 여기서 준다.
 #
 # 머신마다 다른 값을 코드에 박지 않기 위해 **스레드 수에서 파생**시킨다(원칙 1·2) —
 # 새 PC에서 .env를 건드리지 않아도 그 머신에 맞는 값이 나와야 한다.
-#   12T -> 8, 16T -> 12. 실측 후 더 좋은 값이 나오면 .env로 덮어쓴다.
+#   12T -> 8, 16T -> 12, 14T -> 10. 실측 후 더 좋은 값이 나오면 .env로 덮어쓴다.
+#
+# ⚠️ 이 파생은 **스레드 수만 본다 — RAM 을 보지 않는다.** 개인 노트북은 RAM 이 16 GB로
+#    다른 두 대(32 GB)의 절반이라 10 runner 가 메모리에서 먼저 막힐 수 있다. OOM 이 나면
+#    이 기본값을 고치지 말고 .env 의 RTAUTO_SUPERDEX_ENV_RUNNERS 로 낮춘다.
 def _default_env_runners():
     threads = os.cpu_count() or 4
     return max(2, threads - 4)
@@ -326,8 +331,14 @@ def _default_env_runners():
 SUPERDEX_ENV_RUNNERS = int(_env("RTAUTO_SUPERDEX_ENV_RUNNERS", str(_default_env_runners())))
 
 # 물리는 CPU이지만 learner(신경망 갱신)는 GPU를 쓸 수 있다. SuperDex 기본값은 0인데
-# 두 머신 모두 CUDA GPU가 있으므로(회사 RTX 2080 8 GB / 집 RTX 4070 Ti 12 GB) 1을
+# Windows 두 대는 CUDA GPU가 있으므로(회사 RTX 2080 8 GB / 집 RTX 4070 Ti 12 GB) 1을
 # 기본으로 두고 시험한다. GPU가 없거나 torch가 CPU 빌드면 0으로 내린다.
+#
+# 🛑 **개인 노트북(2026-09-10 추가)은 여기에 해당한다** — Intel Arc 내장 GPU 뿐이라
+#    CUDA 가 없고 torch 도 CPU 빌드(2.14.0+cpu)다. 그 머신의 .env 에
+#    RTAUTO_SUPERDEX_GPUS_PER_LEARNER=0 을 넣어 두었다. 기본값 1 을 0 으로 바꾸지는
+#    않는다 — 주 작업 환경인 회사 머신에는 1 이 맞기 때문이다(원칙 1: 머신마다 다른 값은
+#    코드 기본값이 아니라 .env). docs/SUPERDEX_POC_PLAN.md §8 참고.
 #
 # ⚠️ RTX 2080은 Turing(sm_75)이라 **bf16을 지원하지 않는다.** 혼합정밀도를 켤 때
 # bf16이 아니라 fp16을 쓰거나 fp32로 둔다 — 4070 Ti(Ada)에서만 통하는 설정을 그대로
