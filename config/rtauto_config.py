@@ -287,3 +287,195 @@ def dg5f_variant():
 def dg5f_link_prefix():
     """DG5F URDF 링크 접두사 — 왼손 'll_', 오른손 'rl_' (URDF 실측)."""
     return "ll_" if DG5F_HAND == "left" else "rl_"
+
+
+# ---------------- SuperDex PoC (브랜치 SuperDexTest 전용, 2026-09-07 신설) ----------------
+# 평가 계획·게이트·회귀 기준은 docs/SUPERDEX_POC_PLAN.md가 정본이다.
+# SuperDex는 Python 3.12 전용이라 기존 3.10.11 venv와 섞지 않는다 — venv를 분리한다.
+
+# project_superdex 클론 루트. asset 트리(assets/)가 저장소 안에만 있고 wheel에는 없어서
+# 클론이 필수다. 저장소에 포함하지 않는 외부 공개 레포이므로 머신마다 위치가 다르다
+# — UR_DESCRIPTION과 같은 이유로 기본값 없음.
+SUPERDEX_REPO = _env("RTAUTO_SUPERDEX_REPO", "")
+
+# asset 트리. 비우면 SUPERDEX_REPO/assets로 파생시킨다 — 경로를 두 번 타이핑하지 않는다.
+# SuperDex 자신은 SUPERDEX_ASSETS_PATH 환경변수를 읽으므로, 런처가 이 값을 그 이름으로
+# 내보내야 한다(superdex_lab README의 계약).
+_SUPERDEX_ASSETS_RAW = _env("RTAUTO_SUPERDEX_ASSETS", "").strip()
+
+# wheel 버전 핀은 여기가 아니라 requirements-superdex.txt가 정본이다
+# (requirements-mlagents.txt와 같은 관례 — 버전 문자열을 두 곳에 타이핑하지 않는다).
+# alpha 단계라 main/최신을 따라가면 6개월간 반복 파손된다 — docs/SUPERDEX_POC_PLAN.md §9 R3.
+
+# 물리 스텝 주기. 동봉 예제(examples/control/example_osc_jsc_control.py) 실측값 1/200 s.
+# 접촉 시뮬레이션 품질에 직결되는 값이라 게이트 0에서 검증 대상이다.
+SUPERDEX_SIM_HZ = int(_env("RTAUTO_SUPERDEX_SIM_HZ", "200"))
+
+# Ray env runner 수. SuperDex 기본값 32는 두 작업 머신 어느 쪽의 스레드 수도 넘는다
+# (회사 Ryzen 5 7600 = 6C/12T, 집 Ryzen 7 7800X3D = 8C/16T). train_samples.py가 가용
+# CPU에 맞춰 자동 캡하지만, learner 1개와 OS·Unity 여유를 남긴 값을 여기서 준다.
+#
+# 머신마다 다른 값을 코드에 박지 않기 위해 **스레드 수에서 파생**시킨다(원칙 1·2) —
+# 새 PC에서 .env를 건드리지 않아도 그 머신에 맞는 값이 나와야 한다.
+#   12T -> 8, 16T -> 12. 실측 후 더 좋은 값이 나오면 .env로 덮어쓴다.
+def _default_env_runners():
+    threads = os.cpu_count() or 4
+    return max(2, threads - 4)
+
+
+SUPERDEX_ENV_RUNNERS = int(_env("RTAUTO_SUPERDEX_ENV_RUNNERS", str(_default_env_runners())))
+
+# 물리는 CPU이지만 learner(신경망 갱신)는 GPU를 쓸 수 있다. SuperDex 기본값은 0인데
+# 두 머신 모두 CUDA GPU가 있으므로(회사 RTX 2080 8 GB / 집 RTX 4070 Ti 12 GB) 1을
+# 기본으로 두고 시험한다. GPU가 없거나 torch가 CPU 빌드면 0으로 내린다.
+#
+# ⚠️ RTX 2080은 Turing(sm_75)이라 **bf16을 지원하지 않는다.** 혼합정밀도를 켤 때
+# bf16이 아니라 fp16을 쓰거나 fp32로 둔다 — 4070 Ti(Ada)에서만 통하는 설정을 그대로
+# 회사 머신에 가져오면 런타임 에러가 난다. VRAM도 8 GB로 12 GB보다 작다.
+SUPERDEX_GPUS_PER_LEARNER = int(_env("RTAUTO_SUPERDEX_GPUS_PER_LEARNER", "1"))
+
+# 학습 산출물·ONNX 정책 산출물. 저장소 상대 기본값 — 머신마다 다른 값이 아니라 리포
+# 레이아웃이라서다(TRAINING_RESULTS_DIR과 같은 관례). 다른 디스크로 빼려면 .env에서 절대경로로.
+SUPERDEX_RESULTS_DIR = _repo_path("RTAUTO_SUPERDEX_RESULTS_DIR", "superdex/results")
+SUPERDEX_POLICY_DIR = _repo_path("RTAUTO_SUPERDEX_POLICY_DIR", "superdex/policies")
+
+
+def superdex_assets_path():
+    """SuperDex asset 트리 절대경로 (설정이 없으면 None).
+
+    SUPERDEX_ASSETS_PATH 환경변수로 내보낼 값이다 — SuperDex Lab이 벤치마크·bot asset을
+    그 이름으로 찾는다.
+    """
+    if _SUPERDEX_ASSETS_RAW:
+        path = Path(_SUPERDEX_ASSETS_RAW)
+        return path.resolve() if path.is_absolute() else (REPO_ROOT / path).resolve()
+    if not SUPERDEX_REPO.strip():
+        return None
+    return (Path(SUPERDEX_REPO.strip()) / "assets").resolve()
+
+
+def superdex_python_path():
+    """SuperDex 전용 3.12 venv의 python 실행파일 (PYTHON_EXE와 같은 OS별 관례)."""
+    override = _env("RTAUTO_SUPERDEX_PYTHON", "").strip()
+    if override:
+        path = Path(override)
+        return path if path.is_absolute() else (REPO_ROOT / path)
+    relative = "superdex/.venv/Scripts/python.exe" if _IS_WINDOWS else "superdex/.venv/bin/python"
+    return REPO_ROOT / relative
+
+
+def superdex_hand_asset():
+    """DG5F 손 단독 asset의 assets/ 상대경로.
+
+    변형(long/short, left/right)은 새 키를 만들지 않고 DG5F_HAND·DG5F_SHORT에서 파생시킨다
+    — 같은 사실을 두 곳에 타이핑하지 않는다(원칙 1).
+
+    경로 형식은 공식 조합 asset(fr3_dg5f_short_right.superdex_bot)이 손 asset을
+    "//hands/dg5f_short/right/dg5f_short_right.superdex_bot"으로 참조하는 것을 확인해
+    확정했다(2026-09-07, U2 해소). 두 표기가 같은 파일을 가리킨다:
+      - Python에서 load_bot_prefab_from_file()에 넘길 때: "bots/hands/..." (assets/ 기준)
+      - .superdex_bot 파일 안에서 참조할 때:              "//hands/..."   (assets/bots/ 기준,
+        그 폴더의 .superdex_root 가 루트를 표시한다)
+    이 함수는 앞쪽(Python용) 형식을 돌려준다.
+
+    ⚠️ DG-5F-M이 long wrist인지 short wrist인지는 아직 미확정이다(U1) — 기본값은 long.
+    확정 전까지 이 반환값은 잠정이며, DG5F_SHORT를 뒤집으면 기존 파이프라인의 URDF·메시
+    선택(dg5f_variant())까지 함께 바뀐다. docs/SUPERDEX_POC_PLAN.md §12 참고.
+    """
+    variant = "dg5f_short" if DG5F_SHORT else "dg5f_long"
+    return f"bots/hands/{variant}/{DG5F_HAND}/{variant}_{DG5F_HAND}.superdex_bot"
+
+
+def superdex_hand_asset_ref():
+    """위 경로의 .superdex_bot 내부 참조 표기 ("//hands/...").
+
+    ⚠️ 이 표기는 **공식 asset 트리 안에 있는 결합 파일**에서만 통한다. 우리 결합 파일은
+    우리 리포의 별도 asset 루트에 있으므로 superdex_hand_asset_tagged_ref()를 쓴다
+    (U7 결정, 2026-09-09) — 아래 "U7" 블록 참고.
+    """
+    return "//" + superdex_hand_asset().removeprefix("bots/")
+
+
+# ---------------- U7 — 우리 asset을 우리 리포에 두고 공식 트리를 태그로 참조한다 ----------
+# (2026-09-09 실측으로 확정. superdex/scripts/gate3_asset_root_probe.py 가 판정 근거다.)
+#
+# 문제: 공식 Tesollo DG5F asset은 재배포 제한이 있어 우리 저장소에 커밋할 수 없는데(U4),
+#       결합 bot은 팔(base)과 손(AttachBot.path)을 둘 다 참조해야 한다.
+#
+# 실측한 참조 규칙 (네이티브 로더가 거부 메시지로 알려준다:
+# "Absolute bot paths are not allowed; use //, @tag/, or a file-relative path"):
+#
+#   //...      결합 파일이 속한 asset 루트 기준. **다른 트리로는 못 넘어간다** (실패)
+#   절대경로   금지 (실패)
+#   ../        루트 밖으로 올라가는 것 금지 (실패)
+#   @tag/...   `.superdex_root` 에 정의된 태그 기준. **다른 트리로 넘어간다** (통과)
+#
+# `.superdex_root` 는 빈 마커가 아니라 **`{"@tag": "경로"}` JSON 사전**이다. 대상 폴더에도
+# `.superdex_root` 가 있어야 한다(공식 assets/bots/ 에 있다 — 확인함).
+#
+# 따라서:
+#   - 우리 팔 asset·결합 파일 -> 우리 리포(SUPERDEX_OUR_ASSETS_DIR)에 커밋. 공식 asset은
+#     한 바이트도 복사하지 않는다.
+#   - `.superdex_root` 는 클론 위치를 담아 **머신마다 다르므로 생성물이고 git 비추적**이다
+#     (superdex/scripts/gate3_setup_asset_root.py 가 만든다 — 원칙 1·2).
+
+# 우리가 만든 SuperDex asset의 루트. 리포 레이아웃이라 저장소 상대 기본값을 준다
+# (SUPERDEX_RESULTS_DIR과 같은 관례).
+SUPERDEX_OUR_ASSETS_DIR = _repo_path("RTAUTO_SUPERDEX_OUR_ASSETS_DIR", "superdex/assets")
+
+# 공식 asset 트리를 가리킬 태그 이름. 네이티브 검증 규칙은 '@' + 영문자/숫자/밑줄이다.
+SUPERDEX_OFFICIAL_TAG = _env("RTAUTO_SUPERDEX_OFFICIAL_TAG", "@superdex")
+
+# 손을 플랜지에 붙일 때의 회전 (쿼터니언 x, y, z, w). 하드코딩이 아니라 캘리브레이션
+# 상수이므로 정본을 여기 하나만 둔다(원칙 1).
+#
+# ✅ **확정됐다 (2026-09-09): identity(회전 없음).** 결합 bot의 손 자세를 정본인 결합
+# URDF(`tool0_to_dg_mount`, parent `tool0`, origin identity)와 대조해 **최대 차이
+# 1.49e-08**로 일치함을 확인했다 — `superdex/scripts/gate3_verify_hand_mount.py`.
+#
+# ⚠️ 이 값은 **눈으로 판정하면 안 된다.** 손이 플랜지 축으로 180° 돌아가 붙어도 자기접촉
+# 0·관절 한계 일치·시뮬 안정성이 전부 통과하고, 오른손은 여전히 오른손으로 보인다.
+# 공식 fr3 조합은 Z축 180°(0,0,1,~0)를 쓰지만 그것은 fr3 플랜지 규약이라 베끼면 안 된다.
+# 바꿔야 할 일이 생기면 .env의 RTAUTO_SUPERDEX_HAND_MOUNT_QUAT로 주고 위 스크립트로
+# 다시 판정한다.
+SUPERDEX_HAND_MOUNT_QUAT = tuple(
+    float(v) for v in _env("RTAUTO_SUPERDEX_HAND_MOUNT_QUAT", "0,0,0,1").split(",")
+)
+
+
+def superdex_our_bots_root():
+    """우리 asset 루트의 `bots/` 폴더 (`.superdex_root` 가 놓이는 곳, 절대경로)."""
+    return SUPERDEX_OUR_ASSETS_DIR / "bots"
+
+
+def superdex_hand_asset_tagged_ref():
+    """공식 손 asset의 `@tag/` 참조 표기 — 우리 결합 파일의 AttachBot.path 에 넣는 값.
+
+    superdex_hand_asset()에서 파생시켜 손 변형(long/short, left/right)을 두 번 타이핑하지
+    않는다(원칙 1). 머신 의존 경로가 없으므로 이 값이 들어간 결합 파일은 **커밋 가능하다**.
+    """
+    return f"{SUPERDEX_OFFICIAL_TAG}/" + superdex_hand_asset().removeprefix("bots/")
+
+
+def superdex_arm_asset():
+    """우리 UR 팔 asset의 우리 루트 기준 상대경로. Studio bake 산출물이 놓일 자리다."""
+    return f"bots/arms/{UR_TYPE}/{UR_TYPE}.superdex_bot"
+
+
+def superdex_arm_asset_ref():
+    """위 팔 asset의 결합 파일 내부 참조 표기 ("//arms/...").
+
+    팔은 **우리 루트 안**에 있으므로 태그가 아니라 `//` 로 가리킨다.
+    """
+    return "//" + superdex_arm_asset().removeprefix("bots/")
+
+
+def superdex_combo_asset():
+    """팔+손 결합 asset의 우리 루트 기준 상대경로.
+
+    공식 조합 asset의 명명 규칙(`fr3_dg5f_short/right/fr3_dg5f_short_right.superdex_bot`,
+    실측)을 그대로 따라 UR 기종·손 변형에서 파생시킨다.
+    """
+    _, _, variant, hand, _ = superdex_hand_asset().split("/")
+    stem = f"{UR_TYPE}_{variant}_{hand}"
+    return f"bots/arm_hand_combos/{UR_TYPE}_{variant}/{hand}/{stem}.superdex_bot"

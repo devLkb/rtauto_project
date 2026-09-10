@@ -1,0 +1,543 @@
+{
+  "defaultPose": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "joints": [
+    {
+      "name": "world_joint",
+      "type": "Hard"
+    },
+    {
+      "name": "base_joint",
+      "type": "Hard"
+    },
+    {
+      "name": "base_link-base_fixed_joint",
+      "parentLinkFromJoint": {
+        "rotation": [
+          0,
+          0,
+          1,
+          -4.3711388286737929e-08
+        ]
+      },
+      "type": "Hard"
+    },
+    {
+      "name": "base_link-base_link_inertia",
+      "parentLinkFromJoint": {
+        "rotation": [
+          0,
+          0,
+          1,
+          -4.3711388286737929e-08
+        ]
+      },
+      "type": "Hard"
+    },
+    {
+      "axis": [
+        0,
+        0,
+        1
+      ],
+      "effortLimit": 330,
+      "maxLimit": [
+        0,
+        0,
+        6.2831854820251465
+      ],
+      "minLimit": [
+        -0,
+        -0,
+        -6.2831854820251465
+      ],
+      "name": "shoulder_pan_joint",
+      "parentLinkFromJoint": {
+        "translation": [
+          0,
+          0,
+          0.18070000410079956
+        ]
+      },
+      "type": "Revolute"
+    },
+    {
+      "axis": [
+        0,
+        0,
+        1
+      ],
+      "effortLimit": 330,
+      "maxLimit": [
+        0,
+        0,
+        6.2831854820251465
+      ],
+      "minLimit": [
+        -0,
+        -0,
+        -6.2831854820251465
+      ],
+      "name": "shoulder_lift_joint",
+      "parentLinkFromJoint": {
+        "rotation": [
+          0.70710676908493042,
+          0,
+          0,
+          0.70710676908493042
+        ]
+      },
+      "type": "Revolute"
+    },
+    {
+      "axis": [
+        0,
+        0,
+        1
+      ],
+      "effortLimit": 150,
+      "maxLimit": [
+        0,
+        0,
+        3.1415927410125732
+      ],
+      "minLimit": [
+        -0,
+        -0,
+        -3.1415927410125732
+      ],
+      "name": "elbow_joint",
+      "parentLinkFromJoint": {
+        "translation": [
+          -0.47839999198913574,
+          0,
+          0
+        ]
+      },
+      "type": "Revolute"
+    },
+    {
+      "axis": [
+        0,
+        0,
+        1
+      ],
+      "effortLimit": 54,
+      "maxLimit": [
+        0,
+        0,
+        6.2831854820251465
+      ],
+      "minLimit": [
+        -0,
+        -0,
+        -6.2831854820251465
+      ],
+      "name": "wrist_1_joint",
+      "parentLinkFromJoint": {
+        "translation": [
+          -0.36000001430511475,
+          0,
+          0.1741500049829483
+        ]
+      },
+      "type": "Revolute"
+    },
+    {
+      "axis": [
+        0,
+        0,
+        1
+      ],
+      "effortLimit": 54,
+      "maxLimit": [
+        0,
+        0,
+        6.2831854820251465
+      ],
+      "minLimit": [
+        -0,
+        -0,
+        -6.2831854820251465
+      ],
+      "name": "wrist_2_joint",
+      "parentLinkFromJoint": {
+        "rotation": [
+          0.70710676908493042,
+          0,
+          0,
+          0.70710676908493042
+        ],
+        "translation": [
+          0,
+          -0.11985000222921371,
+          -2.4581645746701852e-11
+        ]
+      },
+      "type": "Revolute"
+    },
+    {
+      "axis": [
+        0,
+        0,
+        1
+      ],
+      "effortLimit": 54,
+      "maxLimit": [
+        0,
+        0,
+        6.2831854820251465
+      ],
+      "minLimit": [
+        -0,
+        -0,
+        -6.2831854820251465
+      ],
+      "name": "wrist_3_joint",
+      "parentLinkFromJoint": {
+        "rotation": [
+          -0.70710676908493042,
+          -6.1817239327410789e-08,
+          -1.1200532654945163e-15,
+          0.70710676908493042
+        ],
+        "translation": [
+          0,
+          0.11654999852180481,
+          -2.390480521863303e-11
+        ]
+      },
+      "type": "Revolute"
+    },
+    {
+      "name": "wrist_3-flange",
+      "parentLinkFromJoint": {
+        "rotation": [
+          -0.49999997019767761,
+          -0.49999997019767761,
+          -0.49999997019767761,
+          0.49999997019767761
+        ]
+      },
+      "type": "Hard"
+    },
+    {
+      "name": "flange-tool0",
+      "parentLinkFromJoint": {
+        "rotation": [
+          0.49999997019767761,
+          0.49999997019767761,
+          0.49999997019767761,
+          0.49999997019767761
+        ]
+      },
+      "type": "Hard"
+    },
+    {
+      "name": "wrist_3_link-ft_frame",
+      "parentLinkFromJoint": {
+        "rotation": [
+          1,
+          0,
+          0,
+          -4.3711388286737929e-08
+        ]
+      },
+      "type": "Hard"
+    }
+  ],
+  "links": [
+    {
+      "name": "world"
+    },
+    {
+      "name": "base_link",
+      "parentLink": 0
+    },
+    {
+      "name": "base",
+      "parentLink": 1
+    },
+    {
+      "centerOfMass": [
+        0,
+        0,
+        0
+      ],
+      "mass": 4,
+      "momentOfInertia": [
+        0.0061063310131430626,
+        0,
+        0,
+        0.0061063310131430626,
+        0,
+        0.011250000447034836
+      ],
+      "name": "base_link_inertia",
+      "parentLink": 1,
+      "renderModel": "render/base.glb",
+      "renderModelRotation": [
+        0,
+        0,
+        1,
+        -4.3711388286737929e-08
+      ],
+      "shape": "collision/base.mochi.h5",
+      "shapeRotation": [
+        0,
+        0,
+        1,
+        -4.3711388286737929e-08
+      ]
+    },
+    {
+      "centerOfMass": [
+        0,
+        -0.029999999329447746,
+        -0.016000000759959221
+      ],
+      "mass": 7.3689999580383301,
+      "momentOfInertia": [
+        0.033509999513626099,
+        1.9999999494757503e-05,
+        -9.9999997473787516e-06,
+        0.033739998936653137,
+        0.0037400000728666782,
+        0.020999999716877937
+      ],
+      "name": "shoulder_link",
+      "parentLink": 3,
+      "renderModel": "render/shoulder.glb",
+      "renderModelRotation": [
+        0,
+        0,
+        1,
+        -4.3711388286737929e-08
+      ],
+      "shape": "collision/shoulder.mochi.h5",
+      "shapeRotation": [
+        0,
+        0,
+        1,
+        -4.3711388286737929e-08
+      ]
+    },
+    {
+      "centerOfMass": [
+        -0.17640000581741333,
+        0,
+        0.15999999642372131
+      ],
+      "mass": 10.449999809265137,
+      "momentOfInertia": [
+        0.027960000559687614,
+        -9.9999997473787516e-05,
+        -0.0071999998763203621,
+        0.47558000683784485,
+        2.9999999242136255e-05,
+        0.47635000944137573
+      ],
+      "name": "upper_arm_link",
+      "parentLink": 4,
+      "renderModel": "render/upperarm.glb",
+      "renderModelRotation": [
+        0.49999997019767761,
+        -0.49999997019767761,
+        -0.49999997019767761,
+        0.49999997019767761
+      ],
+      "renderModelTranslation": [
+        0,
+        0,
+        0.17620000243186951
+      ],
+      "shape": "collision/upperarm.mochi.h5",
+      "shapeRotation": [
+        0.49999997019767761,
+        -0.49999997019767761,
+        -0.49999997019767761,
+        0.49999997019767761
+      ],
+      "shapeTranslation": [
+        0,
+        0,
+        0.17620000243186951
+      ]
+    },
+    {
+      "centerOfMass": [
+        -0.16599999368190765,
+        0,
+        0.064999997615814209
+      ],
+      "mass": 4.3210000991821289,
+      "momentOfInertia": [
+        0.010909999720752239,
+        5.999999848427251e-05,
+        0.010119999758899212,
+        0.12060000002384186,
+        9.9999997473787516e-06,
+        0.11714000254869461
+      ],
+      "name": "forearm_link",
+      "parentLink": 5,
+      "renderModel": "render/forearm.glb",
+      "renderModelRotation": [
+        0.49999997019767761,
+        -0.49999997019767761,
+        -0.49999997019767761,
+        0.49999997019767761
+      ],
+      "renderModelTranslation": [
+        0,
+        0,
+        0.039299998432397842
+      ],
+      "shape": "collision/forearm.mochi.h5",
+      "shapeRotation": [
+        0.49999997019767761,
+        -0.49999997019767761,
+        -0.49999997019767761,
+        0.49999997019767761
+      ],
+      "shapeTranslation": [
+        0,
+        0,
+        0.039299998432397842
+      ]
+    },
+    {
+      "centerOfMass": [
+        0,
+        -0.010999999940395355,
+        -0.008999999612569809
+      ],
+      "mass": 2.1800000667572021,
+      "momentOfInertia": [
+        0.0060899998061358929,
+        -9.9999997473787516e-06,
+        0,
+        0.0024500000290572643,
+        0.00082999997539445758,
+        0.0057899998500943184
+      ],
+      "name": "wrist_1_link",
+      "parentLink": 6,
+      "renderModel": "render/wrist1.glb",
+      "renderModelRotation": [
+        0.70710676908493042,
+        0,
+        0,
+        0.70710676908493042
+      ],
+      "renderModelTranslation": [
+        0,
+        0,
+        -0.13500000536441803
+      ],
+      "shape": "collision/wrist1.mochi.h5",
+      "shapeRotation": [
+        0.70710676908493042,
+        0,
+        0,
+        0.70710676908493042
+      ],
+      "shapeTranslation": [
+        0,
+        0,
+        -0.13500000536441803
+      ]
+    },
+    {
+      "centerOfMass": [
+        0,
+        0.012000000104308128,
+        -0.017999999225139618
+      ],
+      "mass": 2.0329999923706055,
+      "momentOfInertia": [
+        0.0038900000508874655,
+        -9.9999997473787516e-06,
+        0,
+        0.0021899999119341373,
+        -0.00044999999227002263,
+        0.0036299999337643385
+      ],
+      "name": "wrist_2_link",
+      "parentLink": 7,
+      "renderModel": "render/wrist2.glb",
+      "renderModelTranslation": [
+        0,
+        0,
+        -0.11999999731779099
+      ],
+      "shape": "collision/wrist2.mochi.h5",
+      "shapeTranslation": [
+        0,
+        0,
+        -0.11999999731779099
+      ]
+    },
+    {
+      "centerOfMass": [
+        0,
+        0,
+        -0.043999999761581421
+      ],
+      "mass": 0.90700000524520874,
+      "momentOfInertia": [
+        0.0011699999449774623,
+        0,
+        0,
+        0.001180000021122396,
+        0,
+        0.00083999999333173037
+      ],
+      "name": "wrist_3_link",
+      "parentLink": 8,
+      "renderModel": "render/wrist3.glb",
+      "renderModelRotation": [
+        0.70710676908493042,
+        0,
+        0,
+        0.70710676908493042
+      ],
+      "renderModelTranslation": [
+        0,
+        -0.00050000002374872565,
+        -0.11680000275373459
+      ],
+      "shape": "collision/wrist3.mochi.h5",
+      "shapeRotation": [
+        0.70710676908493042,
+        0,
+        0,
+        0.70710676908493042
+      ],
+      "shapeTranslation": [
+        0,
+        -0.00050000002374872565,
+        -0.11680000275373459
+      ]
+    },
+    {
+      "name": "flange",
+      "parentLink": 9
+    },
+    {
+      "name": "tool0",
+      "parentLink": 10
+    },
+    {
+      "name": "ft_frame",
+      "parentLink": 9
+    }
+  ],
+  "name": "ur16e"
+}

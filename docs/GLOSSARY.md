@@ -46,7 +46,7 @@
 | **UR16e** | Universal Robots 협동로봇 팔. 가반 16 kg, 리치 900 mm |
 | **DG-5F-M-R** | Tesollo 5지 그리퍼(오른손). SDK 모델 코드 `5f_right`, 20관절 |
 | **AMR** | 엔스퀘어 이동 베이스. NR-200 커스텀으로 추정(미확정) |
-| **FOUP** | 반도체 웨이퍼 캐리어. 최종 Pick & Place 대상 |
+| **FOUP** | 반도체 웨이퍼 캐리어. ~~최종 Pick & Place 대상~~ → **적용 예시 중 하나**(2026-09-10 목적 변경: 특정 물체 전용 → 범용 파지) |
 | **URSim** | UR가 배포하는 가상 컨트롤박스(도커). 실물과 같은 RTDE를 노출한다 |
 | **DGManager** | Tesollo 공식 그리퍼 관리 프로그램. ⚠️ 켜 두면 SDK/Modbus가 붙지 못한다 |
 | **펜던트** | UR 로봇 조작 화면. Local ↔ **Remote Control** 전환이 브리지 동작을 좌우한다 |

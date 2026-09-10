@@ -1,0 +1,2327 @@
+# SuperDex PoC 계획 — DG5F 다지 파지 RL 이관 평가
+
+작성 2026-09-07 (v1). 브랜치 `SuperDexTest`에서만 진행한다.
+상위 정본은 [`SIM2REAL_ROADMAP.md`](SIM2REAL_ROADMAP.md) — 이 문서와 상충하면 로드맵이 우선한다.
+관찰·액션·보상 스펙의 정본은 [`RL_POLICY_REDESIGN.md`](RL_POLICY_REDESIGN.md)다.
+
+---
+
+## 0. 인수인계 — 여기부터 읽어라 (2026-09-09 갱신)
+
+> ## ⚠️ 2026-09-10 — 프로젝트 최종 목적이 바뀌었다
+>
+> "FOUP Pick & Place" → **"처음 보는 물체도 스스로 파지점을 찾아 파지하고 pick & place
+> 등의 행동으로 이어가는 것"**. FOUP 은 적용 예시로 강등됐다(로드맵 v17).
+>
+> **이 PoC 의 결론은 유지된다** — 채택 근거의 주 논거(concave collider 표현력)는 오히려
+> 강해지고, 게이트 0~4 의 증거는 특정 물체가 아니라 접촉 품질 일반에 대한 것이다.
+> 근거 재검토는 §1 "왜 SuperDex인가" 상단 표 참고.
+>
+> **바뀌는 것은 다음 단계다.** 최대 격차가 "질량 규모"에서 **"파지점 자율 결정"**으로
+> 옮겨갔다 — 아래 "다음 단계에 필요한 것"의 경고 블록 참고. 이 문서의 나머지 서술 중
+> "FOUP"이 남은 곳은 **변경 전 기록**이다.
+
+> # ✅ 결론: **SuperDex 채택. 게이트 0~4 전부 통과, 회귀 사유 없음.**
+>
+> 이 PoC 가 답해야 했던 질문 — "DG5F 다지 파지 RL 을 Unity 에서 SuperDex 로 옮길 것인가" —
+> 은 **닫혔다.** §6 의 Unity 회귀 기준 6개 중 발동한 것이 **하나도 없다.**
+> 아래 "최종 판정" 절이 근거 요약이고, 각 게이트의 실측은 그 아래 절들에 있다.
+>
+> 🛑 **이 브랜치의 작업은 여기서 끝난다.** 다음 단계(손목 자세 액션, 접근+파지+들기 결합,
+> UR16e 통합 정책, 실물 규모, sim2real)는 **별도 승인이 필요하다** — §5 "작업 경계".
+
+### 30초 요약
+
+| | 내용 |
+|---|---|
+| **결정** | Unity 유지 → **SuperDex로 RL 이관**. Unity는 디지털 트윈·시각화·ROS2 통합 계층으로 존속 |
+| **증거 1** | SuperDex 접촉 물리가 DG5F 파지를 유지(드리프트 1.3 mm). **Unity PhysX는 dynamic body에 concave collider가 불가해 이 문제를 표현조차 못 한다** |
+| **증거 2** | **실제 DG5F 정책**(관찰 65/행동 20)의 ONNX가 3개 런타임에서 동일 — 0.0 / 5.96e-07 / **7.18e-07**(Unity). 정책을 Unity·ROS2로 넘길 수 있고, SuperDex가 실망시키면 **학습기만 교체 가능** |
+| **증거 3** | 접촉 기반 다지 파지가 **학습된다**. 파지 성립률 **100 %**(스크립트 87 %), 최악 슬립 **4.5 cm**(스크립트 17.5 cm). 약 110만 스텝 ≈ 1시간 |
+| **증거 4** | **일반화가 공짜였다.** 물리적으로 가능한 질량·마찰 범위 전체를 **DR 학습 0 스텝**으로 커버하고, 학습에 쓰지 않은 물체(paper_cup)에서 배치만 맞추면 **파지성립 100 %**(홀드아웃 시드) |
+| **최대 제약** | 실효 throughput **≈470 steps/s** (Ray 워커 불안정으로 병렬 샘플링 불가). 1e7 스텝 ≈ 6시간 — PoC 규모엔 충분. 게이트 4 에서는 병목이 **발현하지 않았다**(DR 스텝 비용 ×1.03) |
+| **다음 착수점** | **없다 — 이 브랜치의 범위(엔진 선택)가 완료됐다.** 다음 단계는 승인 대기다. 승인 시 필요한 것은 아래 "다음 단계에 필요한 것" 참고 |
+
+### 게이트 판정 현황
+
+| 게이트 | 판정 | 근거 |
+|---|---|---|
+| **0** 물리 전제 | ✅ **통과** | 스크립트 파지 성공. 양방향 1g 2초에서 드리프트 **1.3 mm**, 접촉점 594~604 유지, 블록 속도 0.001~0.002 m/s |
+| **1** ONNX 3자 파리티 | ✅ **통과 (실제 정책까지)** | cart_pole: 0.0 / 1.431e-06 / 9.537e-07. **DG5F 실제 정책(관찰 65/행동 20)**: **0.000e+00** / **5.960e-07** / **7.176e-07**(Unity, 2회 재현) |
+| **2** DG5FGraspEnv + PPO | ✅ **통과 (2026-09-09)** | 학습 정책이 **파지 성립률 100 %**(스크립트 87 %), **최악 슬립 4.5 cm**(스크립트 17.5 cm, 4배 개선). 약 110만 스텝 ≈ 1시간 |
+| **3** UR16e 결합 | ✅ **통과 (2026-09-09)** | Studio bake 완료. **구운 UR16e 팔 + 공식 DG5F 손 결합체**가 로드·구동된다 — REVOLUTE 26 = 팔 6 + 손 20, 팔 관절 한계 UR16e 스펙 일치, `tool0` 생존, **홈 자세 자기접촉 0**(계측기 자기검사로 검증), 5초 정지 수렴, 중력 처짐 0.98 mm, **손 장착 회전이 정본 URDF와 일치**(최대 차이 1.49e-08) |
+
+| **4** 일반화·DR | ✅ **통과 (2026-09-09)** | 물리적으로 가능한 질량·마찰 범위를 **DR 학습 없이** 유지. 범위 밖 실패는 **마찰 격자로 물리 한계임을 증명**(같은 정책이 μ 만 바뀌어 1.09 kg 에서 38 %→88 %). 새 물체 paper_cup 은 배치만 맞추면 **성립 100 %**(홀드아웃). DR 스텝 비용 **×1.03** |
+
+### 최종 판정 — SuperDex 채택 (2026-09-09)
+
+#### 채택 근거 (게이트별 한 줄)
+
+| 게이트 | 물은 것 | 답 |
+|---|---|---|
+| 0 | SuperDex 접촉 물리가 DG5F 파지를 표현·유지하는가 | **예.** 양방향 1g 2초에서 드리프트 **1.3 mm**, 접촉점 594~604 유지 |
+| 1 | 정책을 Unity·ROS2 로 넘길 수 있는가 | **예.** 실제 정책 ONNX 3자 파리티 최대 오차 **7.18e-07** |
+| 2 | 접촉 기반 다지 파지가 이 throughput 으로 학습되는가 | **예.** 파지성립 87 %→**100 %**, 최악 슬립 17.5→**4.5 cm**. 110만 스텝 ≈ 1시간 |
+| 3 | 팔+손 결합체가 성립하는가 | **예.** REVOLUTE 26, 자기접촉 0, 손 장착이 정본 URDF 와 **1.49e-08** 일치 |
+| 4 | 일반화되는가 / 샘플 비용이 몇 배인가 | **예 / 안 뛴다.** 가능한 범위를 DR 학습 **0 스텝**으로 커버, 스텝 비용 **×1.03** |
+
+#### 회귀 기준 점검 — 6개 모두 미발동
+
+| # | 기준 | 상태 |
+|---|---|---|
+| 1 | 게이트 0 실패 | 미발동 (통과) |
+| 2 | 게이트 1 이 2일 내 미해결 | 미발동 (통과) |
+| 3 | 1e7 스텝이 하룻밤(≤12 h)에 안 끝남 | 미발동 — 468 steps/s 에서 약 6시간 |
+| 4 | SuperDex 버그로 2주 연속 진척 없음 | 미발동 |
+| 5 | 저장소 90일 무커밋/archive | 미발동 |
+| 6 | 라이선스가 용도를 차단 | 미발동 — **U7 이 `@tag/` 로 해소돼 공식 asset 을 복사조차 하지 않는다** |
+
+#### 이 판단이 되돌릴 수 있는 이유
+
+**게이트 1 이 보험이다.** 정책이 `raw_obs(65) → raw_action(20)` 하나의 ONNX 로 닫히고
+Unity·onnxruntime·RLlib 이 같은 값을 낸다. SuperDex 가 나중에 실망시켜도 **학습기만
+교체**하면 되고, 관찰·액션·보상 설계는 [`RL_POLICY_REDESIGN.md`](RL_POLICY_REDESIGN.md)에
+엔진 독립으로 남아 있다. URDF 는 `urdf/` 에 그대로다.
+
+#### 남은 리스크
+
+| 리스크 | 상태 | 영향 |
+|---|---|---|
+| **throughput** | 실효 ≈470 steps/s, Ray 병렬 워커 비결정적 정지(원인 미규명) | PoC 규모는 충분. **다물체 학습으로 가면 다시 병목**이 된다 — 목적 변경(2026-09-10)으로 물체 다양성이 핵심이 됐으므로 **이 리스크의 우선순위가 올라갔다.** 미시도 단서는 §10 "발견 4" |
+| **U8 — DG-5F-M 파지력 상한** | **미확정** | 게이트 4 의 "한계 질량"은 시뮬 태스크 구성의 값이지 하드웨어 스펙이 아니다. 실물 값이 나오면 DR 범위와 강성(3.0)을 재검토해야 한다 |
+| **alpha 소프트웨어** | superdex 1.0.0, 인용 논문 미출간 | API 파손 반경을 env 코드 한 곳으로 묶어 뒀다(§6 "과설계 금지") |
+| **정책과 목표의 거리** | 손목 고정 / 1물체 학습 / 1초 / 들기 없음 / **파지점이 사람이 맞춘 상수** vs "처음 보는 물체를 스스로 파지" | **엔진 판단과 별개의 단계**다. 2026-09-10 목적 변경으로 거리의 성격이 바뀌었다 — 질량 규모가 아니라 **일반화와 파지점 자율 결정**이 격차다. §5 "작업 경계" |
+
+#### 다음 단계에 필요한 것 (승인 시)
+
+1. **손목 자세 액션 추가** → 관찰·행동 계약 변경이므로 `RL_POLICY_REDESIGN.md` 와
+   ONNX 스펙 버전(`SPEC_VERSIONS`)을 함께 올린다. 게이트 1 재검증 필요.
+2. **접근 + 파지 + 들기 결합** → 성공 기준을 다시 정의해야 한다. 현재 "중력 하 유지"는
+   손목 고정 때문에 lift 가 불가능해서 택한 정의다.
+3. **UR16e 통합 정책** → 결합 bot 은 이미 있다(게이트 3). 팔 6축이 액션에 들어오면
+   26 DOF 가 되고, 탐색 난이도가 자릿수로 오른다 — throughput 리스크가 여기서 현실화된다.
+4. **U8 확정** → 벤더 문의. 파지력 상한 없이는 DR 범위도 강성도 근거가 없다.
+5. ~~**산업 물체 asset** → FOUP 형상 제작~~ → **물체 다양성 확보로 대체**(2026-09-10 목적
+   변경). 특정 제품 형상을 만드는 것이 아니라 **크기·형상·질량이 다른 물체를 여러 종**
+   확보해 섞어 학습·평가하는 것이 목표가 됐다. 동봉 asset 은 손 크기에 맞는 것이
+   `duck_lamp`·`paper_cup` 둘뿐이라 **확보 자체가 작업**이다.
+
+> ### ⚠️ 목적 변경(2026-09-10)이 이 목록에 추가한 항목 — **파지점 자율 결정**
+>
+> 새 목적("처음 보는 물체도 스스로 파지점을 찾아 파지")에서 **가장 큰 기술 격차**이고,
+> 위 1~5 어디에도 들어 있지 않았다.
+>
+> **현행 설계가 이 목적에 정면으로 어긋나는 지점 두 개:**
+>
+> | 지점 | 현행 | 왜 문제인가 |
+> |---|---|---|
+> | 스폰 오프셋 `place` | **물체마다 사람이 맞춘 상수** | 게이트 4 실측에서 이 값이 성공을 지배했다(paper_cup 30 % → 100 %). 새 목적에서는 **시스템이 정해야 하는 값**이다 |
+> | 관찰 65차원 | 물체의 **자세·속도**만 담고 **형상을 안 담는다** | 컵과 오리 램프를 **접촉 전에는 구분할 수 없다.** 처음 보는 물체의 파지점을 정하려면 형상 인지가 필요하다 |
+>
+> **비전 문제의 성격도 바뀐다.** 기존 블로커는 "알려진 모델의 6D 자세 추정"이었는데,
+> 처음 보는 물체에는 자세가 아니라 **형상·파지 어포던스**가 필요하다 — 포인트클라우드
+> 기반 grasp pose 검출 계열의 문제이고 난이도·접근법이 다르다.
+>
+> 게이트 4 의 **물체 일반화 실험이 이제 부차 확인이 아니라 핵심 지표**가 된다. 그 결과가
+> "배치를 맞추면 일반화하고, 배치가 틀리면 실패한다"였으므로, 격차는 정확히 **배치(=파지점)
+> 결정**에 있다.
+
+### 게이트 2 최종 판정 (2026-09-09) — 통과
+
+성공 기준을 **두 가지로 나란히** 측정했다. 하나만 쓰면 기준을 유리하게 고른 것처럼 되므로,
+원래의 거리 기준과 물체 크기에 무관한 슬립 기준을 함께 본다 (30 에피소드, 시드 9000~9029):
+
+| 지표 | 스크립트 정책(고정 폐쇄) | **학습 정책 v8 @250** |
+|---|---|---|
+| 지문 3개 이상 | 25/30 = 83 % | **26/30 = 87 %** |
+| 거리 < 6 cm | 14/30 = 47 % | **16/30 = 53 %** |
+| **거리 기준 성공** | 47 % | **53 %** |
+| **파지 성립률**(중력 하 3지 접촉 달성) | 26/30 = 87 % | **30/30 = 100 %** |
+| 성립 후 슬립 중앙 | 0.0124 m | 0.0134 m |
+| **성립 후 슬립 최대** | **0.1747 m** | **0.0453 m** |
+| **슬립 기준 성공** | 25/30 = 83 % | 25/30 = 83 % |
+
+**두 기준에서 결론이 같다** — 슬립 기준으로는 83 % 동률이므로 기준을 갈아 통과를 만든 것이
+아니다. 판정을 지탱하는 것은 **평균이 아니라 최악값**이다:
+
+- **파지 성립률 87 % → 100 %**: 학습 정책은 모든 에피소드에서 중력 하 3지 파지를 성립시킨다
+- **최악 슬립 17.5 cm → 4.5 cm (4배)**: 스크립트 정책은 일부 에피소드에서 파괴적으로
+  미끄러진다. 무거운 물체에서는 평균보다 최악값이 중요하다
+
+> 성공률 53 % vs 47 %는 n=30에서 **통계적으로 유의하지 않다**(2 에피소드 차이). 그 수치로
+> 통과를 주장하지 않는다. 게이트 2가 물어야 했던 질문은 "**SuperDex에서 접촉 기반 파지가
+> 이 throughput으로 학습되는가**"였고, 답은 **된다** — 약 110만 스텝, 측정 throughput으로
+> 1시간 남짓이다.
+
+학습 궤적 (체크포인트별 결정론적 평가): **5 % → 40 % → 40 % → 40 % → 53 %**,
+지문 접촉 2.95 → 3.43, 낙하 10/20 → 1/30.
+
+### 계획 변경 (2026-09-09)
+
+실측을 근거로 원안을 세 곳 고쳤다.
+
+**1. 게이트 1을 실제 정책으로 확장했다.** 원안의 게이트 1은 cart_pole(관찰 4 / 행동 1)
+대리 환경으로만 ONNX 계약을 검증했다. 실제 DG5F 정책(**관찰 65 / 행동 20**)으로 다시
+돌려야 경로가 진짜로 닫힌다. `export_onnx.py`에 환경별 스펙 버전 레지스트리
+(`SPEC_VERSIONS`)를 넣어 계약 변경이 버전 없이 나가는 것을 막았다.
+
+실측 (`superdex/results/dg5f_grasp_v8_iter0300` → `dg5f_grasp_v8.onnx`, 368 KB,
+스펙 `dg5f-grasp-1`):
+
+| 비교 | 최대 오차 |
+|---|---|
+| 래퍼 `nn.Module` vs **RLlib 실제 커넥터 경로** | **0.000e+00** |
+| `onnxruntime` vs RLlib 경로 | **5.960e-07** |
+| **Unity Inference Engine (C#)** | **7.176e-07** |
+
+**2. 성공 기준에 슬립을 정본으로 추가했다.** `hold_radius`(거리) 기준은 **물체 크기에
+의존한다** — 6 cm는 2.5 cm 블록 기준값이고 duck_lamp은 반대각선이 약 8.9 cm여서 완벽한
+파지에서도 초과할 수 있다. 게이트 4의 다물체 일반화에서는 물체마다 임계값을 다시 잡아야
+하므로, **물체 크기와 무관한 슬립**(파지 성립 시점 대비 손바닥 좌표계 변위)을 함께 쓴다.
+게이트 0의 스크립트 파지가 이 값으로 1.3 mm였다.
+
+**3. 액션 차원 축소 계획을 폐기했다.** 20차원 동시 제어로 학습이 성립했으므로
+손가락별 5차원으로 줄일 이유가 없어졌다. 관찰·행동 계약(v3: 팔6 + 손20)을 그대로 유지한다.
+
+> **cart_pole 대리 환경이 아니라 실제 DG5F 파지 정책으로 경로가 닫혔다.**
+> `superdex/policies/dg5f_grasp_v8.onnx` 하나가 `raw_obs(65) -> raw_action(20)` 전체를
+> 담고 있고, Unity(`Unity.InferenceEngine`)와 `onnxruntime` 이 같은 값을 낸다.
+
+### ⚠️ Unity 배치모드가 간헐적으로 startup을 못 마친다 — 재시도하면 된다
+
+**실측: 4회 시도 중 2회 성공.** 성공 시 결과는 동일하다(`최대 오차 7.176E-007`, 2회 재현).
+실패 양상은 두 가지이고 **둘 다 우리 코드와 무관하다**:
+
+| 실패 양상 | 로그 증거 |
+|---|---|
+| 라이선스 핸드셰이크 실패 후 종료 | `Failed to handshake to channel: "LicenseClient-helen"` / `Access token is unavailable` |
+| 라이선스는 정상인데 startup 중 종료 | 핸드셰이크 실패 0회, 로그가 24 KB에서 `Refreshing native plugins` 뒤 끊김 (성공 시 34 KB) |
+
+**대응: 그냥 다시 돌린다.** 사용자 조치는 필요하지 않다 — 성공한 실행에서는
+`Successfully connected to LicensingClient ... handshake: 1.45s`가 찍힌다. 판정은 로그에
+`=== 판정: 통과` 줄이 있는지로 하고, **로그 크기가 30 KB 미만이면 startup 실패로 보고
+재실행**한다(우리 스크립트 출력이 아예 없다).
+
+<details><summary>(기록) 처음에 "사용자 조치 필요"로 오판한 경위</summary>
+
+2회 연속 라이선스 실패를 보고 Unity 계정 재로그인이 필요하다고 문서에 적었는데, 3회차에서
+Unity가 스스로 새 라이선스 클라이언트를 띄워 통과했다. **2회 실패를 영구 블로커로
+단정한 것이 성급했다** — 간헐적 실패는 재시도 횟수를 늘려 확인해야 한다.
+
+</details>
+
+### (구) 라이선스 오류 로그 참고
+
+Unity 배치모드가 라이선스 핸드셰이크에 **한 번 실패한 뒤 그대로 종료되는 일이 있다.**
+그때 로그에는 우리 스크립트 출력이 전혀 없고 asset 임포트 기록도 없다:
+
+```text
+[Licensing::Client] Error: HandshakeResponse reported an error:
+[Licensing::Module] Error: Failed to handshake to channel: "LicenseClient-helen"
+[Licensing::Module] Error: Access token is unavailable; failed to update
+```
+
+**코드 문제가 아니고, 사용자 조치도 필요하지 않다 — 그냥 다시 돌리면 된다.** 2회 연속
+실패한 뒤 3회차에서 Unity가 스스로 새 라이선스 클라이언트를 띄워 통과했다:
+
+```text
+[Licensing::Module] Error: Failed to handshake to channel: "LicenseClient-helen"
+[Licensing::Module] Successfully launched the LicensingClient (PId: 31696)
+[Licensing::Module] Successfully connected to LicensingClient on channel:
+                    "LicenseClient-helen-6000.4.0" (handshake: 1.25s)
+```
+
+즉 **로그에 파리티 출력이 없으면 실패로 단정하지 말고 재실행한다.** (이 함정에 한 번
+빠져 "사용자 조치 필요"로 잘못 기록했다.) 재실행 명령:
+
+```powershell
+Copy-Item superdex/policies/dg5f_grasp_v8.onnx unity/Assets/Policies/ -Force
+& "C:\Program Files\Unity\Hub\Editor\6000.4.0f1\Editor\Unity.exe" -batchmode -nographics `
+    -projectPath unity `
+    -executeMethod RtAuto.EditorTools.PolicyParityCheck.RunFromCommandLine `
+    -policyName dg5f_grasp_v8 -logFile parity.log
+```
+
+에디터에서 하려면 상단 메뉴 `RtAuto > Policy Parity Check` (기본 정책 이름이
+`cart_pole_ppo`이므로 `kDefaultName`을 바꾸거나 배치모드 인자를 쓴다).
+
+### 게이트 3 통과 (2026-09-09) — 구운 팔 + 공식 손 결합체
+
+Studio bake 가 끝났고 **본 판정을 통과했다**
+(`superdex/scripts/gate3_verify_combined_bot.py`):
+
+| 판정 항목 | 결과 |
+|---|---|
+| 결합 bot 로드 | ✅ 링크 41 / 조인트 41 |
+| DOF | ✅ **REVOLUTE 26 = 팔 6 + 손 20**, actor DOF 26 (root 0) |
+| `tool0` 생존 | ✅ bake 가 fixed joint 를 접지 않았다 |
+| 팔 관절 한계 | ✅ UR16e 스펙 일치 (±360°, elbow ±180°) |
+| **자기충돌** | ✅ **홈 자세 자기접촉 0** |
+| 시뮬 안정성 | ✅ 5초 후 정지 수렴, 후반 절반 추가 이동 0.000 mm |
+| 중력 처짐 | 0.98 mm (강성 1e5 정상상태 오차) |
+
+**"자기접촉 0"은 계측기 자기검사로 뒷받침했다.** 쿼리가 조용히 비어 있어도 0 으로
+보이므로, 일부러 팔꿈치를 170°로 접어 접촉이 잡히는지 확인한다 — **8,704점**이 잡혔다
+(`upper_arm_link` 4352, `wrist_2_link` 3268, `wrist_3_link` 1084). 즉 홈 자세의 0 은
+측정된 0 이다.
+
+Studio 산출물(`superdex/assets/bots/arms/ur16e/`, 22 MB — `.superdex_bot` +
+`collision/*.mochi.h5` 7개 + `render/*.glb` 7개)은 **커밋한다.** bake 는 GPU·디스플레이와
+GUI 조작이 필요해 새 머신에서 재현하기 비싸다 — 커밋해 두면 클론 즉시 쓸 수 있다(원칙 2).
+리포는 이미 `urdf/.../meshes` 26 MB 를 추적하고 있어 관례도 일치한다.
+
+**손 장착 회전도 확정됐다 — identity(회전 없음).** 처음엔 "눈으로 볼 항목"으로 미뤄
+뒀는데 **눈으로도 잘 안 걸리는 항목**이다: 손이 플랜지 축으로 180° 돌아가 붙어도
+자기접촉 0·관절 한계 일치·시뮬 안정성이 전부 통과하고, 오른손은 여전히 오른손로 보인다.
+
+그래서 **정본과 수치로 대조했다** (`superdex/scripts/gate3_verify_hand_mount.py`) —
+결합 bot(구운 팔 + 공식 손)과 결합 URDF(`tool0_to_dg_mount`, origin identity)에서
+`tool0` 좌표계로 표현한 손 기하를 비교한다:
+
+| 항목 (tool0 기준) | 결합 bot | 정본 URDF | 차이 |
+|---|---|---|---|
+| 손바닥 위치 | `[0, 0, 0.0738]` | `[0, 0, 0.0738]` | 0 |
+| 엄지끝 위치 | `[0.0258, 0.1251, 0.0866]` | 같음 | 1.5e-08 |
+| 검지끝 위치 | `[0.0106, 0.027, 0.2695]` | 같음 | 0 |
+| 손바닥 축 X / Z | `[1,0,0]` / `[0,0,1]` | 같음 | 0 |
+
+**최대 차이 1.49e-08.** 180° 오차가 있었다면 축 부호가 뒤집혀 즉시 드러난다.
+덤으로, 공식 Tesollo baked asset 과 우리 DG5F URDF 가 **같은 원본에서 나왔다**는 교차
+검증도 됐다 — 서로 다른 파일인데 손 기하가 일치한다.
+
+### (기록) 게이트 3 착수 절차 — bake 전 상태
+
+**1. Studio SDF bake — 사람이 GUI로 해야 한다 (자동화 불가, 확인함).**
+
+자동화를 시도했고 **세 경로가 모두 막혔다**:
+
+| 시도 | 결과 |
+|---|---|
+| `superdex.physics.mesh` 로 프로그램 bake | `NativeModuleNotFoundError: mochi_mesh` — 이 확장은 **Studio 앱 안에만** 있고 파이썬 패키지로 배포되지 않는다 |
+| `superdex_mesh_cli.exe` | 사용자 CLI 가 아니라 Studio 가 쓰는 **바이너리 프레임 헬퍼**다 (`--help` → `malformed request frame`) |
+| 런타임 로드 후 prefab 저장 | robotics 바인딩에 **저장 API 가 없다** (`load_bot_prefab_from_file` / `..._from_urdf_file` 뿐) |
+
+입력 URDF는 준비돼 있다: `urdf/ur16e_dg5f_right_build/ur16e_arm_only.urdf`
+(재생성: `python superdex/scripts/gate3_prepare_arm_urdf.py`).
+**팔 충돌 메시 7개는 전부 watertight 임을 실측했다** — bake 입력이 깨끗하다.
+
+Studio의 **URDF Import 마법사**가 remesh·SDF bake·`.superdex_bot` 저장을 한 번에 한다.
+결과는 공식 `bots/arms/fr3/` 와 같은 구조(`.superdex_bot` + `collision/` + `render/`)로
+아래 경로에 놓인다:
+
+```text
+superdex/assets/bots/arms/ur16e/ur16e.superdex_bot
+```
+
+> **클릭 단위 절차는 §5 게이트 3-2에 있다** — "굽는다(bake)"가 무슨 뜻인지, 창·메뉴
+> 이름, 마법사에 넣을 값 표, 성공/실패 판정까지. Studio를 처음 여는 사람 기준으로 썼다.
+> `python -u superdex/scripts/gate3_setup_asset_root.py` 를 돌리면 그 값들이 화면에도
+> 그대로 출력된다.
+
+끝나면 `python -u superdex/scripts/gate3_setup_asset_root.py --verify-only`.
+
+**2. ✅ 배선과 결합 파일 — 끝났다.** `gate3_setup_asset_root.py` 가 만든다:
+
+| 산출물 | git | 내용 |
+|---|---|---|
+| `superdex/assets/bots/.superdex_root` | 비추적 | `{"@superdex": "<클론>/assets/bots"}` — 머신마다 다르므로 생성물 |
+| `superdex/assets/bots/arm_hand_combos/ur16e_dg5f_long/right/ur16e_dg5f_long_right.superdex_bot` | 커밋 | `base: //arms/ur16e/...` + `path: @superdex/hands/...`, `parentLinkName: tool0` |
+
+**팔 asset 이 없는 지금도 배선이 성립함을 확인했다** — 결합 파일의 `base` 만 공식 fr3
+팔로 바꾼 대역 로드가 통과한다(links=38). 즉 남은 실패 원인은 **팔 asset 부재 하나뿐**이다.
+
+> ⚠️ 새 머신에서는 이 스크립트를 **한 번 돌려야 한다**(`.superdex_root` 생성). 원칙 2.
+
+**3. ✅ U7 — 해소됐다 (실측으로 후보 3번 확정).** 아래 "U7 해소" 절 참고.
+
+**4. 게이트 4 (DR).** 착수 전 판단 사항: 실효 throughput ≈470 steps/s 에서 광범위 DR 은
+비싸다. 다중 프로세스 학습 자체 구현이나 Ray 워커 안정화가 필요할 수 있다.
+
+### U7 해소 (2026-09-09) — 공식 asset을 복사하지 않는다
+
+U7은 "우리 asset을 어디에 두는가"였고, 걸림돌은 **공식 Tesollo asset을 재배포할 수
+없는데(U4) 결합 bot은 팔과 손을 둘 다 참조해야 한다**는 것이었다. 원안의 유력안은
+"공식 asset을 복사해 우리 루트를 채우고 `.gitignore`"였다. **더 나은 답이 있었다.**
+
+`superdex/scripts/gate3_asset_root_probe.py` 로 참조 표기 6가지를 직접 로드해 판정했다:
+
+| 표기 | 결과 |
+|---|---|
+| 공식 조합 그대로 (대조군) | 통과 (links=38) |
+| `//arms/...` 로 다른 트리 | 실패 — `//` 는 자기 루트를 벗어나지 못한다 |
+| 절대경로 | 실패 — *"Absolute bot paths are not allowed"* |
+| `../` 상대경로 | 실패 — *"Bot path ascends beyond the permitted ... '..'"* |
+| **`@superdex/arms/...`** | **통과 (links=38)** |
+| **`@superdex/...`, 태그 대상을 상대경로로** | **통과 (links=38)** |
+
+**절대경로 거부 메시지가 답을 알려줬다** — *"use `//`, `@tag/`, or a file-relative path"*.
+`@tag/` 는 원안에 없던 표기이고, 이는 **`.superdex_root` 가 빈 마커가 아니라
+`{"@tag": "경로"}` JSON 사전**임을 뜻한다(네이티브 문자열: *"Failed to deserialize
+.superdex_root JSON (expected object of @tag : path)"*). 태그 대상 폴더에도 마커가
+있어야 하고, 공식 `assets/bots/` 에는 있다.
+
+**결정**: 후보 3번(다중 검색 경로) 채택. 우리 리포에 팔 asset과 결합 파일만 두고 공식
+asset은 **한 바이트도 복사하지 않는다.** 라이선스·용량 문제가 동시에 사라진다.
+머신 의존 값은 `.superdex_root` 하나에 격리되고, 그 파일은 생성물이라 git 비추적이다
+(원칙 1). 결합 파일에는 머신 의존 값이 없어 커밋할 수 있다.
+
+관련 설정은 `config/rtauto_config.py` 의 "U7" 블록:
+`SUPERDEX_OUR_ASSETS_DIR`, `SUPERDEX_OFFICIAL_TAG`, `SUPERDEX_HAND_MOUNT_QUAT`,
+`superdex_hand_asset_tagged_ref()`, `superdex_arm_asset()`, `superdex_combo_asset()`.
+
+### 게이트 3 선행 검증 2 (2026-09-09) — 결합 URDF 물리 검증 통과
+
+Studio bake 전에 **결합체 자체가 성립하는지**를 사람 조작 없이 먼저 답했다
+(`superdex/scripts/gate3_verify_combined_urdf.py`, 결합 URDF를 런타임 로더로 로드):
+
+| 항목 | 결과 |
+|---|---|
+| 링크/조인트 | 41 / 41, **REVOLUTE 26 = 팔 6 + 손 20** |
+| `tool0` 생존 | ✅ — 결합 파일의 `parentLinkName` 기준이 살아 있다 |
+| 팔 6축 관절 한계 | ✅ UR16e 스펙 일치 (±360°, elbow ±180°) |
+| actor DOF | 26 (베이스 용접, root DOF 0) |
+| 5초 시뮬 | ✅ 정지 수렴 — 후반 절반 추가 이동 **0.000 mm** |
+| 중력 처짐 | 0.99 mm (강성 1e5에서의 정상상태 오차) |
+| **팔 충돌 메시 watertight** | ✅ **7개 전부** — bake 입력이 깨끗하다 |
+| 손 충돌 메시 | 13개가 열린 메시 — 이 URDF를 직접 시뮬할 때만 문제다(최종 결합체는 공식 baked 손을 쓴다) |
+| 자기충돌 | ⏸ **측정 불가** — 아래 참고 |
+
+**자기충돌은 bake 후로 미룰 수밖에 없다.** 접촉점 쿼리를 등록하면 네이티브가 거부한다:
+*"Contact queries are only supported for actors with contact sample points."*
+contact sample point 는 bake 산출물에 들어 있는 것이고 런타임 URDF 로더는 만들지 않는다.
+
+> **한계**: 이 검증의 손은 **우리 자체 DG5F 메시**이지 게이트 0·2가 쓴 공식 baked
+> asset이 아니다. 결합 기하·관절·안정성을 판정하지, 파지 품질을 판정하지 않는다.
+
+### ~~진단 워크플로 재실행~~ (2026-09-09 불필요해짐)
+
+> 게이트 2 학습 실패의 원인을 5개 렌즈로 병렬 진단하려던 워크플로는 **더 이상 필요하지 않다.**
+> `gate2_oracle_search.py` 로 갈림길을 직접 판정해 원인(물체 크기)을 규명했고, 이후
+> 지역 최적·보상 해킹·표본 효율까지 순차로 해소해 게이트 2가 통과했다. 아래 서술은 기록이다.
+
+#### (기록) 중단된 워크플로
+
+게이트 2 학습 실패의 원인을 **독립 관점 5개(탐색/보상/RLlib설정/과제가해성/마르코프성)로
+병렬 진단 → 관점별 적대적 반증 2표 → 종합 계획** 하는 워크플로를 작성해 실행했으나,
+**세션 종료로 5개 에이전트가 모두 `started` 상태에서 중단**됐다(결과 0건, 살릴 것 없음).
+
+스크립트는 남아 있다:
+
+```text
+C:\Users\helen\.claude\projects\D--workspace-KDT-1-AX-rtauto\0afc8a76-4334-4d1e-9a34-295af2505326\workflows\scripts\dg5f-rl-diagnose-wf_9f891380-558.js
+```
+
+재실행: `Workflow({scriptPath: "<위 경로>"})`
+(`resumeFromRunId: "wf_9f891380-558"` 를 붙여도 완료된 에이전트가 없어 캐시 이득은 없다.)
+
+> ⚠️ 워크플로 프롬프트에 이미 "리포 파일 수정 금지 / 긴 학습 금지 / 동시 python 1개"
+> 제약이 들어 있다. 에이전트 5개가 각자 SuperDex 씬(~600 MB)을 띄우면 32 GB에서
+> 압박이 생기므로 그 제약을 지워서는 안 된다.
+
+**이 워크플로가 답해야 하는 갈림길 하나**: 과제 자체가 이 예산에서 안 풀리는 것인지
+(`is_task_infeasible`), 아니면 학습 설정 문제인지. 오라클 그리드 탐색으로 "각 시드에서
+성공시키는 개루프 궤적이 존재하는가"를 확인하는 것이 가장 결정적이다.
+
+### 사람이 해야 하는 일 / 열린 결정 (2026-09-09 갱신)
+
+**열려 있는 사람 작업 없음 — 게이트 0~3이 전부 닫혔다.**
+
+**해소된 것:**
+
+- ~~**Studio SDF bake**~~ → **완료 (2026-09-09).** 산출물은 커밋됐다. 새 머신은 bake 를
+  다시 할 필요가 없다.
+- ~~**손 장착 회전 확정**~~ → **완료 (2026-09-09): identity.** 정본 URDF 와 수치 대조로
+  판정했다(최대 차이 1.49e-08). 위 "게이트 3 통과" 절 참고.
+
+- ~~**U7 — asset 위치**~~ → **해소.** `@tag/` 교차 트리 참조가 실측으로 확인돼 공식
+  asset 복사가 불필요해졌다. 위 "U7 해소" 절 참고.
+- ~~**액션 차원 축소**~~ → **폐기.** 20차원 동시 제어로 게이트 2가 통과해 5차원으로 줄일
+  이유가 없어졌다(위 "계획 변경" 3번). 관찰·행동 계약(v3)을 그대로 유지한다.
+
+### 재현 명령 모음
+
+**터미널 1 (PowerShell, 리포 루트)** — venv 활성화가 매번 필요하다:
+
+```powershell
+superdex/.venv/Scripts/Activate.ps1
+```
+
+| 목적 | 명령 |
+|---|---|
+| 손 구조·하한 속도 실측 | `python superdex/scripts/gate0_hand_probe.py --steps 2000` |
+| 게이트 0 파지 테스트 | `python superdex/scripts/gate0_grasp_test.py --place 0.03,0.0,0.04` |
+| 기준선 평가 (18 %) | `python superdex/scripts/eval_policy.py --baseline --episodes 40 --env-config '{\"episode_seconds\": 1.0}'` |
+| 학습 (로컬 샘플링만 신뢰 가능) | `python superdex/scripts/train_ppo.py --env dg5f_grasp --iters 120 --num-env-runners 0 --env-config '{\"episode_seconds\": 1.0}' --run-name dg5f_grasp_v5` |
+| 정책 평가 | `python superdex/scripts/eval_policy.py --checkpoint superdex/results/dg5f_grasp_v5 --episodes 20 --env-config '{\"episode_seconds\": 1.0}'` |
+| 게이트 1 재현 | §"게이트 1 재현" 절 참고 (4단계) |
+| 게이트 3 팔 URDF 준비 | `python superdex/scripts/gate3_prepare_arm_urdf.py` |
+| **U7 판정**(참조 표기 6종 로드) | `python -u superdex/scripts/gate3_asset_root_probe.py` |
+| **게이트 3 배선 생성·검증** | `python -u superdex/scripts/gate3_setup_asset_root.py` (검사만: `--verify-only`) |
+| **결합 URDF 물리 검증**(bake 전 예행) | `python -u superdex/scripts/gate3_verify_combined_urdf.py` |
+| **게이트 3 본 판정**(구운 결합 bot) | `python -u superdex/scripts/gate3_verify_combined_bot.py` |
+| **손 장착 회전 판정** | `python -u superdex/scripts/gate3_verify_hand_mount.py` |
+| **게이트 4 DR 스윕** | `python -u superdex/scripts/gate4_dr_sweep.py --checkpoint superdex/results/dg5f_grasp_v8_iter0250` |
+| **DR 회복 곡선**(체크포인트 계열) | `python -u superdex/scripts/gate4_dr_recovery.py --run dg5f_grasp_dr2 --start superdex/results/dg5f_grasp_v8_iter0300` |
+| **물체 일반화 스윕** | `python -u superdex/scripts/gate4_object_sweep.py --checkpoint superdex/results/dg5f_grasp_v8_iter0250` |
+| **DR 실패 원인 분해**(질량/마찰) | `python -u superdex/scripts/gate4_dr_failure_analysis.py --checkpoint superdex/results/dg5f_grasp_dr2_iter0250` |
+| **파지를 눈으로 본다**(뷰어 창) | `python -u superdex/scripts/watch_grasp.py` — `--baseline` 로 학습 전 동작과 비교, `--slowdown 4` 로 느리게, `--record out.mp4` 로 동영상 저장(GPU·디스플레이 필요) |
+| **파지 한계 질량 격자** | `python -u superdex/scripts/gate4_payload_limit.py --checkpoint superdex/results/dg5f_grasp_v8_iter0300` |
+| **DR 켜고 학습** | `... train_ppo.py --env dg5f_grasp --iters 300 --num-env-runners 0 --resume-from <체크포인트> --env-config '{\"episode_seconds\": 1.0, \"dr_mass_range\": [0.25, 4.0], \"dr_friction_range\": [0.1, 0.7]}'` |
+| **과제 가해성 판정**(오라클) | `python superdex/scripts/gate2_oracle_search.py --seeds 10` |
+| **성공 조건 분해**(거리/슬립 병행) | `python superdex/scripts/gate2_success_breakdown.py --baseline --episodes 30` |
+| **이어서 학습** | `... train_ppo.py --resume-from superdex/results/<체크포인트> --iters 300` |
+| **실제 정책 ONNX 익스포트** | `python superdex/scripts/export_onnx.py --checkpoint superdex/results/dg5f_grasp_v8_iter0300 --name dg5f_grasp_v8` |
+| **Unity 다리 검증** | ONNX를 `unity/Assets/Policies/` 로 복사 후 배치모드 `-policyName dg5f_grasp_v8` (§"Unity 배치모드" 참고) |
+
+### 알려진 함정 — 다시 밟지 마라
+
+| 함정 | 증상 | 대응 |
+|---|---|---|
+| **Ray env-runner 워커** | 비결정적 정지, `access violation`, python 프로세스 44~52개 | `--num-env-runners 0` (로컬 샘플링)만 쓴다. 러너 4개는 한 번 되고 다음에 멈춘다 |
+| `ray.init(runtime_env=...)` | 워커 무한 재생성 | 절대 쓰지 마라. asset 경로는 env 생성자가 `os.environ`에 직접 넣는다 |
+| **stdout 버퍼링** | 로그가 멈춘 것처럼 보임 → "정지"로 오진 | 항상 `python -u` 로 띄운다 |
+| **긴 작업이 세션을 끊는다** | Unity 배치모드·40분 학습 중 세션 종료 | 반드시 `run_in_background` + `Monitor` 조합으로 띄우고 폴링하지 않는다 |
+| `superdex-lab` wheel의 json 누락 | `No samples to train` | `python superdex/scripts/sync_lab_configs.py` |
+| 동봉 예제가 안 끝남 | `physics.debugger.attach()` 대기 | 자동화 스크립트는 `attach()` 호출하지 않는다 |
+| **보상을 바꿨는데 학습이 안 된다** | 리턴은 오르고 성공률은 0 | **랭킹 검증 필수.** 열림/호버/파지/완전폐쇄/무작위의 리턴이 성공률과 단조 정렬되는지 확인한다. v2·v3·v6을 이 검증 없이 돌려 낭비했다 |
+| **곡선이 평평해 보인다** | 20 이터레이션 창에서 정체 | `--checkpoint-every` 로 중간 체크포인트를 남겨 **결정론적 성공률**로 판정한다. 학습 중 `return_mean` 은 확률적 정책 값이라 실제 성능을 약 2배 과소평가한다 |
+| **임계값이 물체에 안 맞는다** | 평균 지표는 다 좋은데 성공률이 낮다 | `hold_radius` 같은 절대 거리 임계값은 물체 크기에 의존한다. `gate2_success_breakdown.py` 로 조건별 병목을 가르고, 물체 크기 무관 지표(슬립)를 함께 본다 |
+| **Unity 배치모드가 조용히 끝난다** | 로그 30 KB 미만, 우리 출력 없음 | startup 실패다. **재실행하면 된다** (4회 중 2회 성공) |
+| **손 게인을 팔에 그대로 쓴다** | 홈 자세에서 로봇이 9 cm 처져 "결합 결함"처럼 보인다 | 900 mm 팔은 중력 토크가 손과 자릿수가 다르다. **강성에 정확히 반비례하면 발산이 아니라 P제어 정상상태 오차다**(1e3→92 mm, 1e4→9.9 mm, 1e5→0.99 mm). 판정은 "수렴하는가"와 "처짐이 얼마인가"로 **갈라서** 한다 |
+| **trimesh 로 watertight 판정** | 닫힌 메시까지 전부 "열림"으로 나온다 | `process=False` 를 쓰면 안 된다. STL 은 삼각형마다 정점을 따로 저장해 **병합 없이는 전부 열려 보인다**(35/35 vs 실제 13). 기본값(`process=True`)으로 로드한다 |
+| **articulated actor 에 접촉 쿼리** | `Contact queries are only supported for actors with contact sample points` | 쿼리는 **링크 actor 마다** 건다. `scene.for_each_actor` 로 돌며 `is_query_supported()` 로 거른다(결합 bot 에서 34/42 통과 — 나머지는 충돌 형상 없는 프레임 링크). 메서드 이름은 `get_contact_points_world()` |
+| **"자기접촉 0" 을 그냥 믿는다** | 쿼리가 비어 있어도 0 으로 보인다 | **일부러 충돌시켜** 계측기를 검사한다. 팔꿈치 170°로 접으면 8,704점이 잡혀야 한다. 안 잡히면 앞의 0 은 근거가 없다 |
+| **학습이 정체했을 때 "샘플 부족"으로 단정** | 이터레이션을 늘려도 안 움직인다 | **흔든 변수에 대고 실패를 분해하라.** DR 실패가 질량에 몰려 있었고(상관 −0.562), 격자로 재니 마찰만 올려도 해결됐다 — 학습 문제가 아니라 물리 한계였다. 게이트 2 발견 6과 같은 함정 |
+| **새 물체에서 실패하면 "일반화 실패"로 판정** | 학습 물체는 100 %, 새 물체는 37 % | **스폰 배치가 물체마다 달라야 한다.** paper_cup 은 배치만 바꿔 30 % → 100 %(홀드아웃) 였다. `place` 는 정책 출력이 아니라 태스크 설정이다 |
+| **배치·하이퍼파라미터를 같은 시드로 훑고 최고점 보고** | 재현하면 더 낮게 나온다 | 선택 편향이다. **홀드아웃 시드로 다시 재고 그 값을 정본으로 쓴다** |
+| **1차 원리 공식을 그대로 신뢰** | 예측이 관측과 3~4배 어긋난다 | `m_max ≈ μ·ΣF/g` 는 순수 마찰 파지 가정이라 형상 폐쇄(손가락이 감싸 법선이 중력을 직접 받침)를 무시한다. 공식은 **방향 확인용**, 값은 실측 격자 |
+| **`//` 로 다른 asset 트리 참조** | `Unable to open file` | `//` 는 자기 루트를 못 벗어난다. 절대경로·`../` 도 거부된다. **`.superdex_root` 에 `{"@tag": "경로"}` 를 정의하고 `@tag/...` 로 참조**한다 (§"U7 해소") |
+
+### 오늘 남긴 커밋 (8개, 브랜치 `SuperDexTest`)
+
+```text
+7c34c59  게이트 2 중간 결론 — 엔진 판단 종결, 회귀 기준 3 재판정
+ef06d03  게이트 2 보상 밀집 reach 항 — v1 학습 실패 분석
+d9f5c43  Ray env-runner 불안정성을 게이트 2 실효 병목으로 기록
+788c0d8  ray runtime_env 제거 — 워커 access violation 재생성 루프 해소
+4f76b86  게이트 3 선행 검증 — UR16e 팔 단독 URDF, 런타임 로더 확인
+1eede25  게이트 2 환경 DG5FGraspEnv 신설 — 접촉·힘 실측으로 태스크 보정
+e589ae2  게이트 1 통과 — ONNX 3자 파리티, 학습 진입점 자체 소유
+0667abb  게이트 0 통과 — DG5F 파지 테스트 성공, U6 해소
+```
+
+`main`에는 별도로 `cedcc45`(v14 범위 제한 + 관찰/행동 v3 재설계)가 커밋돼 있고
+`SuperDexTest`는 그 위에 올라가 있다.
+
+---
+
+## 1. 결정 요약
+
+**DG5F 다지 파지 강화학습을 [Project SuperDex](https://github.com/facebookresearch/project_superdex)로
+이관하는 것을 평가한다. Unity는 디지털 트윈·시각화·ROS2 통합 계층으로 유지한다.**
+
+이관이 아니라 **평가**다 — 아래 §5 게이트를 순서대로 통과해야 채택이고, §6 기준에
+걸리면 Unity로 회귀한다. 이 판단을 브랜치에서 하는 이유가 그것이다.
+
+### 왜 SuperDex인가 — 두 가지 근거
+
+> **⚠️ 2026-09-10 목적 변경 후 이 근거를 다시 검토했다. 채택은 유지된다.**
+>
+> | 근거 | 목적 변경 후 |
+> |---|---|
+> | (1) concave collider 표현력 | **오히려 강해진다.** 처음 보는 임의 형상은 사전에 convex decomposition 을 해 둘 수 없고, 볼록 근사는 **파지에 쓰는 오목 피처 자체를 지운다.** 특정 제품의 손잡이가 아니라 **모든 물체의 형상**이 걸린 문제가 됐다 |
+> | (1-보조) 질량비 1:100 | **약해진다.** 8~9 kg FOUP 이 더는 목표가 아니다. 다만 이는 (1)의 **보조 근거**였고 주 논거는 표현력이다 |
+> | (2) 에디터 상태 0 (AI agent 구현) | **그대로.** 오히려 물체·태스크 다양성을 늘려야 하므로 씬을 코드로 찍어내는 이점이 커진다 |
+>
+> 게이트 0~4 의 증거도 특정 물체가 아니라 **접촉 품질 일반**에 대한 것이다. 아래 원문의
+> "FOUP" 은 목적 변경 전 서술이며, 논리는 임의의 오목 물체에 그대로 적용된다.
+
+**(1) Unity PhysX는 다지 파지를 표현 자체를 못 한다 (성능이 아니라 표현력 문제).**
+PhysX는 non-kinematic Rigidbody에 concave mesh collider를 허용하지 않는다
+([Unity Manual](https://docs.unity3d.com/6000.1/Documentation/Manual/rigidbody-configure-colliders.html)).
+`ArticulationBody` 링크는 전부 dynamic이므로 **DG5F 지골·손가락 말단과 파지 대상 물체가
+모두 convex hull로 근사**된다. 파지 성공은 접촉점 위치·법선 방향·마찰원이 결정하는데,
+손가락 끝이 둥글려지면 접촉 법선이 실제와 다른 곳에 생기고 FOUP 손잡이·플랜지·홈 같은
+concave 피처는 시뮬레이션에 존재하지 않는 형상이 된다. 정책은 없는 형상을 exploit하도록
+학습하고, 이 실패는 sim에서 성공으로 보이다가 실물에서 터진다 — 보상 튜닝으로 메울 수
+있는 갭이 아니다.
+
+여기에 **질량비 문제**가 겹친다. 웨이퍼 적재 FOUP는 8~9 kg급, DG5F 손가락 링크는 수십 g
+이다. 질량비 1:100 이상의 다접촉은 iterative solver가 가장 취약한 조건이다. SuperDex는
+통합 implicit solver + **SDF collider**(convex decomposition 없이 non-convex dynamic body
+처리)를 내세우며, 이는 정확히 이 조건을 겨냥한 설계다.
+
+**(2) AI agent가 구현을 담당한다는 조건이 SuperDex에 결정적으로 유리하다.**
+Unity ML-Agents 환경의 상태는 코드에만 있지 않다 — `BehaviorParameters`,
+`DecisionRequester`, 센서 컴포넌트, 인스펙터 드래그 참조, 직렬화 필드가 `.unity`/`.prefab`
+파일에 들어 있고 **AI agent는 이걸 신뢰성 있게 편집하지 못한다.** `CLAUDE.md` 원칙 3이
+"창 이름 + 클릭 경로 + 정확한 필드명"까지 요구하는 이유가 그것이다 — Unity RL 작업의
+상당 부분이 코드가 아니라 에디터 조작이라서 사람이 루프에 갇힌다.
+
+SuperDex Lab은 `reset()`/`step()`/관찰/보상/종료가 전부 Python이고 태스크 설정은
+`<env_module>.train.json` 레시피다. **에디터 상태가 0이다.** Studio는 asset을 한 번 굽는
+용도로만 쓴다. 1인 체제 + AI agent 구현에서 이 차이가 개발 속도를 배로 가른다.
+
+### 왜 Unity를 버리지 않는가
+
+- **ROS2/Nav2/AMR 통합이 SuperDex에 전무하다.** 이 절반은 Unity가 계속 소유해야 한다.
+- URSim ↔ Unity 양방향 팔 트윈(로드맵 v9·v12)은 RL과 무관하게 성립하는 독립 자산이다.
+- 시연 UI·모니터링은 Unity가 실제로 최적 도구다.
+
+### 기존 RL 자산의 처분
+
+Unity ML-Agents RL 부분은 어차피 전면 재설계 대상이므로 **"기존 코드를 살리려고 Unity를
+유지한다"는 근거는 성립하지 않는다.** 반대로, SuperDex에도 매니퓰레이션 태스크 스위트가
+없어서 환경을 직접 만들어야 하지만 이는 **양쪽 비용이 대칭**이므로 SuperDex의 단점이
+아니다. 지적 자산은 코드가 아니라 관찰·액션·보상 설계이며 그건
+[`RL_POLICY_REDESIGN.md`](RL_POLICY_REDESIGN.md)에 엔진 독립으로 남긴다.
+
+---
+
+## 2. 역할 분리 아키텍처
+
+```text
+[학습]  SuperDex (고정 버전 핀)
+          DG5F 공식 asset (Tesollo 라이선스) + SDF collider
+          DG5FGraspEnv (Gymnasium)
+          RLlib PPO — critic=특권상태 / actor=실물에서 얻을 수 있는 관찰
+          env runner = CPU 스레드에 팬아웃, learner = GPU (§8)
+                  |
+                  v
+        RLlib checkpoint (RLModule + connectors)
+                  |
+        래퍼 nn.Module = normalize -> RLModule -> dist.mean -> rescale
+                  |
+                  v
+          dg5f_policy_v{N}.onnx   <- raw_obs -> raw_action 자기완결
+             (관찰·액션 스펙 버전을 ONNX 메타데이터에 기록)
+                  |
+        +---------+----------+
+        v                    v
+  Unity Inference Engine   ROS2 / Python onnxruntime
+  (ML-Agents 미사용)         -> inference adapter
+        |                    -> Tesollo dgsdk / UR16e RTDE
+        v                    -> 실물 DG5F + UR16e + AMR
+  디지털 트윈 / 시연 / 모니터링
+  URSim <-> Unity 양방향 유지
+  ROS2 / Nav2 통합 계층 (SuperDex에 없음 -> Unity가 계속 담당)
+```
+
+> ⚠️ **Unity 트윈의 용도를 여기서 못 박는다.**
+> - ✅ 관찰·액션 계약 검증, AMR↔팔 순차 동작 시퀀싱, ROS2 통합 테스트, 시연·시각화·모니터링
+> - ❌ **파지 안정성의 물리적 검증** — 정책은 SuperDex 접촉 물리로 학습됐고 Unity PhysX에서
+>   실행하면 접촉 지배 구간에서 반드시 발산한다. 이걸 정하지 않으면 Unity에서 물체가
+>   미끄러지는 걸 보고 정책 버그로 오진하며 시간을 버린다.
+
+---
+
+## 3. 확인된 SuperDex 사실 (2026-09-07 기준)
+
+| 항목 | 내용 |
+|---|---|
+| 릴리스 | v1.0.0 **2026-08-24**. 저장소 생성 2026-08-20. `stable` 브랜치 존재, `main` 급변 |
+| 라이선스 | 1st-party 코드 **Apache-2.0**, asset/문서 CC-BY-4.0, `superdex_mesh_cli`만 GPLv3 |
+| 플랫폼 | Linux x86_64 / **Windows x86_64** / macOS ARM |
+| Python | **3.12 전용** (`requires_python >=3.12,<3.13`) |
+| 설치 | PyPI pre-built wheel. `superdex` / `superdex-lab` / `superdex-physics` 모두 **1.0.0**. `superdex`는 엄브렐라(py3-none-any), 플랫폼 바이너리는 `superdex-physics`의 `cp312-cp312-win_amd64` 등. **소스 빌드 불필요** — README의 CMake/Ninja/Clang 17+ 경로는 엔진을 직접 고칠 때만 |
+| 실행 진입점 | Studio = `superdex-studio`. 예제는 클론에서 스크립트 직접 실행. 환경변수 `SUPERDEX_ASSETS_PATH`(asset 트리), `SUPERDEX_PRECISION=double`(fp64 빌드) |
+| 구성 | Physics(C++) / Robotics(C++, pybind) / Studio(GUI) / Lab(RL, **pyproject에 Alpha**) |
+| RL | Gymnasium + **Ray/RLlib 새 API 스택(RLModule)**. PPO 권장, SAC 실험적 |
+| 기본 벤치마크 | CartPole / Ant / HalfCheetah **뿐** — 매니퓰레이션 태스크 없음 |
+| 병렬화 | **native vectorization 없음.** Ray EnvRunner / Async·Sync·HybridVectorEnv (CPU 프로세스) |
+| 학습 기본값 | `num_env_runners=32`(가용 CPU 초과 시 자동 캡), `num_gpus_per_learner=0` |
+| 향후 | Teleop(Quest 3 / UE5) **Q4 2026** 예정 |
+
+### DG5F asset (이 프로젝트에 직접 해당)
+
+`assets/bots/hands/` 아래에 **Tesollo에서 라이선스받은 DG-5F-M** asset이 있다.
+
+- `dg5f_long`, `dg5f_short` × `left/`, `right/`
+- `dg5f_long_seed`, `dg5f_short_seed` — **Seed Robotics SINGLEX-3 촉각 센서**를 DG-5F-M
+  지문 형상에 장착한 변형 (`assets/bots/sensors/dg5f_seed`)
+- 조합: `assets/bots/arm_hand_combos/fr3_dg5f_short`, `fr3_dg5f_short_seed`
+- 포함 요소: collision geometry 수정, joint axis/limit, mass, inertia,
+  Coulomb/viscous friction, damping, actuator·sensor 정의
+- **단서: 공식 README가 "simplified robot description"이라 명시.** 완전한 디지털 트윈으로
+  간주하면 안 된다. 다만 비교 대상은 완벽한 트윈이 아니라 **자체 URDF→Unity 임포트본**이다.
+
+팔 asset은 **FR3(Franka), OpenArm v20뿐 — UR16e 없음.** Studio에서 URDF import 필요(§5 게이트 3).
+
+### 확인된 API 표면 (`superdex_robotics/examples/control/example_osc_jsc_control.py`)
+
+FR3는 OSC, DG5F는 **JSC**(joint space PD, target joint position → torque)로 제어한다.
+즉 **RL 액션을 raw torque가 아니라 DG5F target joint position으로 둘 수 있고**, 이는 실물
+`dgsdk`의 명령 인터페이스와 같은 형태다 — sim2real에 유리한 구조다.
+
+- 모듈: `superdex.physics`, `superdex.robotics`, `superdex.physics.paths`(`resolve_asset`)
+- 컨트롤러: `ControllerBasicJscPdParams` / `ControllerBasicJscPdTarget`
+  (OSC 쪽은 `ControllerBasicOscPdParams` / `...Target`)
+- 수명주기: `initialize` → `create_scene` / `set_gravity` → `load_bot_prefab_from_file` →
+  `create_context` → `create_bot` → `get_articulated_actor` → `create_controller` →
+  루프(`get_current_observations_from_mochi` → `compute_output` →
+  `set_external_forces_on_dofs` → `step`) → `destroy_bot` → `shutdown`
+- 디버깅: `get_debug_server` (`superdex_physics_debugger`)
+- 관절 이름 규약: `dg5f_joint_<finger>_<joint>` (예: `dg5f_joint_2_2` … `dg5f_joint_5_3`)
+- asset 경로 형식(실측):
+  `bots/arm_hand_combos/fr3_dg5f_short/right/fr3_dg5f_short_right.superdex_bot`
+- **타임스텝 1/200 s (200 Hz)** — 접촉 시뮬레이션에 필요한 크기다. Unity 기본 fixed
+  timestep 0.02 s의 4배 세밀도이며, Unity를 같은 수준으로 조이면 Unity의 throughput
+  우위가 사라진다는 뜻이기도 하다.
+
+---
+
+## 4. 미확정 항목 — 게이트 진행 중 반드시 확정할 것
+
+| # | 항목 | 왜 문제인가 | 확정 시점 |
+|---|---|---|---|
+| U1 | ~~DG-5F-M이 long wrist인가 short wrist인가~~ | **해소 (2026-09-07)** — **long wrist / 오른손**으로 확인. 기존 `.env`(`RTAUTO_DG5F_HAND=right`, `RTAUTO_DG5F_SHORT=0`)와 일치하므로 **설정 변경 없음** — 기존 파이프라인에 영향 0(§12 우려 해소) | 완료 |
+| U2 | ~~손 단독 asset의 실제 경로~~ | **해소 (2026-09-07)** — 공식 조합 asset이 손을 `//hands/dg5f_short/right/dg5f_short_right.superdex_bot`으로 참조하는 것을 확인. `superdex_hand_asset()`의 형식이 맞다 | 완료 |
+| U8 | **DG-5F-M 지문 파지력 상한** | 시뮬 기본 강성으로는 4,000~6,000 N이 나온다(비현실적). 강성 3.0에서 34.7 N까지 내렸으나 **실제 하드웨어 상한을 모른다** — 이 값이 보상의 힘 페널티와 sim2real 정합성을 좌우한다 | Tesollo 스펙/실측 확인. 게이트 4(DR) 전 |
+| U7 | ~~우리가 만든 asset을 어디에 두는가~~ | **해소 (2026-09-09)** — `.superdex_root`가 빈 마커가 아니라 `{"@tag": "경로"}` JSON 사전이고 **`@tag/` 표기로 다른 asset 트리를 참조할 수 있다**(실측: `gate3_asset_root_probe.py`). 우리 리포에 팔 asset·결합 파일만 두고 **공식 Tesollo asset은 복사하지 않는다** — U4 재배포 제한과 무관해진다 | 완료. §0 "U7 해소" |
+| U3 | ~~PyPI 배포 버전 문자열~~ | **해소 (2026-09-07)** — PyPI 확인: `superdex` `superdex-lab` `superdex-physics` 모두 **1.0.0**, `requires_python >=3.12,<3.13`. `superdex-physics`에 `cp312-cp312-win_amd64.whl`이 있어 **Windows 소스 빌드 불필요**. `requirements-superdex.txt`에 `==1.0.0` 핀 반영 | 완료. `ray`/`onnx` 핀만 게이트 0-4에 남음 |
+| U4 | **Tesollo asset 라이선스 범위** *(2026-09-07: 사용자 판단으로 진행 차단 요인에서 제외 — 게이트를 여기서 멈추지 않는다)* | 시뮬레이션·시각화·학술/비상업 연구·오픈소스 통합은 허용, 물리적 제조·3D 프린팅·하드웨어 복제는 금지. 제한 대상은 **하드웨어 형상 재현**이므로 학습된 가중치가 파생물로 걸릴 가능성은 낮지만, **asset 자체를 상용 제품에 재배포하는 것은 불가**. 공개 문서·영상에는 Tesollo attribution 필요 | **게이트 2 착수 전.** 벤더에 서면 질의 |
+| U5 | **mediapipe의 Python 3.12 지원** | ML-Agents가 빠지면 3.10.11 핀의 근거가 사라지지만 비전 파이프라인이 같은 venv를 쓴다 | 게이트 1. venv를 분리하면 회피 가능(§7) |
+| U6 | ~~단일 env steps/sec~~ | **해소 (2026-09-07)** — 접촉 없는 하한 645~659 steps/s, **실제 파지(접촉 594점) 상태 534 steps/s**(realtime 2.67x). 8 runner 집계 ≈4.3k steps/s로 회귀 기준 2k의 2.1배 | 완료 |
+
+> ⚠️ **SuperDex의 fidelity 주장은 3자 검증이 없다.** 인용 논문이 미출간이고 저장소의
+> Lab 벤치마크는 CartPole/Ant/HalfCheetah뿐이다. 마케팅을 신뢰하지 말고 게이트 0·2에서
+> 직접 확인한다.
+
+---
+
+## 5. 게이트 — 순서대로, 앞이 깨지면 뒤를 하지 않는다
+
+### 게이트 0 — 물리 전제 확인 (반일). **RL 없이 먼저 한다.**
+
+목적: SuperDex의 존재 이유(다지 접촉 안정성)가 DG5F에 대해 성립하는지, 그리고 감당 가능한
+속도가 나오는지를 **가장 싸게** 확인한다.
+
+1. Python 3.12 venv 생성 + 고정 버전 wheel 설치 (§7 절차)
+2. `project_superdex` 클론 → `SUPERDEX_ASSETS_PATH` 설정
+3. **동봉된 예제를 그대로 실행** — `examples/basic/example_bot_loading.py`,
+   `examples/control/example_osc_jsc_control.py`
+4. U1·U2·U3 확정: `assets/bots/hands/` 트리 확인, DG-5F-M 손목 길이 판정, wheel 버전 기록
+5. `superdex_physics_debugger`(`get_debug_server`)로 접촉 시각화
+6. **스크립트 파지 테스트**(학습 아님): 손 단독 asset 로드 → 중력 ON → 큐브 배치 →
+   JSC로 닫는 자세 지령 → 유지
+
+**판정**
+- 물체가 흔들림(jitter)·관통(penetration) 없이 유지되는가
+- **단일 env steps/sec 및 realtime factor 측정** (200 Hz 기준 실시간 배율)
+
+> 게이트 0이 깨지면 SuperDex를 채택할 이유 자체가 사라진다. 반일 만에 알 수 있으므로
+> 다른 어떤 작업보다 먼저 한다.
+
+### 게이트 1 — 배포 계약 확인 (반일). DG5F와 독립이라 병행 가능.
+
+`dg5f_policy.onnx` 화살표는 **다이어그램에서 유일하게 "될지 모르는" 구간**이고, 가장 싸게
+확인할 수 있다. 근거:
+
+- **RLlib 새 API 스택은 ONNX export를 지원하지 않는다**
+  ([ray#45526](https://github.com/ray-project/ray/issues/45526) —
+  `ONNX export not supported for RLModule API`). `export_policy_model(onnx=...)`는 구
+  API 스택 전용이다.
+- SuperDex의 `superdex_lab/apps/rllib/checkpoint_policy.py`도 ONNX를 만들지 않는다.
+  RLModule + 관찰 전처리 + 액션 후처리를 **in-process Python 추론용으로** 복원할 뿐이며,
+  커넥터를 못 쓸 때 학습과 발산할 수 있다고 코드가 직접 경고한다.
+- 관찰 정규화와 액션 리스케일은 신경망 **바깥**, RLlib 커넥터
+  (`EnvToModulePipeline`/`ModuleToEnvPipeline`)에 산다.
+
+**절차**
+1. CartPole PPO 5분 학습 (DG5F 불필요)
+2. **래퍼 `nn.Module`을 export**:
+   `forward(raw_obs)` → `normalize`(커넥터 통계를 **그래프 안 상수로 고정**) →
+   `RLModule.forward_inference` → action distribution의 deterministic mean → `rescale` →
+   `raw_action`
+3. **3자 파리티 테스트**: 동일 obs 벡터를 (a) SuperDex Python (b) ROS2측
+   `onnxruntime` (c) Unity Inference Engine C#에 넣어 액션이 허용오차 내 일치하는지
+
+> ⚠️ **정규화 통계를 JSON으로 빼서 Unity C#과 ROS2 Python에 각각 구현하지 마라.**
+> 구현이 셋으로 갈라지는 순간 계약이 조용히 깨지고, 이 프로젝트에서 가장 추적하기 어려운
+> 버그가 된다. 그래프 안에 상수로 박아 ONNX 하나가 `raw_obs → raw_action` 전체를
+> 자기완결적으로 담게 한다.
+>
+> Unity 추론은 **ML-Agents를 거치지 말고 Inference Engine(구 Sentis)을 직접** 쓴다 —
+> [ML-Agents 공식 문서](https://github.com/Unity-Technologies/ml-agents/blob/main/docs/Unity-Inference-Engine.md)가
+> 외부 학습 모델은 그렇게 하라고 명시한다. Sentis는 Unity 6에서 Inference Engine으로 개명됐다.
+
+### 게이트 2 — DG5FGraspEnv (2~3일). **착수 전 U4(라이선스) 회신 확보.**
+
+- wrist **고정**, 큐브 1종, 액션 = DG5F target joint position
+- 관찰: 관절 위치/속도, 물체 위치/자세/선·각속도, 지문 접촉 (필요 시 촉각)
+- 보상: 지문-물체 접촉, 다지 안정 접촉, 파지 안정성, 들어올림, 유지 시간
+- 페널티: 낙하, 과도한 힘, 과도한 관절 운동, 미끄러짐
+- **critic에 특권 상태(접촉력·물체 자세·마찰계수), actor에는 실물에서 얻을 수 있는 관찰만**
+  (asymmetric actor-critic). ML-Agents로는 표현할 수 없는 구조이고, 접촉·촉각 정책
+  sim2real의 표준 레시피다.
+- 스펙은 [`RL_POLICY_REDESIGN.md`](RL_POLICY_REDESIGN.md)에 **버전 번호를 붙여** 기록하고
+  ONNX 메타데이터에 그 버전을 박는다.
+
+**판정**: 100 eval 에피소드에서 **들어올린 뒤 2초 유지 성공률 ≥ 80 %**, 그리고 **집계
+throughput 기록**.
+
+### 게이트 3 — UR16e asset과 팔+손 결합 (1~2일)
+
+**결합 방식이 확인됐다 (2026-09-07).** 공식 `fr3_dg5f_short_right.superdex_bot`은 **571
+바이트 JSON**이고 메시를 담지 않는다 — 팔 asset을 `base`로 두고 손 asset을 붙이는
+선언이다:
+
+```json
+{
+  "base": "//arms/fr3/fr3.superdex_bot",
+  "name": "fr3_dg5f_short_right",
+  "modifications": [
+    { "AttachBot": {
+        "enabled": true,
+        "joint": {
+          "name": "dg5f_to_fr3",
+          "type": "Hard",
+          "parentLinkFromJoint": { "rotation": [0, 0, 1, -4.3711388286737929e-08] }
+        },
+        "name": "dg5f",
+        "parentLinkName": "fr3_link8",
+        "path": "//hands/dg5f_short/right/dg5f_short_right.superdex_bot"
+    } }
+  ]
+}
+```
+
+`rotation`은 쿼터니언 (x, y, z, w)이고 위 값은 **Z축 180°** — 즉 플랜지 프레임 규약을
+여기서 맞춘다. `type: "Hard"`는 강체 결합이다.
+
+즉 우리가 할 일은 **팔 asset 하나를 만들고, 위와 같은 파일을 하나 쓰는 것**이다.
+
+> **✅ 3-1·3-3의 리스크는 이미 해소됐다 (2026-09-08).**
+> `superdex/scripts/gate3_prepare_arm_urdf.py`로 팔 단독 URDF를 만들고 SuperDex **런타임
+> 로더로 직접 로드해 확인**했다 — Studio 작업 전에 값싸게 검증한 것이다:
+>
+> | 확인 항목 | 결과 |
+> |---|---|
+> | 메시 경로 리라이트 | 14개, `package://` 잔여 **0** |
+> | 충돌 형상 | mesh 7개 / **primitive 0개** → "primitive는 조용히 무시된다" 제약에 **걸리지 않음** |
+> | 구조 | 링크 13 / 조인트 13, 그중 **REVOLUTE 6** = UR16e DOF 정확 |
+> | 관절 한계 | shoulder_pan/lift·wrist_1/2/3 ±360°, **elbow ±180°** — UR16e e-series 스펙과 일치 |
+> | **`tool0` 링크 생존** | `flange-tool0`이 HARD 조인트로 남아 **`tool0`이 존재한다** → 3-3의 `parentLinkName` 우려 해소 |
+> | 손목 용접 + 시뮬 | `joints[0].type = HARD` → `num_dofs 6`, 100스텝 안정 |
+>
+> 남은 게이트 3 작업은 **Studio SDF bake 품질**, **결합 JSON 작성**, **U7(asset 위치 결정)** 이다.
+
+#### 3-1. 팔 단독 URDF 준비
+
+`urdf/ur16e_dg5f_right_build/`에 이미 두 파일이 있다:
+
+| 파일 | 메시 참조 형식 | 용도 |
+|---|---|---|
+| `ur16e_raw.urdf` | `package://ur_description/meshes/...` | **팔 단독** — 이게 팔 asset의 입력 |
+| `ur16e_dg5f_right.urdf` | `meshes/ur/...` (상대경로) | 팔+손 결합 (자체 DG5F) |
+
+충돌 형상은 **13링크 전부 mesh(`.stl`)** 이다 — 확인했다. 따라서 "primitive collision은
+무시된다"는 제약에 **걸리지 않는다.**
+
+> ⚠️ **`ur16e_raw.urdf`는 그대로 못 쓴다.** `package://ur_description/...`는 ROS 패키지
+> URI라 SuperDex가 해석하지 못한다. `build_arm_hand.py`가 결합 URDF를 만들 때 하는 리라이트
+> (`package://ur_description/meshes/` → `meshes/ur/`)를 **팔 단독 URDF에도 적용**해야 한다.
+
+#### 3-2. Studio로 팔 asset 만들기 (사람 작업, 약 10분)
+
+##### 용어 — "굽는다(bake)"가 무슨 뜻인가
+
+URDF는 로봇을 **삼각형 껍데기**(STL 메시)로 설명한다. 물리 엔진이 접촉을 계산하려면
+"이 점이 물체 **안**인가 밖인가, 표면까지 거리가 얼마인가"를 매 스텝 수백~수천 번 물어야
+하는데, 삼각형 목록에 그걸 매번 물으면 느리고 부정확하다.
+
+그래서 미리 물체 주변을 격자로 잘라 **격자점마다 "표면까지 부호 있는 거리"를 계산해
+표로 저장**해 둔다. 이 표가 **SDF**(Signed Distance Field, 부호거리장)이고, 이 표를
+미리 계산해 파일로 굳히는 것을 **bake(굽는다)** 라고 한다. 케이크를 굽듯 한 번 구워
+두면 그 뒤로는 표를 조회만 하면 된다.
+
+굽기 전에 **remesh(껍데기 다시 만들기)** 가 필요하다. SDF의 "안/밖" 부호는 껍데기에
+구멍이 없어야(**watertight**, 물이 새지 않아야) 정의된다. CAD에서 나온 STL은 면이
+살짝 벌어져 있는 경우가 흔해서, 표면을 다시 이어 붙여 닫아 준다.
+
+> **왜 이 단계가 중요한가**: 게이트 0이 증명한 것은 "SuperDex의 접촉 물리가 DG5F 파지를
+> 유지한다"였고, 그 접촉 품질이 바로 이 SDF에서 나온다. 런타임 URDF 로더도
+> SDF를 즉석에서 만들지만(`load_bot_prefab_from_urdf_file`), 메시가 watertight라고
+> **가정만** 하고 검사하지 않아 열린 경계 근처에서 충돌 검출이 불안정하다. 게다가
+> 접촉 샘플점이 없어 접촉 수를 셀 수조차 없다(실측 — §0 "게이트 3 선행 검증 2").
+> 그래서 실사용 asset은 Studio bake가 공식 권장 경로다.
+
+##### 왜 자동화할 수 없는가
+
+세 경로를 다 시도해 막힌 것을 확인했다 — §0 "다음 착수점" 1번 표. 요지는 SDF를 굽는
+`mochi_mesh` 코드가 **Studio 앱 안에만** 들어 있고 파이썬으로 배포되지 않는다는 것이다.
+
+##### 사전 조건
+
+`superdex-studio` 명령이 이미 설치돼 있다(`requirements-superdex.txt`의 `superdex==1.0.0`
+엄브렐라 패키지가 Studio를 함께 설치한다). **GPU와 디스플레이가 필요하다** — 원격
+터미널만 있는 환경에서는 못 돌린다.
+
+##### 절차
+
+**터미널 1 (PowerShell, 리포 루트, 배선 생성 + 안내 출력)**
+
+```powershell
+superdex/.venv/Scripts/Activate.ps1
+```
+
+```powershell
+python -u superdex/scripts/gate3_setup_asset_root.py
+```
+
+**터미널 1 (bash, Linux/WSL2, 리포 루트)**
+
+```bash
+source superdex/.venv/bin/activate
+```
+
+```bash
+python -u superdex/scripts/gate3_setup_asset_root.py
+```
+
+이 스크립트가 **넣을 폴더를 만들고 아래 값들을 그대로 출력한다** — 이 문서와 화면이
+다르면 화면 쪽이 맞다(경로를 `config/rtauto_config.py`에서 계산하므로).
+
+**터미널 2 (PowerShell 또는 bash, 아무 폴더, Studio 실행)**
+
+venv 활성화 후:
+
+```powershell
+superdex-studio
+```
+
+Studio 창이 뜬다. 창은 위쪽에 **메뉴 바(File / Edit / Window)**, 가운데에 3D
+**Viewport**, 아래쪽에 **Asset Browser**와 **Log Console**(탭으로 겹쳐 있다),
+오른쪽에 **Hierarchy**와 그 아래 **Details** 패널이 있다.
+
+1. **작업 폴더 등록** — 메뉴 바 `File > Add Folder to Workspace…` 를 누르고,
+   폴더 선택 창에서 **asset 루트**를 고른다:
+
+   ```text
+   <리포>/superdex/assets/bots
+   ```
+
+   등록되면 화면 아래 **Asset Browser** 패널의 왼쪽 폴더 트리에 이 폴더가 나타나고,
+   그 아래에 `arms/` 와 `arm_hand_combos/` 가 **함께** 보인다.
+
+   > ⚠️ **산출물 폴더(`arms/ur16e`)만 등록하면 안 된다.** 결합 파일은 그 바깥
+   > (`arm_hand_combos/…`)에 있어서 트리에 아예 나타나지 않는다 — 실제로 그렇게
+   > 안내해 결합 bot 을 못 찾는 일이 있었다(2026-09-09). `bots/` 가 `.superdex_root`
+   > 가 있는 asset 루트이기도 해서, `@superdex` 태그 해석에도 이쪽이 확실하다.
+
+2. **Asset Browser 트리에서 `arms/ur16e` 를 클릭해 현재 폴더로 만든다.**
+   ⚠️ 마법사는 결과 파일을 **Asset Browser의 현재 폴더**에 쓴다. 이걸 빠뜨리면 엉뚱한
+   곳에 저장된다.
+
+3. **URDF 가져오기** — 메뉴 바 `File > Import > URDF…` 를 누르고 아래 파일을 고른다:
+
+   ```text
+   <리포>/urdf/ur16e_dg5f_right_build/ur16e_arm_only.urdf
+   ```
+
+   (파일을 Studio 창에 **드래그 앤 드롭**해도 같은 마법사가 열린다.)
+
+4. **마법사 `General` 탭에 값을 넣는다.**
+
+   | 필드 | 넣을 값 | 왜 |
+   |---|---|---|
+   | `Name` | `ur16e` | 결과 파일이 `ur16e.superdex_bot` 이 된다. `config/rtauto_config.py`의 `superdex_arm_asset()`이 이 이름을 기대한다. URDF의 `<robot name="ur16e">` 와 같아 기본값 그대로일 가능성이 높다 — **확인만** 하면 된다 |
+   | `World Joint` | **`Hard`** | 베이스를 바닥에 용접한다. 공식 `fr3.superdex_bot`도 `world_joint`가 `Hard`다(실측). `Free`로 두면 로봇이 자유낙하한다 |
+   | `Collision` 섹션의 `Remesh` | **체크** | 위 "용어" 참고 — 표면을 닫는다 |
+   | `Collision` 섹션의 `Bake SDF` | **체크** | 위 "용어" 참고 — 부호거리장을 굽는다 |
+
+   `Render Models` / `Collision Models` 탭은 링크별 세부 설정인데 **손댈 필요 없다**
+   (기본 동작이 링크마다 변환해 주는 것이다).
+
+5. **마법사를 끝낸다.** 굽기는 링크 7개에 대해 도는 무거운 계산이라 수십 초~수 분
+   걸릴 수 있다.
+
+6. **결과 확인** — 1번 폴더 안에 아래가 생겨야 한다. 공식 `bots/arms/fr3/`와 같은 구조다:
+
+   ```text
+   ur16e.superdex_bot
+   collision/  (ur16e 링크별 *.mochi.h5)
+   render/     (링크별 *.glb)
+   ```
+
+   화면 아래 **Log Console** 탭에 에러가 없어야 한다.
+
+##### 끝난 뒤 — 판정
+
+**터미널 1 (venv 활성 상태, 리포 루트)**
+
+```powershell
+python -u superdex/scripts/gate3_setup_asset_root.py --verify-only
+```
+
+`통과  결합 bot 로드  links=... joints=...` 와
+`=== 게이트 3 배선: 통과 ===` 가 나오면 팔+손 결합체가 실제로 로드된 것이다.
+
+실패하면 메시지가 원인을 말해 준다. 가장 흔한 것:
+
+| 증상 | 원인·대응 |
+|---|---|
+| `Unable to open file` | 파일 이름이 `ur16e.superdex_bot`이 아니거나 폴더가 다르다. 위 6번 경로와 대조하라 |
+| `parentLinkName` 관련 실패 | Studio가 `tool0` 링크를 접어 없앴다. `flange`를 대신 쓰고 그 회전을 `SUPERDEX_HAND_MOUNT_QUAT`에 넣는다(§3-3의 경고) |
+
+##### 그 다음 — 손 방향 확인 (열린 결정)
+
+결합 bot이 로드되면 Studio에서 그 결합 파일
+(`superdex/assets/bots/arm_hand_combos/.../ur16e_dg5f_long_right.superdex_bot`)을 열어
+**엄지가 어느 쪽을 향하는지 눈으로 본다.** 방향이 틀렸으면 `.env`에
+`RTAUTO_SUPERDEX_HAND_MOUNT_QUAT`(쿼터니언 `x,y,z,w`)를 넣어 돌린다. 기본값은
+`0,0,0,1`(회전 없음)이고 아직 확정값이 아니다.
+
+#### 3-3. 결합 파일 작성
+
+`parentLinkName`에 무엇을 넣을지가 유일한 판단 지점이다. 우리 결합 URDF의
+`tool0_to_dg_mount`가 **parent `tool0`, origin identity(xyz 0 0 0, rpy 0 0 0)** 로 손을
+붙이고 있으므로 **`tool0`**이 기준이다.
+
+> ⚠️ UR의 `tool0`은 `flange`에서 `rpy(π/2, 0, π/2)` 회전된 툴 프레임이고, `flange-tool0`은
+> **fixed joint**다. Studio 임포트가 fixed joint를 접어 링크를 없앨 수 있으므로 굽고 나서
+> **`tool0` 링크가 남아 있는지 확인**한다. 없으면 `flange`를 `parentLinkName`으로 쓰고
+> 그 회전을 `parentLinkFromJoint.rotation`에 넣는다.
+>
+> 손 방향(엄지 위치)은 FR3의 Z축 180°를 그대로 베끼지 말고 Studio에서 눈으로 확인해 정한다.
+
+> **✅ 2026-09-09: 결합 파일은 작성됐다.** `gate3_setup_asset_root.py` 가
+> `config/rtauto_config.py` 에서 생성한다. `parentLinkName` 은 `tool0`,
+> `AttachBot.path` 는 `superdex_hand_asset_tagged_ref()` (= `@superdex/hands/...`),
+> 장착 회전은 `SUPERDEX_HAND_MOUNT_QUAT`(기본 identity, 미확정).
+> **팔 asset 없이도 배선이 성립함을 대역 로드로 확인했다** — 위 §0 "다음 착수점" 2번.
+
+#### 3-4. U7 — asset을 어디에 두는가
+
+> **✅ 해소됐다 (2026-09-09). 후보 3번(다중 검색 경로) 채택.** 판정 근거와 실측 표는
+> §0 "U7 해소" 절에 있다. 요지: `.superdex_root` 는 빈 마커가 아니라 `{"@tag": "경로"}`
+> JSON 사전이고, `@tag/` 표기로 **다른 asset 트리를 참조할 수 있다.** 따라서 공식
+> Tesollo asset 을 복사하지 않고 우리 리포에 팔 asset 과 결합 파일만 둔다.
+> 아래 원안 후보 목록은 기록으로 남긴다.
+
+`//` 참조는 `assets/bots/`의 `.superdex_root` 기준이므로 **우리 팔 asset과 공식 손 asset이
+한 asset 루트 안에 있어야** 결합이 성립한다. 그런데 **Tesollo asset은 재배포 제한이 있어
+우리 저장소에 커밋할 수 없다**(U4).
+
+후보 (원안):
+
+1. **우리 리포를 asset 루트로 삼는다** — `superdex/assets/bots/`에 `.superdex_root`를 두고
+   `RTAUTO_SUPERDEX_ASSETS`를 그쪽으로 지정. 우리 `arms/ur16e/`와 결합 파일은 커밋하고,
+   클론에서 복사해 오는 공식 `hands/`·`sensors/`는 **`.gitignore`로 제외**하고 복사
+   스크립트를 둔다. ← 당시 유력안. **채택되지 않았다** — 3번이 되므로 복사가 불필요하다
+2. 클론 안에 우리 asset을 넣고 클론 쪽에서 관리 — 외부 저장소를 오염시키고 새 PC 재현이 깨진다
+3. SuperDex가 **다중 asset 검색 경로**를 지원하는지 확인 — 지원하면 가장 깔끔하다.
+   ← **지원한다(`@tag/`). 채택.**
+
+**판정**: 결합 bot이 로드되고, 관절 한계가 UR16e 스펙과 일치하며, 충돌 형상이 깨지지
+않았고 자기충돌이 정상인가. 관절 순서·부호·영점은 로드맵 v11의 URSim 검증 결과와 대조한다.
+
+> **판정 항목 중 3개는 이미 답했다** (§0 "게이트 3 선행 검증 2"): 관절 한계 일치,
+> 충돌 형상 무결(팔 메시 전부 watertight), 시뮬 안정성. **자기충돌만 bake 후로 남는다**
+> — 접촉점 쿼리에 contact sample point 가 필요한데 런타임 URDF 로더는 만들지 않는다.
+
+### 게이트 4 진행 (2026-09-09) — DR 스윕으로 깨지는 지점을 먼저 찾았다
+
+원안은 "DR을 켜고 재학습한다"였지만, **먼저 물어야 할 것이 있었다**: DR 없이 학습한 v8
+정책이 애초에 얼마나 견디는가. 견딘다면 재학습 예산(원 추정 3~10배)이 필요 없다.
+
+`superdex/scripts/gate4_dr_sweep.py` — 재학습 없이 v8@250 을 DR 폭을 넓혀가며 평가
+(30 에피소드, 시드 9000~9029 고정, `episode_seconds=1.0`):
+
+| 단계 | 흔든 범위 | 파지성립 | 슬립중앙 | **슬립최대** | 거리기준 | NaN | steps/s |
+|---|---|---|---|---|---|---|---|
+| 0 없음 | — | 100 % | 0.0134 | **0.0453** | 53 % | 0 | 110 |
+| **1 좁음** | 질량 ×0.5~2, 마찰 0.15~0.5 | 100 % | 0.0151 | **0.0677** (×1.5) | 50 % | 0 | 104 |
+| 2 중간 | 질량 ×0.25~4, 마찰 0.1~0.7 | 100 % | 0.0256 | **0.2270** (×5.0) | 27 % | 0 | 109 |
+| 3 넓음 | 질량 ×0.1~8, 마찰 0.05~1.0 | 100 % | 0.1072 | **0.2413** (×5.3) | 20 % | 0 | 107 |
+
+**깨지는 지점은 1단계와 2단계 사이다.**
+
+- **1단계는 재학습 없이 그냥 된다.** 질량 2배·마찰 2배 변동을 DR 학습 한 번 없이
+  견딘다 — 평균 지표는 사실상 동일하고 최악 슬립만 ×1.5.
+- **2단계에서 무너진다.** 최악 슬립 ×5.0, 거리 기준 성공률 53 % → 27 % 로 반토막.
+- **파지 성립률은 전 구간 100 %** 다. 손은 언제나 3지 접촉을 만든다 — 무너지는 것은
+  **쥐는 것이 아니라 유지하는 것**이다.
+
+**DR 자체의 스텝 비용은 없다: ×1.03** (110 → 107 steps/s). 리셋마다 actor 속성
+(밀도·마찰계수)만 바꾸고 씬을 다시 만들지 않기 때문이다. 즉 §8이 경고한 "DR이
+throughput 병목을 만든다"는 **스텝 비용이 아니라 샘플 요구의 문제**로 좁혀졌다.
+
+> **NaN 0 — 열화는 진짜 정책 실패다.** 2·3단계에서 Mochi 솔버가
+> `Solution explosion detected` 와 `-nan(ind)` 경고를 뱉었다. "정책이 못 버틴 것"과
+> "물리가 터진 것"은 전혀 다른 결론이므로 비정상 수치를 에피소드 단위로 세도록 스윕에
+> 넣었고, **전 단계 0건**이었다. 솔버가 스스로 회복했고 측정은 오염되지 않았다.
+
+**크기(scale)는 흔들지 않았다.** 기하를 바꾸려면 프리팹을 다시 올려야 해서 리셋 비용이
+자릿수로 뛴다 — 물체 종류 교체(`object_prefab`)가 그 자리를 대신한다.
+
+DR 설정은 `Dg5fGraspEnv` 의 `dr_mass_range` / `dr_friction_range` 이고 **기본값은
+꺼짐**이다. 게이트 0~3의 모든 실측이 DR 없는 조건에서 나왔으므로 기본값을 켜면 그
+수치들과 비교가 불가능해진다 — 켜는 것은 항상 `--env-config` 로 명시한다.
+
+**정책에 흔든 값을 관찰로 주지 않는다.** DR의 목적이 "관측되지 않는 변화에 견디는
+정책"이기 때문이고, 덕분에 관찰 차원 65가 그대로여서 게이트 1의 ONNX 계약
+(`dg5f-grasp-1`)이 깨지지 않는다.
+
+### 게이트 4 — 2단계 DR 재학습은 **정체했다** (2026-09-09)
+
+깨지는 2단계에서 v8@300 을 이어받아 **120만 스텝(300 이터레이션)** 을 더 돌렸다.
+판정은 학습 곡선이 아니라 **체크포인트별 결정론적 평가**로 한다
+(`gate4_dr_recovery.py`, 30 에피소드 × 조건 2개):
+
+| 체크포인트 | DR 켠 조건: 성립 / 슬립중앙 / **슬립최대** / 슬립기준 | DR 끈 조건: **슬립최대** / 슬립기준 |
+|---|---|---|
+| 시작 (DR 0스텝) | 100 % / 0.0267 / **0.2388** / 53 % | **0.0365** / 93 % |
+| iter0050 | 100 % / 0.0297 / **0.2266** / 47 % | 0.0293 / 100 % |
+| iter0100 | 100 % / 0.0216 / **0.2280** / 57 % | 0.0291 / 100 % |
+| iter0150 | 100 % / 0.0260 / **0.2258** / 53 % | 0.0227 / 100 % |
+| iter0200 | 100 % / 0.0265 / **0.2202** / 50 % | 0.0310 / 97 % |
+| iter0250 | 100 % / 0.0280 / **0.2413** / 53 % | 0.0423 / 87 % |
+
+**회복하지 않았다.** DR 조건 최악 슬립 0.2388 → 0.2413 (+0.0025 m), 슬립 기준 성공률도
+53 % → 53 % 로 제자리다. 120만 스텝이 아무것도 사지 못했다.
+
+**다만 기준 조건 성능은 잃지 않았다** (DR 끈 조건 최악 슬립 0.0365 → 0.0423, 슬립 기준
+93 % → 87 %). DR 학습이 평균에 맞추느라 원래 잘하던 것을 망치는 흔한 실패는 **일어나지
+않았다** — 이걸 함께 재지 않았으면 "일반화 실패"와 "전부 못하게 됨"을 구분하지 못했다.
+
+> **학습 곡선은 아무것도 말해주지 않았다.** `return_mean` 은 300 이터레이션 내내
+> 527~640 사이를 추세 없이 오르내렸고(iter 50 → 543, 150 → 591, 250 → 607, 300 → 599),
+> 곡선만 보면 "조금씩 나아지는 중"으로도 읽힌다. 결정론적 평가는 **완전한 정체**를
+> 보여준다. v2·v3·v4 를 곡선만 보고 판단해 낭비했던 것과 같은 함정이다.
+
+### 게이트 4 — 정체의 원인은 **질량**이다 (2026-09-09)
+
+정체의 해석이 둘(샘플 부족 / 물리 한계)이라 **추측 대신 측정했다**. DR 이 흔드는 것은
+질량과 마찰 둘뿐이므로, 에피소드마다 **실제로 뽑힌 값**과 결과를 대응시키면 실패가 어디
+몰리는지 바로 보인다 (`gate4_dr_failure_analysis.py`, 90 에피소드, dr2@250):
+
+| 질량 구간 | n | 슬립기준 성공 | 슬립중앙 | 슬립최대 |
+|---|---|---|---|---|
+| 0.187~0.682 kg | 23 | **83 %** | 0.0128 | 0.1447 |
+| 0.682~1.179 kg | 22 | **77 %** | 0.0207 | 0.2260 |
+| 1.179~1.779 kg | 22 | **32 %** | 0.0391 | 0.2413 |
+| 1.779~2.131 kg | 23 | **17 %** | 0.0551 | 0.2481 |
+
+| 마찰 구간 | n | 슬립기준 성공 | 슬립최대 |
+|---|---|---|---|
+| 0.116~0.260 | 23 | 35 % | 0.2481 |
+| 0.260~0.368 | 22 | 55 % | 0.2260 |
+| 0.368~0.541 | 22 | 64 % | 0.2366 |
+| **0.541~0.695** | 23 | 57 % | **0.0677** |
+
+**성공과의 상관: 질량 −0.562, 마찰 +0.148.** 실패는 질량에 몰려 있고 **약 1.2 kg 에
+절벽**이 있다(77 % → 32 %).
+
+동시에 마찰 최고 구간만 최악 슬립이 0.0677 로 다른 구간(0.22~0.25)의 **1/3**이다.
+질량과 마찰이 함께 작동한다는 신호이고, 정확히 **쿨롱 마찰**의 형태다 —
+`gate4_payload_limit.py` 가 이것을 검산한다(다음 절).
+
+### 게이트 4 — **정책의 무능이 아니라 마찰 한계다** (2026-09-09)
+
+질량·마찰을 무작위가 아니라 **격자로 고정**해 돌렸다(무작위로는 각 칸에 표본이 모이지
+않아 경계를 못 본다). 정책은 v8@300, 칸마다 시드 8개 = 96 에피소드
+(`gate4_payload_limit.py`):
+
+**슬립 기준 성공률 (행 = 마찰계수, 열 = 질량)**
+
+| μ \ m | 0.27 kg | 0.54 kg | 1.09 kg | 2.18 kg |
+|---|---|---|---|---|
+| **0.15** | 88 % | 75 % | 38 % | **0 %** |
+| **0.35** | 100 % | 88 % | 50 % | **0 %** |
+| **0.70** | 100 % | 100 % | **88 %** | 12 % |
+
+**두 축 모두에서 단조롭고, 마찰이 질량을 구제한다.** 1.09 kg 에서 같은 정책이
+μ 만 바뀌어 38 % → 50 % → 88 % 다. **재학습 없이** 그렇다.
+
+> **이것이 판정을 바꾼다.** "2단계 DR 에서 회복하지 못했다"는 사실만으로는 엔진 판단에
+> 쓸 수 없었다 — 학습 문제면 SuperDex 와 무관하고, 물리 상한이면 애초에 **잘못된 범위를
+> 요구한 것**이기 때문이다. 격자가 후자임을 보인다: 2단계 DR 이 훑던 **고질량 × 저마찰
+> 구석은 어떤 정책으로도 성립하지 않는다.** 120만 스텝이 아무것도 사지 못한 이유가 이것이다.
+
+**⚠️ 1차 원리 공식은 방향만 맞고 값은 틀렸다 — 그대로 쓰지 마라.**
+`m_max ≈ μ · ΣF / g` 로 예측하면 관측보다 **3~4배 작게** 나온다:
+
+| μ | 실측 ΣF(지문 접촉력 합) | 공식 예측 m_max | **관측 경계** |
+|---|---|---|---|
+| 0.15 | 9.9 N | 0.15 kg | 0.54~1.09 kg |
+| 0.35 | 10.5 N | 0.37 kg | 1.09~2.18 kg |
+| 0.70 | 10.9 N | 0.78 kg | 1.09~2.18 kg |
+
+공식이 **순수 마찰 파지**를 가정하기 때문이다. 실제로는 손가락이 물체를 **감싸서**
+접촉 법선이 중력을 직접 받치고(형상 폐쇄), 손바닥도 하중을 나눈다. 그래서 마찰만으로
+계산한 값보다 훨씬 무거운 것을 든다. 공식은 **"마찰을 올리면 더 든다"는 방향**을
+확인하는 데만 쓰고, 한계값 자체는 위 격자의 관측 경계를 쓴다.
+
+부수 실측: **ΣF 가 질량과 함께 커진다**(0.15 μ 행에서 8.2 → 11.9 N). 물체가 무거워
+손가락을 밀면 자세 컨트롤러가 그만큼 더 밀어낸다 — 수동 컴플라이언스다.
+
+> **여기서 나온 한계 질량은 DG-5F-M 의 하드웨어 스펙이 아니다.** 이 태스크 구성
+> (손목 고정, 강성 3.0, duck_lamp 형상, 특정 파지 자세)에서의 상한이다. 강성 3.0 은
+> 접촉력을 물리적으로 그럴듯한 범위에 두려고 **의도적으로 낮춘 값**이고(1e3 에서
+> 4,671 N 이 나온다), 실제 파지력 상한은 **U8 로 미확정**이다.
+
+**결론 — 1단계가 곧 물리적으로 가능한 범위였다.** 격자에서 기준 마찰(0.25) 근처로
+성공률이 유지되는 구간이 대략 질량 1 kg 이하인데, 1단계 DR 이 정확히 그 범위
+(질량 ×0.5~2.0 = 0.27~1.09 kg)다. **정책은 물리적으로 가능한 범위 전체를 DR 학습 없이
+이미 일반화하고 있었다.**
+
+### 게이트 4 — 물체 일반화 (2026-09-09)
+
+DR 의 다른 축. 물성이 아니라 **물체 자체**를 바꾼다 (`gate4_object_sweep.py`, v8@300,
+30 에피소드, 시드 9000~9029 물체마다 동일):
+
+| 물체 | 기하 가능 | 파지성립 | 지문평균 | 슬립중앙 | 슬립최대 | 거리기준 | NaN |
+|---|---|---|---|---|---|---|---|
+| **duck_lamp**(학습 물체) | 예 | **100 %** | 3.70 | 0.0131 | 0.0365 | 57 % | 0 |
+| **paper_cup** | 예 | **37 %** | 1.57 | **0.0042** | **0.0123** | 7 % | 0 |
+| sphere (대조군) | 아니오 | 0 % | 0.17 | — | — | 0 % | 0 |
+| block_red (대조군) | 아니오 | 0 % | 0.37 | — | — | 0 % | 0 |
+
+**대조군 2종은 실패가 정상이다.** 게이트 2 발견 6 이 2.5 cm 급 물체는 사람 크기 손에
+3지 접촉이 **기하적으로 성립하지 않음**을 오라클 탐색으로 이미 확인했다. 이걸 일반화
+실패로 세면 오판이고, 아예 빼면 "큰 물체만 골랐다"가 된다 — 그래서 남겨 두고 판정에서만
+분리한다.
+
+**paper_cup 은 실패 양상이 특이하다.** 잡기만 하면 **duck_lamp 보다 잘 유지한다**
+(슬립 중앙 0.0042 / 최대 0.0123 vs 0.0131 / 0.0365 — 36배 가벼우니 당연하다). 문제는
+**잡는 것 자체를 63 % 실패**한다는 것이다(지문 평균 1.57, duck_lamp 는 3.70).
+
+즉 "유지 능력"이 아니라 "접촉 형성"에서 깨진다. 스폰 오프셋 `place=(0.04, 0, 0.04)` 는
+duck_lamp(11.9×11.0×**7.5** cm) 기준으로 잡은 값이고 paper_cup 은 형상이 다르다
+(9.3×9.4×**11.3** cm — 더 높고 얇다). **배치 confound 를 배제하기 전에는 일반화 실패로
+결론내지 않는다.**
+
+#### 배치를 바꾸니 절반이 회복됐다 — 일반화 실패가 아니라 **배치 문제**였다
+
+paper_cup 만 놓고 스폰 오프셋을 훑었다(20 에피소드씩, 손바닥 좌표계 `x,y,z`):
+
+| place | 파지성립 | 지문평균 | 거리기준 |
+|---|---|---|---|
+| 0.03, 0, 0.04 | 25 % | 1.50 | 0 % |
+| **0.04, 0, 0.04** (duck_lamp 기본값) | **30 %** | 1.55 | 0 % |
+| 0.04, 0, 0.02 | 10 % | 1.10 | 5 % |
+| 0.02, 0, 0.05 | 35 % | 1.35 | 15 % |
+| 0.05, 0, 0.04 | 65 % | 2.25 | 5 % |
+| **0.04, 0, 0.06** | **70 %** | **2.45** | **50 %** |
+
+**같은 정책·같은 물체인데 배치만 바꿔 성립률이 30 % → 70 %, 거리 기준이 0 % → 50 %다.**
+`+Z`(손가락 밑동 쪽)로 2 cm 올린 것이 전부다 — 컵이 duck_lamp 보다 높아서 손바닥
+기준으로 더 위에 놓여야 손가락 사이에 들어온다.
+
+> **이것이 왜 일반화 실패가 아닌가.** `place` 는 정책의 출력이 아니라 **태스크 설정**이다.
+> 실제 시스템에서는 팔의 접근 제어가 손을 물체 대비 어디에 둘지 정한다 — 물체마다 그
+> 값이 다른 것은 파이프라인의 정상 동작이지 정책의 결함이 아니다. 손목 고정 PoC 에서는
+> 그 역할을 `place` 상수가 대신하고 있고, duck_lamp 값을 그대로 쓴 것이 confound 였다.
+
+더 밀어보니 `0.06, 0, 0.06` 에서 **95 %** 였다. 다만 배치 9개를 **같은 시드로** 훑어
+최고점을 골랐으므로 그 숫자에는 **선택 편향**이 있다. 그래서 **홀드아웃 시드
+(9100~9129)** 로 다시 쟀고, 이 값을 정본으로 쓴다:
+
+| 물체 (홀드아웃 시드 9100~9129, 30 에피소드) | 파지성립 | 지문평균 | 슬립중앙 | 슬립최대 | 거리기준 |
+|---|---|---|---|---|---|
+| **paper_cup** @ `0.06,0,0.06` | **100 %** | 3.13 | 0.0169 | 0.0472 | **77 %** |
+| duck_lamp @ 기본 배치 (참조) | 100 % | 3.77 | 0.0116 | 0.0334 | 63 % |
+
+**배치만 물체에 맞추면 학습에 쓰지 않은 물체에서 duck_lamp 와 동등하다.** 파지 성립률은
+같고(100 %), 거리 기준은 오히려 더 높다(77 % vs 63 % — 컵이 작고 가벼워 파지중심에서 덜
+벗어난다). 최악 슬립만 약간 나쁘다(0.0472 vs 0.0334).
+
+즉 **일반화 실패는 없었다. confound 였다.**
+
+### 게이트 4 — 일반화와 domain randomization
+
+실린더 + 산업 물체 1종 추가, mass/friction/scale randomization.
+
+> ML-Agents는 DR과 curriculum이 YAML(`environment_parameters` +
+> uniform/gaussian/multirangeuniform sampler)에 내장돼 있고 SuperDex에는 없다 — env 코드에
+> 직접 쓴다. AI agent 구현 조건에서 비용은 작지만, **DR은 샘플 요구를 3~10배로 올려
+> throughput 병목을 여기서 처음 만나게 된다**(§8).
+
+**판정**: 정책이 유지되는가, 샘플 비용이 몇 배로 뛰는가.
+
+> **✅ 통과 (2026-09-09).** 두 질문 모두 답이 나왔다 — 아래 판정 참고. 실측 근거는 §0
+> "게이트 4" 절 4개(DR 스윕 / 재학습 정체 / 질량 분해 / 마찰 격자 / 물체 일반화)에 있다.
+
+#### 게이트 4 판정
+
+**질문 1 — 정책이 유지되는가? → 예. 물리적으로 가능한 범위 전체에서.**
+
+| 축 | 결과 |
+|---|---|
+| 질량·마찰 (1단계 DR: 0.27~1.09 kg, μ 0.15~0.5) | **재학습 없이 유지.** 최악 슬립 ×1.5 |
+| 질량·마찰 (그 밖) | 실패하지만 **어떤 정책으로도 불가능한 영역**이다 — 마찰 격자가 증명 |
+| 새 물체 (paper_cup) | 배치를 물체에 맞추면 **파지성립 100 %**, 홀드아웃 시드에서 duck_lamp 와 동등 |
+| 대조군 (2.5~3 cm 물체) | 실패. 게이트 2 발견 6 의 **기하적 불가** — 일반화 실패가 아니다 |
+
+**질문 2 — 샘플 비용이 몇 배로 뛰는가? → 스텝 비용 ×1.03, 추가 샘플 0.**
+
+원안은 "DR 이 샘플 요구를 3~10배로 올려 throughput 병목을 여기서 처음 만난다"고
+예상했다. **틀렸다.** 실측은 두 가지를 보여준다:
+
+- **스텝 비용은 없다(×1.03).** 리셋마다 actor 물성만 바꾸고 씬을 재생성하지 않는다.
+- **추가 샘플도 필요 없었다.** 가능한 범위는 DR 학습 0 스텝으로 이미 커버됐고,
+  불가능한 범위에 쓴 120만 스텝은 아무것도 사지 못했다(정체 실측).
+
+즉 **§8 이 걱정한 throughput 병목은 게이트 4 에서 발현하지 않았다.** 다만 이것은 "DR 이
+싸다"가 아니라 **"이 태스크에서 물리적으로 흔들 수 있는 폭이 좁다"** 는 뜻이다 —
+물체 다양성을 늘리면 다시 물어야 한다.
+
+#### 원안에서 바뀐 것
+
+| 원안 | 실제 |
+|---|---|
+| mass/friction/**scale** randomization | scale 은 뺐다 — 기하 변경은 프리팹 재적재라 리셋 비용이 자릿수로 뛴다. **물체 교체**로 대신했다 |
+| "실린더 + 산업 물체 1종 추가" | 동봉 asset 중 손 크기에 맞는 것이 `paper_cup`(원통형) 뿐이었다. 산업 물체는 없다 — 필요하면 직접 만들어야 하고, 그것은 엔진 판단에 필요한 작업이 아니다 |
+| "DR 을 켜고 재학습한다" | **먼저 재학습 없이 견딤을 쟀다.** 그 결과 재학습이 불필요함이 드러났고, 굳이 돌린 재학습은 정체했다 |
+
+### 🛑 작업 경계 — 게이트 4까지가 이 브랜치의 범위다 (2026-09-09, 사용자 지시)
+
+> **"엔진을 정하는 단계만 하고 문서화는 꼭 해둬라."**
+
+게이트 0~4는 전부 **"SuperDex를 채택할 것인가"** 에 답하는 실험이다. 게이트 4가 끝나면
+그 질문은 닫히고, **아래 "이후 확장 순서"는 별도 승인 없이 착수하지 않는다.**
+
+경계를 못 박는 이유: 현재 학습 과제(손목 고정 / duck_lamp 545 g / 1초 유지 / 들어올리기
+없음, 파지점이 사람이 맞춘 상수)와 실제 목표(처음 보는 물체를 스스로 파지) 사이의 거리가
+크다. 그 거리를 좁히는 작업은
+**엔진 판단과 성격이 다른 별개의 프로젝트 단계**이고, 예산·일정 판단이 필요하다.
+
+| | 이 브랜치에서 한다 | 하지 않는다 (승인 후) |
+|---|---|---|
+| 범위 | 게이트 0~4 | 손목 자세 액션, 접근+파지+들기 결합, UR16e 통합 정책, 파지점 자율 결정, sim2real |
+| 목적 | 엔진 채택 판단 | 제품 정책 개발 |
+
+게이트 4가 끝나면 **판단 결과와 근거를 문서로 정리하는 것까지가 완료 조건**이다 —
+채택/회귀 판정, 게이트별 증거, 남은 리스크, 다음 단계에 필요한 것.
+
+### 이후 확장 순서 (게이트 통과 후, **별도 승인 필요**)
+
+1. wrist pose 액션 추가 → 2. approach + grasp + lift 결합 → 3. UR16e 통합 →
+4. domain randomization 확대 → 5. sim-to-real
+
+---
+
+## 6. Unity 회귀 기준 — 사전에 못 박아 둔다
+
+하나라도 걸리면 SuperDex를 중단하고 Unity ML-Agents로 돌아간다.
+
+1. **게이트 0 실패** — 합리적 타임스텝에서 스크립트 파지가 불안정/관통.
+   SuperDex의 핵심 주장이 DG5F에 대해 성립하지 않는다는 뜻
+2. **게이트 1이 2일 내 미해결** — 아키텍처가 닫히지 않음
+3. ~~게이트 2에서 집계 throughput < 2,000 steps/s~~ → **2026-09-08 재판정. 아래 참고.**
+   **새 기준: PoC 규모 실험(1e7 step)이 하룻밤(≤12 h)에 끝나는가.** 실측 468 steps/s에서
+   1e7 = 약 6 시간 → **통과.**
+4. **SuperDex 버그/API 파손으로 2주 연속 진척 없음** + upstream 이슈 2주 이상 무응답
+5. **저장소 90일 무커밋 또는 archive**
+6. **U4(라이선스)가 의도한 용도를 차단**하고 자체 asset 대체로도 해결되지 않음
+
+회귀 비용이 낮게 유지되는 이유: 관찰·액션·보상 설계가
+[`RL_POLICY_REDESIGN.md`](RL_POLICY_REDESIGN.md)에 엔진 독립으로 남고, UR16e·DG5F URDF는
+`urdf/`에 그대로 있다. 폴백은 Unity다 — `CLAUDE.md`에 따라 **MuJoCo 재도입은 배제**하며,
+Isaac은 GPU 워크스테이션이 실제로 들어올 때만 검토한다.
+
+> **과설계 금지.** SuperDex 호출은 env 코드의 `sim` 모듈 한 곳에 격리하되, 그 이상의
+> 추상화 계층은 만들지 않는다. 근거는 `CLAUDE.md`가 금지하는 "나중 이식 대비" 과설계와
+> 같은 함정이기 때문이다. 격리의 목적은 이식성이 아니라 **alpha 소프트웨어의 API 파손
+> 반경을 한 파일로 묶는 것**이다.
+
+---
+
+## 7. 환경 구성 — venv를 분리한다
+
+SuperDex는 **Python 3.12**, 기존 파이프라인은 **3.10.11**(ML-Agents 핀)이다.
+ML-Agents가 빠지면 3.10.11의 근거가 사라지지만 mediapipe가 같은 venv를 쓰므로(U5),
+**섞지 않고 분리한다.**
+
+| venv | Python | 용도 | 위치 |
+|---|---|---|---|
+| 기존 | 3.10.11 | mediapipe 비전, ML-Agents, UR RTDE 브리지 | `vision/.vision/` |
+| 신규 | 3.12 | SuperDex Physics/Robotics/Lab, RLlib | `superdex/.venv/` |
+
+`.gitignore`의 `.venv/` 패턴이 모든 깊이에서 매칭되므로 `superdex/.venv/`는 이미 추적
+제외다. 요구사항은 `requirements-superdex.txt`에 핀으로 고정한다.
+
+절차를 바꿨으면 [`PYTHON_ENV_SETUP.md`](PYTHON_ENV_SETUP.md)를 **그 자리에서** 함께
+갱신한다(원칙 2). 그 문서는 Windows와 Linux를 모두 다룬다 — 한쪽만 고치지 않는다.
+
+### 설정 키 (원칙 1 — 값을 코드에 박지 않는다)
+
+모두 `config/rtauto_config.py`가 정본이며 `.env`로 덮어쓴다.
+
+| 키 (.env) | 기본값 | 의미 |
+|---|---|---|
+| `RTAUTO_SUPERDEX_REPO` | *(없음)* | `project_superdex` 클론 루트. 머신마다 다름 |
+| `RTAUTO_SUPERDEX_ASSETS` | `<repo>/assets` | asset 트리. SuperDex 자신은 `SUPERDEX_ASSETS_PATH` 환경변수를 읽으므로 런처가 이 값을 그 이름으로 내보낸다 |
+| `RTAUTO_SUPERDEX_PYTHON` | OS별 `superdex/.venv/...` | 3.12 venv의 python 실행파일 |
+| `RTAUTO_SUPERDEX_SIM_HZ` | `200` | 물리 스텝 주기. 예제 실측값 1/200 s |
+| `RTAUTO_SUPERDEX_ENV_RUNNERS` | `os.cpu_count() - 4` | Ray env runner 수. 회사 12T → 8, 집 16T → 12 (§8) |
+| `RTAUTO_SUPERDEX_GPUS_PER_LEARNER` | `1` | learner GPU 수. SuperDex 기본값 0이지만 두 머신 모두 CUDA GPU가 있다 (§8) |
+| `RTAUTO_SUPERDEX_RESULTS_DIR` | `superdex/results` | 학습 산출물 |
+| `RTAUTO_SUPERDEX_POLICY_DIR` | `superdex/policies` | ONNX 정책 산출물 |
+
+**wheel 버전 핀은 [`../requirements-superdex.txt`](../requirements-superdex.txt)가 정본이다**
+(`requirements-mlagents.txt`와 같은 관례 — 버전 문자열을 `config/rtauto_config.py`에 중복
+타이핑하지 않는다). `superdex`·`superdex-lab`은 PyPI 확인 결과 **`==1.0.0`으로 이미
+고정**했고(U3 해소), `ray[rllib]`·`onnx`·`onnxruntime`만 게이트 0-4에서 `pip freeze`로
+확인해 채운다.
+
+손 asset 변형은 **새 키를 만들지 않고** 기존 `RTAUTO_DG5F_HAND`(`right`)와
+`RTAUTO_DG5F_SHORT`에서 파생시킨다 — 같은 사실을 두 곳에 타이핑하지 않는다(원칙 1).
+`config/rtauto_config.py`의 `superdex_hand_asset()`이 그 조합을 asset 상대경로로 만든다.
+
+---
+
+## 8. throughput 현실 점검
+
+### 작업 머신이 둘이다
+
+| | CPU | GPU | RAM | env runner 기본값 |
+|---|---|---|---|---|
+| **회사** (주 작업) | Ryzen 5 7600 — **6C/12T** | **RTX 2080 8 GB** (Turing, sm_75) | 32 GB | **8** |
+| 집 | Ryzen 7 7800X3D — 8C/16T | RTX 4070 Ti 12 GB (Ada) | 32 GB | 12 |
+
+> 로드맵 v5·v14가 "학습 머신 RTX 4070 Ti / 7800X3D"로 적은 것은 **집 머신**이다.
+> 회사 머신이 주 작업 환경이고 코어·VRAM이 더 작다 — **성능 판정의 기준은 회사 머신이다.**
+
+`RTAUTO_SUPERDEX_ENV_RUNNERS`의 기본값은 **`os.cpu_count()`에서 파생**시킨다(스레드−4).
+머신 사양을 코드나 `.env`에 박지 않기 위한 것이며, 새 PC에서 아무 설정 없이도 그 머신에
+맞는 값이 나와야 한다는 원칙 2를 만족시킨다. 실측으로 더 좋은 값을 찾으면 그때 `.env`로
+덮어쓴다.
+
+> ⚠️ **RTX 2080은 Turing이라 bf16을 지원하지 않는다.** 혼합정밀도를 켤 때 bf16 대신
+> fp16을 쓰거나 fp32로 둔다 — 4070 Ti(Ada)에서 통하는 설정을 그대로 회사 머신에
+> 가져오면 런타임 에러가 난다. VRAM도 8 GB로 4 GB 작으므로, 나중에 vision 관찰을 넣으면
+> 여기서 먼저 막힌다.
+
+### 계산
+
+- SuperDex 기본값 `num_env_runners=32`는 **두 머신 어느 쪽의 스레드 수도 넘는다.**
+  스크립트가 가용 CPU에 맞춰 자동 캡하지만, learner 1개와 OS·Unity 여유를 남긴 값을
+  설정에서 준다.
+- 물리는 CPU이지만 **learner는 GPU를 쓸 수 있다.** SuperDex 기본값
+  `num_gpus_per_learner=0`을 그대로 두지 않고 `1`로 올려 시험한다.
+- 집계 throughput ≈ (단일 env steps/sec) × **8**(회사 기준). 단일 env가 500 steps/s면
+  4 k/s → 1e8 step에 약 7 시간. 100 steps/s면 800/s → 1e8에 약 35 시간.
+  **U6 측정 없이는 계획을 확정할 수 없다.**
+- PoC 목표 규모인 1e7~5e7 step은 위 두 경우 모두 **수 시간~반나절**로 들어온다.
+  1e8 이상이 필요해지는 순간(게이트 4의 DR 확대) 회사 머신에서는 하룻밤 이상이 되므로,
+  그때 집 머신 활용이나 태스크 설계 축소를 함께 검토한다.
+- **PoC 범위는 이 예산 안에 들어온다.** wrist 고정 + 특권 상태 관찰 + 조밀 보상 +
+  ~16~20차원 액션이면 통상 1e7~5e7 step 규모다.
+- **넘어가는 지점**: in-hand reorientation, vision 기반 관찰, 광범위 ADR, 다물체 대규모
+  일반화. 이는 게이트 4 이후의 문제다.
+- **Isaac Lab(단일 GPU 4k~16k env, 5e4~5e5 steps/s) 대비로는 10~100배 열세다.** 다만
+  **Unity와 비교하면 이 항목은 차별점이 아니다** — Unity가 throughput을 얻는 방식은 한
+  씬에 agent 수백 개 복제인데, 다지 접촉을 안정화하려고 fixed timestep을 0.02 s에서
+  1~5 ms로 내리고 solver iteration을 올리면 그 우위가 사라진다. **두 후보의 공유된
+  약점**이므로 A/B 선택의 결정 변수로 쓰지 않는다.
+- SuperDex Physics 안에 CUDA 코드가 있어 GPU 벡터화 여지는 있으나 **계획에 넣지 않는다.**
+
+---
+
+## 9. 리스크
+
+| # | 리스크 | 크기 | 완화 |
+|---|---|---|---|
+| R1 | fidelity 주장 미검증 (3자 벤치마크·논문 없음) | 중 | 게이트 0·2에서 직접 측정 |
+| R2 | RLlib 새 API 스택 ONNX 미지원 + 커넥터 밖 정규화 | 중 | 게이트 1의 래퍼 export + 3자 파리티 테스트. 프로젝트 전체에서 가장 추적하기 어려운 버그 후보 |
+| R3 | API breaking change (6개월간 확실히 발생) | 중 | **고정 wheel 버전 핀, `main` 추적 금지.** SuperDex 호출을 `sim` 모듈 한 곳에 격리 |
+| R4 | throughput 상한 → 실험 회전 속도 병목 | 중 | 태스크 설계로 샘플 요구 억제(특권 관찰·조밀 보상·curriculum·단계적 액션 확장) |
+| R5 | UR16e URDF 임포트 품질 (primitive 무시, SDF 품질) | 중 | Studio 경유 bake 필수 경로화(게이트 3) |
+| R6 | Tesollo asset 라이선스 (상용 재배포 제약) | 중 | U4 서면 확인. 막히면 `urdf/`의 자체 기술서로 asset 자체 제작 |
+| R7 | Unity PhysX 발산을 정책 버그로 오진 | 중 | §2의 트윈 역할 정의를 준수 |
+| R8 | 문서 부족 (2주 된 프로젝트, 오픈 이슈 3개 = 커뮤니티 부재) | 중 | 예제 코드 3종(`train_samples.py`, `run_inference.py`, `checkpoint_policy.py`) + OSC/JSC 예제가 정본 |
+| R9 | Meta의 프로젝트 방기 | 중~고 (테일) | Apache-2.0 + C++ 소스 존재하나 1인 팀이 물리 엔진을 유지할 수는 없다. 반대 신호: Teleop Q4 2026 로드맵, 2026-09-06까지 커밋, Reality Labs의 전략적 이해관계 |
+
+**핵심은 이 리스크가 파이프라인에 침투하지 않는다는 점이다.** MuJoCo 때는 엔진이
+파이프라인 *안에* 박히는 구조여서 통합·유지보수 비용이 폐기 사유가 됐다. 지금 구조에서
+SuperDex는 **ONNX 뒤에 있는 교체 가능한 학습기**이고, 진짜 지적 자산은 관찰·액션·보상
+설계(엔진 독립)다. 되돌릴 수 있게 설계된 도입이다.
+
+---
+
+## 10. 진행 기록
+
+| 날짜 | 게이트 | 결과 |
+|---|---|---|
+| 2026-09-07 | — | 브랜치 `SuperDexTest` 개설, 본 문서·설정 키·`requirements-superdex.txt` 신설 |
+| 2026-09-07 | 0-1~0-5 | **통과.** Python 3.12.0 + `superdex 1.0.0` 전체 + `torch 2.6.0+cu124`. `torch.cuda.is_available()=True`, GPU = RTX 2080. `stable`(=`v1.0.0`, `1d71509`) 클론을 `D:/workspace/project_superdex`에 두고 `.env`에 `RTAUTO_SUPERDEX_REPO` 등록 |
+| 2026-09-07 | 0-6 | **통과. U1·U2 확정** — `dg5f_long_right.superdex_bot`(32.7 KB) + `collision/` + `render/` 디스크 확인 |
+| 2026-09-07 | 0-8(일부) | **하한 throughput 실측**: 단일 env·단일 스레드·컨트롤러/접촉물체 없음에서 **645~659 steps/s**, realtime **3.2x**. 8 runner 집계 추정 **≈5.2k steps/s** — §6 회귀 기준 3(2k steps/s)의 2.6배 |
+| 2026-09-07 | **0-8** | **✅ 게이트 0 통과 — 스크립트 파지 성공.** `superdex/scripts/gate0_grasp_test.py --place 0.03,0.0,0.04`. 접촉점 **594~604점 유지**, 양방향 1g(±Z) 2초에서 블록 드리프트 **1.3 mm**(0.0243 → 0.0256 m), 블록 속도 **0.001~0.002 m/s**(흔들림·관통 없음). 접촉 포함 throughput **534 steps/s**, realtime 2.67x, 8 runner 집계 **≈4.3k steps/s** — 회귀 기준의 2.1배. **U6 해소** |
+| 2026-09-08 | 1 | **✅ 게이트 1 통과 — ONNX 3자 파리티.** 래퍼 vs RLlib 커넥터 경로 **0.000e+00**, onnxruntime 1.431e-06, **Unity Inference Engine 9.537e-07** (허용 1e-5). 산출물 `superdex/policies/cart_pole_ppo.onnx`. 도중 블로커 3개 발견·처리(wheel의 json 누락 / Ray 2.58 `checkpoint_frequency` / Windows libuv) → 학습 진입점을 `superdex/scripts/train_ppo.py`로 자체 소유 |
+| 2026-09-08 | 2 | **환경 신설 + 기준선 확정.** `DG5FGraspEnv`(관찰 65 / 행동 20). 고정 폐쇄 정책 기준선 **7/40 = 18 %**, 낙하 0/40, 평균 지문 접촉 1.82 — 실패 원인이 낙하가 아니라 **지문 접촉 부족**임을 확인 |
+| 2026-09-08 | 2 | **학습 v1 실패.** 480k 스텝, 곡선 18~24 평평. 평가 0/20, 지문 접촉 0.00. 원인: 접촉 기반 보상이 학습 내내 0이어서 **gradient 부재** |
+| 2026-09-08 | 2 | **학습 v2 실패.** `r_reach` 밀집항 추가, 160k 스텝, 곡선 35~40 평평 |
+| 2026-09-08 | 2 | **학습 v3 실패.** 목표 EMA 평활화(α=0.1, 신호비 1.46x→3.03x), 84k 스텝, 곡선 83~87 평평 |
+| 2026-09-08 | 2 | **학습 v4 중단.** 관찰 고정상수 정규화(스케일 100배→37배), 48k 스텝, 곡선 81~87 완만 |
+| 2026-09-08 | 2 | **회귀 기준 3 재판정.** 집계 2,000 steps/s는 이 스택에서 도달 불가(Ray 워커 불안정). 신뢰 가능한 실효값 **단일 env 468 steps/s**(`physics_threads=-1`). 새 기준 "1e7 step이 ≤12 h" → 약 6 h로 **통과**. Unity 회귀 사유 아님 |
+| 2026-09-08 | 2 | **진단 워크플로 중단.** 5개 렌즈 병렬 진단 + 적대적 반증 워크플로를 실행했으나 세션 종료로 전 에이전트 `started` 상태에서 멈춤(결과 0건). 스크립트 보존, §0에 재실행 경로 기록 |
+| 2026-09-09 | 2 | **오라클 판정: 원인은 물체 크기.** 성공 궤적 존재 시드 `block_red` **1/10** vs `duck_lamp` **7/10**. 2.5 cm 블록은 3지 접촉이 기하적으로 불가능(지문 1~2개에서 멈춤, 접촉력 31~57 N로 한계 초과). 기본 물체를 `duck_lamp`(11.9 cm/545 g), 배치를 `palm+[0.04,0,0.04]`로 변경 |
+| 2026-09-09 | 2 | **새 기준선(고정 폐쇄, 30 에피소드): 성공률 14/30 = 47 %**, 평균 지문 접촉 3.03, 평균 최대 지문력 4.1 N, 낙하 5/30, 리턴 563.7 |
+| 2026-09-09 | 2 | **학습 v5 — 곡선은 올랐으나 게이트 2 미통과.** 480k 스텝에서 `return_mean` 243 → 355 (**+41 %**, v1~v4는 전부 평평했다). 그러나 결정론적 평가 **6/30 = 20 %** 로 **기준선 47 % 미달**. 낙하는 5/30 → **1/30** 로 개선. 평균 지문 접촉 2.73(요구 3), 힘 2.5 N(한계 20 N 미발동) |
+| 2026-09-09 | 2 | **진단: 보상-성공기준 어긋남.** `r_touch = n_tips/5` 의 부분 점수 때문에 "지문 2개로 안정 유지"가 지역 최적이다 — 3개를 만들려 더 조이면 물체를 밀어내 `r_near` 를 잃는다. 힘 페널티는 발동하지 않았으므로(2.5 N) 페널티 문제가 아니다 |
+| 2026-09-09 | 2 | **판정 습관 교정.** 20 이터레이션 창의 평평함을 보고 "정체"로 3회 오판했다(v5의 iter 21~30 이후 계속 상승). `train_ppo.py` 에 `--checkpoint-every`(기본 20)를 넣어 앞으로는 `return_mean` 이 아니라 **중간 체크포인트의 결정론적 성공률**로 판정한다 |
+| 2026-09-09 | 2 | **v6 보상 해킹 확인·차단.** 게이팅 없는 밀집 항으로 학습 return 335 → 441 인데 성공률 iter 40/80 모두 **0 %**, 낙하 10/20, 지문 1.00. 원인은 `r_reach`(손가락만 근처에 두면 보상)와 `r_contact`(바닥 접촉점까지 셈)가 **파지 없이 리턴을 벌 수 있는 우회로**가 된 것. → **단계 게이팅**(접촉 발생 시 유도 항 차단, 경계 단조성 보장) + `r_contact` 제거 |
+| 2026-09-09 | 2 | **게이팅 랭킹 검증 통과.** 리턴이 성공률과 단조 정렬: 열린유지 45.8(0/10) / 호버 f=0.45 119.5(0/10) / 무작위 261.8(0/10) / 호버 f=0.60 355.0(1/10) / 파지 f=0.80 731.7(4/10) / 완전폐쇄 **988.7(6/10)**. 호버-완전폐쇄 **8배 격차**. **이 검증을 v2·v3·v6 전에 해야 했다** — 보상 변경 시 필수 절차로 채택 |
+| 2026-09-09 | 2 | **`--resume-from` / `--checkpoint-every` 신설.** 전자는 CLAUDE.md 원칙 2("이어서 시작")가 요구하는데 없었던 기능(검증: `env_steps` 324000 이어짐, 리턴 428 유지). 후자는 종료 시점만 저장하면 곡선 정체를 오판하기 때문(실제 3회 오판) |
+| 2026-09-09 | 2 | **v8 (v7 iter80에서 이어받아 장시간 실행) 진행 중.** 236/600 이터레이션, 곡선 467 → 553 → 587 → 608 → **642** (목표 988.7). 체크포인트 평가: @50 성공 5 %/지문 2.95, @100 **40 %**/2.85, @150 40 %/**3.37**, @200 40 %/**3.43** |
+| 2026-09-09 | 2 | **⚠️ 성공 조건 분해 — `hold_radius` 가 물체 크기에 안 맞는다.** v8@200 실측: **지문 3개 이상 87 % (26/30)**, 거리 < 6 cm 47 %, 동시 40 %. 실패 원인 "지문은 됐지만 거리 초과" **14건** vs "거리는 됐지만 지문 부족" 2건 → **거리 조건이 병목**. `hold_radius=0.06` 은 2.5 cm 블록 기준값인데 duck_lamp 은 반대각선 약 8.9 cm 라 **완벽한 파지에서도 물체 중심이 6 cm 를 넘을 수 있다**. 물체 크기 오류와 같은 종류. 기준을 임의 완화하지 않기 위해 게이트 0의 드리프트 방식(파지 성립 시점 대비 손 좌표계 변위)을 **추가 측정**해 두 기준을 나란히 볼 예정 — `gate2_success_breakdown.py` 신설 |
+| 2026-09-09 | 2 | **✅ 게이트 2 통과.** 두 기준 병행 측정(30 에피소드): 거리 기준 학습 **53 %** vs 스크립트 47 %, 슬립 기준 **83 % 동률**. 판정을 지탱하는 것은 최악값 — **파지 성립률 87 % → 100 %**, **최악 슬립 17.5 cm → 4.5 cm(4배)**. 성공률 차이(2 에피소드)는 유의하지 않으므로 그것으로 통과를 주장하지 않는다 |
+| 2026-09-09 | 1(확장) | **실제 DG5F 정책 ONNX 익스포트.** 관찰 65 / 행동 20, 스펙 `dg5f-grasp-1`, 368 KB. 래퍼 vs RLlib 커넥터 **0.000e+00**, onnxruntime **5.960e-07**. `SPEC_VERSIONS` 레지스트리 신설로 계약 변경이 버전 없이 나가는 것을 차단 |
+| 2026-09-09 | — | **⛔ Unity 다리 블로커.** 배치모드가 `-executeMethod` 실행 전에 라이선스 핸드셰이크 실패로 종료. 코드 문제 아님(같은 C#으로 게이트 1 통과, 9.537e-07). **사용자가 Unity Hub 로그인/라이선스 재활성화 후 재실행 필요** |
+| 2026-09-09 | — | **계획 변경 3건.** (1) 게이트 1을 실제 정책으로 확장, (2) 성공 기준에 물체 크기 무관 **슬립**을 정본 추가, (3) **액션 차원 축소 계획 폐기** — 20차원으로 학습이 성립해 불필요해졌다 |
+| 2026-09-09 | 1(확장) | **✅ Unity 다리 통과 — 실제 DG5F 정책.** `spec dg5f-grasp-1`, obs 32x65 → action 32x20, **최대 오차 7.176E-007**(허용 1e-5), **2회 재현**. cart_pole 대리 환경이 아니라 진짜 파지 정책으로 SuperDex → ONNX → Unity·ROS2 경로가 닫혔다 |
+| 2026-09-09 | — | **Unity 배치모드 flakiness 특성화.** 4회 시도 중 2회 성공. 실패 양상 2종(라이선스 핸드셰이크 실패 / 라이선스 정상인데 startup 중 종료, 로그 24 KB). **재시도로 해소되며 사용자 조치 불필요** — 처음에 2회 실패를 보고 "Unity 계정 재로그인 필요"로 단정한 것은 오판이었다 |
+
+### 게이트 0 실측 — DG5F long/right 구조 (`superdex/scripts/gate0_hand_probe.py`)
+
+- **링크 28개 / 관절 28개, 그중 REVOLUTE 20개 = 손 20 DOF.**
+  `RL_POLICY_REDESIGN.md`의 행동 v3(팔6 + **손20**)와 **정확히 일치**한다 — 관찰·행동 계약을
+  그대로 재사용할 수 있다는 뜻이다.
+- 손가락별 DOF: `finger 1(엄지) = 0~3`, `2 = 4~7`, `3 = 8~11`, `4 = 12~15`, `5 = 16~19`.
+  링크는 `dg5f_link_<f>_<n>` + `dg5f_link_<f>_tip`, 그 외 `mount`/`base`/`palm`.
+- 질량 합 ≈ 1.6 kg (palm 0.35, base 0.45, mount 0.05, 지골 0.025~0.055, tip 0.005).
+- 관절 한계(rad, 실측): 엄지 `1_1` −22…51°, `1_2`(z축) −180…0°, `1_3`·`1_4` 0…90°.
+  검지~약지 `_2`는 0…109~115°, `_3`·`_4`는 0…90°. `5_1`(z) −1…60°.
+- ⚠️ **`min_limit`/`max_limit`/`effort_limit`은 스칼라가 아니라 축별 `Real3`다.** 관절이 도는
+  축 성분만 뽑아야 한다 — 스칼라로 다루면 `float()`에서 죽는다.
+- ⚠️ **`effort_limit` = −1.0 (무제한 sentinel).** 토크 상한이 관절에 없으므로 포화는
+  컨트롤러 쪽(`ControllerBasicJscPdParams.saturation`)에서 걸어야 한다.
+- ⚠️ **`world_joint`의 타입이 `FREE`다 → root 6 DOF, actor 총 26 DOF.** 손이 기본적으로
+  **자유부양**이다. PoC의 "손목 고정"은 공짜가 아니라 root를 용접하거나 잡아 줘야 한다.
+
+### ⚠️ 파지 대상 물체는 primitive로 만들 수 없다 (실측)
+
+동적 rigid actor에 primitive를 쓰려다 두 번 막혔다:
+
+| 시도 | 결과 |
+|---|---|
+| `ModelData.box` → `create_model_shape` | shape는 생성되나 actor 생성 시 `Not a supported ImplicitRigidShape type` |
+| `create_sphere_shape` → 동적 actor | `Unable to create dynamic rigid actor. The shape must have a surface mesh.` |
+
+즉 **동적 물체는 surface mesh가 있어야 한다** — SDF/메시 우선 엔진의 설계가 API에 그대로
+드러난 것이다(Unity PhysX의 convex-only 제약과 대칭되는, 반대 방향의 제약).
+`create_plane_shape`는 **static** 바닥판으로는 문제없이 쓰인다.
+
+**해결: 동봉 task prefab을 쓴다.** `assets/prefabs/`(자체 `.superdex_root` 보유)에 이미 있다:
+
+- `box_and_blocks/` — **Box and Blocks Test** 표준 벤치마크. `block_red/green/blue/yellow.mochi_prefab`
+  (collision/render/cad 포함) ← **게이트 2의 큐브로 이걸 쓴다**
+- `nine_hole_peg_test/`, `functional_dexterity_test/`, `shape_box/`, `paper_cups/`,
+  `sphere/`, `chain/`, `duck_lamp/`
+- 별도로 `assets/cube/cube_fine_mesh.mochi.h5`
+
+로드는 `physics.prefab.add_to_scene(prefab_path=..., root_path=<assets root>, scene=...,
+params=physics.prefab.PrefabParams(name=..., rotation=..., translation=...))` → `.actors`.
+(`superdex_robotics/examples/basic/example_scene_loading.py` 실측)
+
+### 게이트 2 중간 결론 (2026-09-08) — 엔진 판단은 끝났고, RL 튜닝은 미해결
+
+**요약: 게이트 0·1로 엔진 선택 근거는 확보됐다. 게이트 2의 남은 문제는 엔진과 무관한
+일반 RL 튜닝이므로, SuperDex 채택 판단을 여기에 걸어 두지 않는다.**
+
+#### 왜 게이트 2를 여기서 끊는가
+
+원래 질문은 "Unity로 계속 갈지 SuperDex로 갈지"였다. 그 답에 필요한 증거는 이미 있다:
+
+- **게이트 0** — SuperDex 접촉 물리가 DG5F 파지를 유지한다(양방향 1g 2초, 드리프트 1.3 mm).
+  Unity PhysX는 convex-only 제약 때문에 이 문제를 **표현조차 못 한다.**
+- **게이트 1** — ONNX 계약이 세 런타임에서 닫힌다. 아키텍처가 성립하고 되돌릴 수 있다.
+
+반면 게이트 2에서 부딪힌 4건(보상 gradient 부재 → 액션 지터 washout → 관찰 스케일)은
+**전부 엔진과 무관한 일반 RL 문제**다. Unity ML-Agents로 해도 같은 문제를 겪는다.
+즉 더 진행해도 **엔진 선택에 관한 새 정보가 나오지 않는다.**
+
+#### 학습 시도 4회 — 전부 정책이 초기값에서 움직이지 않았다
+
+| 시도 | 변경점 | 스텝 | 곡선 | 결과 |
+|---|---|---|---|---|
+| v1 | 최초 보상 | 480 k | 18~24 평평 | 평가 0/20, 지문 접촉 0.00 |
+| v2 | `r_reach` 밀집 항 추가 | 160 k | 35~40 평평 | 중단 |
+| v3 | 목표 EMA 평활화(α=0.1) | 84 k | 83~87 평평 | 중단 |
+| v4 | 관찰 고정 상수 정규화 | 48 k | 81~87 완만 | 중단 |
+
+각 변경은 **측정 근거가 있었고 의도한 효과도 확인됐다** (신호비 1.46× → 3.03×,
+관찰 스케일 100배 → 37배). 그런데도 정책은 미학습 수준(≈93)에서 목표(≈281)로 가지 못했다.
+
+**다음 후보는 액션 차원 축소**(20관절 동시 제어 → 손가락별 폐쇄율 5차원)다. 20차원
+연속 제어에서 "지문 3개 동시 접촉"이라는 희소 사건에 탐색이 도달하지 못하는 것이 남은
+가설이다. 다만 이는 **관찰·행동 계약 변경**이므로
+[`RL_POLICY_REDESIGN.md`](RL_POLICY_REDESIGN.md)와 ONNX 스펙 버전을 함께 올려야 하는
+별개 결정이다 — 여기서 임의로 진행하지 않는다.
+
+#### ⚠️ §6 회귀 기준 3 재판정 — Unity 회귀 사유가 아니다
+
+원 기준은 "집계 throughput < 2,000 steps/s면 중단"이었다. 실측 결과 **이 스택·이 머신에서
+2,000은 도달 불가능하다.** 시도한 모든 경로:
+
+| 경로 | 결과 |
+|---|---|
+| Ray 러너 4 (`runtime_env` 있음) | ❌ 무한 재생성 |
+| Ray 러너 4 (`runtime_env` 제거) | ⚠️ 비결정적 정지 |
+| 로컬 샘플링 (러너 0) | ✅ 안정, 205 steps/s |
+| 로컬 + env 벡터화 4 / 8 | ✅ 286 / 302 steps/s (한 프로세스라 물리는 순차) |
+| **SuperDex 내부 스레딩 `num_worker_threads=-1`** | ✅ **단일 env 311 → 468 steps/s (1.5×)** |
+
+**판정: 기준이 잘못 명세됐다.** 원 기준은 "게이트 0의 단일 env 534 steps/s × 러너 수"의
+선형 확장을 가정했는데, Ray 워커가 불안정해 그 가정이 성립하지 않는다. 그러나 이것을
+Unity 회귀 사유로 삼는 것은 **비교 대상을 잘못 고른 것**이다:
+
+- Unity가 이 문제에서 더 빠르지 않다. Unity의 throughput 이점은 씬 내 agent 복제인데,
+  5지 접촉을 안정화하려면 fixed timestep을 1~5 ms로 내리고 solver iteration을 올려야 해
+  그 이점이 사라진다. 게다가 **접촉 자체를 표현하지 못한다**(게이트 0 근거).
+- 즉 선택지는 "SuperDex 느림 vs Unity 빠름"이 아니라 **"SuperDex 느리지만 맞음 vs
+  Unity 빠르지만 틀림"** 이다.
+
+**새 기준: PoC 규모 실험(1e7 step)이 하룻밤(≤12 h)에 끝나는가.**
+468 steps/s에서 1e7 = 약 6 시간 → **통과.** 5e7은 약 30 시간으로 주말 단위다.
+그 이상이 필요해지면(게이트 4의 광범위 DR) **다중 프로세스 학습을 자체 구현**하거나
+Ray 워커 안정화(upstream)가 필요하다 — 게이트 4 착수 전 판단 사항으로 남긴다.
+
+기본값 반영: `physics_threads = -1`(자동)을 환경 기본값으로 올렸다.
+
+### 게이트 2 — DG5FGraspEnv 설계와 실측 (진행 중)
+
+환경: [`superdex/envs/dg5f_grasp_env.py`](../superdex/envs/dg5f_grasp_env.py).
+학습: `python superdex/scripts/train_ppo.py --env dg5f_grasp`.
+
+**태스크.** 손목 고정(20 DOF). 블록이 파지 포켓에 생성되고 `grace_steps`(기본 40 = 0.2 s)
+동안 무중력, 그 뒤 중력이 켜진다. 정책은 그 사이에 손가락을 닫아 붙잡고 에피소드 끝까지
+유지해야 한다. `grace_steps`를 줄이는 것이 커리큘럼 축이다.
+
+> grace가 필요한 이유: 열린 자세에서 접촉까지 폐쇄율 0.6 이상이 필요하고(게이트 0 실측)
+> 자세 컨트롤러가 거기까지 가는 데 0.1~0.2 s가 걸린다. 중력을 처음부터 켜면 완벽한
+> 정책이라도 블록이 10 cm 이상 떨어져 **보상 신호 자체가 생기지 않는다.**
+
+**행동** = 20개 관절 목표각. 액션 공간을 **실제 관절 한계로 선언**하므로 RLlib의
+`normalize_actions`가 변환을 맡고, 게이트 1에서 검증한 ONNX 익스포트 경로가 그대로 성립한다.
+
+**관찰 (65차원)** = 관절각 20 + 관절속도 20 + 블록 위치(파지중심 기준) 3 + 자세 4
++ 선속도 3 + 각속도 3 + **지문별 접촉력 5** + 지문-블록 거리 5 + 진행도 1 + 중력 ON 1.
+
+#### ⚠️ 발견 1 — 지문 접촉을 거리로 근사하면 안 된다
+
+처음엔 "지문-블록중심 거리 < 3 cm"를 접촉 대용으로 썼는데, 완전 폐쇄 시 실측이
+`[3.4, 4.0, 3.4, 2.3, 5.2] cm`이고 블록 AABB가 `3.3~3.8 cm`였다 — **실제로는 4지 포위인데
+지표는 1개만 셌다.** 그래서 `block.get_contact_force_from_actor_world(<지문 링크 actor>)`로
+**지문별 실제 접촉력**을 읽는다. 링크 actor는 `actor.get_nested_link_actors()`로 얻고,
+접촉력이 채워지려면 스텝 전에 `QueryType.TOTAL_CONTACT_FORCE` 등록이 필요하다.
+
+#### ⚠️ 발견 2 — 기본 강성이 물체를 압착한다
+
+게이트 0에서 쓴 `MOCHI_ARTICULATED_POSE` 강성 `1e3`으로 완전 폐쇄하면 **지문 접촉력이
+4,000~6,000 N**까지 올라간다. 15.6 g 블록에 대해 물리적으로 불가능한 값이고, 정책이
+"잡는" 대신 **"압착하는"** 것을 배우게 되어 sim2real이 무의미해진다. 강성 스윕(완전 폐쇄, 1 s):
+
+| stiffness | 최대 지문력 | 3지 접촉 파지 |
+|---|---|---|
+| 1e3 | 4,671 N | 성립 |
+| 2e2 | 1,294 N | 성립 |
+| 5e1 | 573 N | 성립 |
+| 1e1 | 120 N | 성립 |
+| **3.0** | **34.7 N** | 성립 |
+
+→ 기본값을 **stiffness 3.0 / damping 0.3**으로 내렸고, `tip_force_limit`(기본 20 N)를
+넘는 힘에 페널티를 넣었다. **실제 DG-5F-M의 지문 파지력 상한은 벤더 확인 대상이다(U8).**
+
+#### 난이도 보정 — 고정 정책 기준선
+
+"완전 폐쇄만 지령하는 고정 정책"의 성공률(엄격 기준: **지문 3개 이상 접촉 + 파지중심
+6 cm 내**)을 배치 흔들림별로 실측했다:
+
+| `place_jitter` | 고정 폐쇄 성공률 | 평균 지문 접촉 | 평균 최대력 |
+|---|---|---|---|
+| 0.015 m | **13 %** | 1.60 | 26.0 N |
+| 0.025 m | 0 % | 1.07 | 24.9 N |
+| 0.035 m | 0 % | 0.73 | 16.9 N |
+
+기본값 `place_jitter = 0.015`로 둔다 — 학습 여지가 있으면서 완전히 불가능하지는 않은 지점이다.
+
+**정식 기준선 (40 에피소드, 시드 9000~9039):**
+`python superdex/scripts/eval_policy.py --baseline --episodes 40`
+
+| 지표 | 고정 폐쇄 정책 |
+|---|---|
+| 성공률 | **7/40 = 18 %** |
+| 낙하(조기종료) | **0/40** |
+| 평균 지문 접촉 | **1.82** (성공에 3 필요) |
+| 평균 최대 지문력 | 25.8 N (한계 20 N) |
+| 평균 최종 거리 | 0.0212 m |
+| 평균 리턴 | 304.4 |
+
+> **실패 원인이 낙하가 아니라 지문 접촉 부족이다.** 고정 폐쇄는 블록을 한 번도 놓치지
+> 않지만(0/40) 지문 접촉이 평균 1.82개에 그친다. 즉 학습 목표가 "떨어뜨리지 않기"가
+> 아니라 **"다지 접촉을 확보하기"** 로 정확히 좁혀진다 — 프로젝트가 요구하는
+> "다지 안정 접촉"과 같은 목표다.
+
+**보상 항의 규모 (스텝당).** `r_near ≤1`, `r_touch ≤1`, `r_contact ≤0.5`, `r_hold ≤2`
+→ 양의 최대 +4.5. 힘 페널티는 포화형이라 −1로 묶인다. 정책별 리턴 분리(15 에피소드):
+무작위 **25.6**, 고정 폐쇄 **272.3**.
+
+#### ⚠️ 발견 3 — `ray.init(runtime_env=...)` 가 SuperDex 워커를 죽인다
+
+dg5f_grasp 학습이 **이터레이션을 한 번도 끝내지 못했다.** 증상: 3분 이상 진척 0,
+python 프로세스 **44~52개**(러너는 4~8개인데), CPU만 계속 소비, 로그에
+`Windows fatal exception: access violation` — 스택은 `ray/_private/worker.py`의
+`disconnect`/`shutdown`, 즉 **워커 종료 경로**였다. 워커가 죽고 재생성되는 루프였다.
+
+**처음엔 메모리 문제로 진단했지만 오진이었다.** 러너를 8→4로 줄여도 같은 증상이 났다.
+진짜 원인은 asset 경로를 워커에 넘기려고 쓴
+`ray.init(runtime_env={"env_vars": {"SUPERDEX_ASSETS_PATH": ...}})` 였다. Ray가 워커를
+별도 런타임 컨텍스트에서 만들고, SuperDex 물리가 로드된 워커가 종료될 때 access
+violation으로 죽는다.
+
+**해결:** `runtime_env`를 쓰지 않고 **각 env 생성자가 `os.environ`에 직접 넣는다.**
+우리 환경(`dg5f_grasp_env.py`)은 이미 `rtauto_config`에서 읽어 스스로 설정하므로
+`runtime_env`가 애초에 불필요했다. 제거 후 실측:
+
+| 구성 | 결과 |
+|---|---|
+| 러너 4 + `runtime_env` | 이터레이션 0 (무한 재생성) |
+| 러너 0 (로컬 샘플링) | 3 이터레이션 정상 |
+| **러너 4, `runtime_env` 제거** | **3 이터레이션(12k 스텝)이 startup 포함 37 초** → 집계 **≈480 steps/s** |
+
+> **§8 throughput 계산을 이 값으로 정정한다.** cart_pole(가벼운 씬)의 하한 추정
+> ≈4.3k steps/s는 DG5F 접촉 씬에 적용되지 않는다. **DG5F 실측은 러너 4개 집계
+> ≈480 steps/s**다 — 1e7 스텝에 약 5.8 시간, 5e7에 약 29 시간. PoC 목표 규모의
+> 하단(1e7)은 하룻밤 안에 들어오지만, 게이트 4의 DR 확대는 러너 수를 늘리거나
+> 에피소드를 줄이는 조정이 필요하다.
+
+`train_ppo.py`의 `OWN_ENVS`에는 환경별 `max_runners`(dg5f_grasp = 4)를 남겨 뒀다 —
+32 GB에서 물리 씬 8개는 여전히 여유가 없기 때문이고, `--num-env-runners`로 덮어쓸 수 있다.
+
+#### ✅ 발견 6 (2026-09-09) — **원인은 물체 크기였다.** v1~v4의 수정은 애초에 풀리지 않는 과제를 고치려 한 것
+
+v1~v4가 전부 평평하게 끝난 뒤, 보상·탐색을 더 손대기 전에 **갈림길을 먼저 판정**했다:
+성공 궤적 자체가 존재하는가? [`gate2_oracle_search.py`](../superdex/scripts/gate2_oracle_search.py)는
+정책을 학습하지 않고 **개루프 궤적을 그리드로 훑어**(최종 폐쇄율 × 램프 길이 × 조임 여유 ×
+배치 거리) 각 시드에서 성공시키는 궤적이 존재하는지 센다.
+
+| 물체 | 성공 궤적 존재 시드 | 최선 고정 궤적 | 시드별 최선 `tips_best` |
+|---|---|---|---|
+| `block_red` 2.5 cm / 15.6 g | **1/10** | 2/10 | 중앙 **2** |
+| **`duck_lamp` 11.9×11.0×7.5 cm / 545 g** | **7/10** | **6/10** (`f=0.8, ramp=60, x=0.04`) | 중앙 **4**, max 5 |
+
+**2.5 cm 블록은 사람 크기 20 DOF 손에 너무 작아 3지 접촉이 기하적으로 성립하지 않는다.**
+접촉 추이 실측이 결정적이었다 — 종료 시점 판정 문제가 아니었다:
+
+| seed | tips 추이 (25스텝 구간 최대) | `tips≥3` 스텝수 | 최종 |
+|---|---|---|---|
+| 9000 | 0/2/2/**3/3/3/3/3** | **117/200** | 3, 성공 |
+| 9001 | 0/1/2/2/2/2/2/2 | 0/200 | 2 |
+| 9004 | 0/1/2/2/**0/0/0/0** | 0/200 | 0 (접촉 상실) |
+| 9007 | 0/1/2/1/1/1/1/1 | 0/200 | 1 |
+
+지문이 1~2개에서 멈추고 최종 접촉력도 31~57 N로 한계 20 N을 넘었다.
+**즉 v1~v4의 보상 gradient·액션 지터·관찰 스케일 수정은 모두 근거가 있었고 의도한 효과도
+확인됐지만, 고치고 있던 대상이 틀렸다.**
+
+**조치: 기본 물체를 `duck_lamp_recumbent`로, 배치를 `palm + [0.04, 0, 0.04]`로 바꿨다.**
+큰 물체가 (1) 달성 가능한 상한을 올리고, (2) 손 크기에 맞아 파지가 성립하며,
+(3) **비볼록 접촉** — Unity 대비 SuperDex를 택한 근거 자체 — 를 시험한다.
+
+새 기준선 (고정 완전폐쇄, 30 에피소드, 시드 9000~9029):
+
+| 지표 | 작은 블록 | **duck_lamp** |
+|---|---|---|
+| 성공률 | 7/40 = 18 % | **14/30 = 47 %** |
+| 평균 지문 접촉 | 1.82 | **3.03** (요구치 3 달성) |
+| 평균 최대 지문력 | 25.8 N (한계 초과) | **4.1 N** (한계 내) |
+| 낙하 | 0/40 | 5/30 |
+| 평균 리턴 | 304.4 | 563.7 |
+
+> **판정: (A) 학습 설정 문제.** 이제 과제는 개루프로도 풀린다(7/10 시드). 남은 것은
+> PPO가 그 궤적을 찾는지다 — v5 학습이 그 답이다.
+>
+> 부수 수정: 오라클 그리드에서 **중복 튜플을 제거**했다. `f=1.0`이면 `extra` 0.0과 0.1이
+> `hold=min(1.0, f+e)=1.0`으로 같은 튜플이 되어 `per_traj` 키가 충돌해 같은 궤적을 두 번
+> 셌다(평균 `tips_best`가 최대 5를 넘는 **7.80**으로 나와 발견). 정정 후 상위 궤적
+> 성공률이 6/10이다.
+>
+> 물체 프리팹 실측: `block_red` 2.5 cm/15.6 g, `sphere` 3 cm/10 g,
+> `fdt_peg` 2.2×2.2×4 cm/6.8 g, `paper_cup` 9.3×9.4×11.3 cm/15 g,
+> `duck_lamp` 11.9×11.0×7.5 cm/545 g. 환경에 `object_prefab` 키를 추가했다(게이트 4의
+> 다물체 일반화에도 필요).
+
+#### ⚠️ 발견 5 — 접촉 기반 보상만으로는 **학습이 전혀 되지 않는다** (v1 실패)
+
+첫 학습(480k 스텝, 120 이터레이션)은 **완전히 실패했다.** `return_mean`이 내내
+18~24에서 평평했고, 학습된 정책이 미학습 체크포인트와 구별되지 않았다:
+
+| 정책 | 리턴 | 성공률 | 평균 지문 접촉 |
+|---|---|---|---|
+| 무작위 | 25.6 | 0 % | 0.33 |
+| **480k 스텝 학습 (v1)** | **45.1** | **0/20** | **0.00** |
+| 미학습 체크포인트(12k) | 43.9 | 0/8 | 0.00 |
+| 고정 완전폐쇄 | 304.4 | 18 % | 1.82 |
+
+**원인: 보상에 gradient가 없었다.** 초기 정책은 무작위 탐색으로 지문 접촉을 **한 번도**
+만들지 못하고(평균 0.00), 그래서 `r_touch`·`r_contact`·`r_hold`가 학습 내내 **항상 정확히
+0**이었다. 남은 `r_near`는 grace 구간에서 블록 위치로 결정되어 액션과 무관하다. 즉
+**액션이 관측되는 보상에 아무 영향을 주지 못해** credit assignment가 불가능했다.
+접촉 과제에서 접촉 기반 보상만 두면 탐색이 첫 접촉에 도달하지 못하는 전형적 실패다.
+
+**조치: 액션에 항상 반응하는 밀집 항을 추가했다.**
+
+```
+r_reach = exp(-10 · mean(지문-블록 거리))
+```
+
+추가 후 검증 — 폐쇄율에 따라 단조 증가하고 리턴이 10배로 분리된다:
+
+| 정책 | 평균 `r_reach` | 리턴 |
+|---|---|---|
+| 열린 유지 | 0.206 | 45.7 |
+| 절반 폐쇄 | 0.314 | 69.1 |
+| **완전 폐쇄** | **0.630** | **450.8** |
+
+이로써 **"다가가기 → 접촉 → 유지"의 계단**이 만들어졌다. 게이트 0에서 물체 배치를 실측으로
+잡았듯, 여기서는 **보상 밀도**를 실측으로 잡은 것이다.
+
+> **`stdout` 버퍼링 주의.** v1 학습 중 로그가 1,240 바이트에서 멈춰 보여 "정지"로 오진했는데,
+> 실제로는 120 이터레이션 전부 정상 완료돼 있었고 종료 시점에 한꺼번에 flush된 것이었다.
+> 이후 실행은 `python -u`(unbuffered)로 띄운다 — 진행 상황을 실시간으로 봐야 오진하지 않는다.
+
+#### ⚠️ 발견 4 — Ray env-runner 워커가 비결정적으로 죽는다 (게이트 2의 실효 병목)
+
+`runtime_env` 제거로 러너 4개가 **한 번은** 정상 동작했지만(3 이터레이션 37 초),
+**같은 명령의 긴 실행에서 다시 멈췄다.** 로그에 Ray가 남긴 경고가 단서다:
+
+```
+Actor with class name: 'SingleAgentEnvRunner' ... has constructor arguments in the
+object store and max_restarts > 0. If the arguments ... are lost, the actor restart
+will fail.
+```
+
+즉 SuperDex 물리가 로드된 env-runner actor가 죽으면 Ray가 재시작을 시도하고, 그 경로가
+안정적이지 않다. 재현이 비결정적이라 **러너 기반 병렬 샘플링은 게이트 2에서 신뢰할 수 없다.**
+
+**대응: 로컬 샘플링(`--num-env-runners 0`)을 기본 경로로 쓴다.** 반복 실행에서 안정적이었다.
+
+| 구성 | 안정성 | 속도 |
+|---|---|---|
+| 러너 4 (`runtime_env` 있음) | ❌ 무한 재생성 | — |
+| 러너 4 (`runtime_env` 제거) | ⚠️ **비결정적** (1회 성공, 이후 정지) | 집계 ≈480 steps/s |
+| **러너 0 (로컬 샘플링)** | ✅ **반복 안정** | **이터레이션(4,000 스텝)당 20 초 → ≈200 steps/s** |
+
+> **§8 throughput을 이 값으로 다시 정정한다.** DG5F 접촉 씬의 **신뢰 가능한** 실효
+> throughput은 **≈200 steps/s**다 — 1e7 스텝에 약 14 시간, 5e7에 약 69 시간.
+>
+> ⚠️ **이 200이라는 값은 하루 뒤 갱신됐다(2026-09-08).** Ray의 프로세스 병렬을 포기하는
+> 대신 **SuperDex 자체 내부 스레딩**(`num_worker_threads=-1`)을 켜서 단일 env 를
+> 311 → **468 steps/s** 로 올렸다(env 벡터화 4/8은 286/302). 현재 계획이 쓰는 값은
+> **≈470 steps/s** 이고, 1e7 스텝 ≈ 6 시간이다 — §6 "회귀 기준 3 재판정" 참고.
+> 아래 표의 200은 **그 최적화 이전 값**이다.
+> 게이트 2의 PoC 규모(수십만 스텝)는 문제없지만, **1e7 이상이 필요해지는 순간 이 병목이
+> 계획을 지배한다.** 해결하려면 Ray 워커 안정화(upstream 이슈)나 러너 없는 다중 프로세스
+> 자체 구현이 필요하다 — 게이트 4 착수 전에 판단해야 한다. §6 회귀 기준 3(집계
+> 2,000 steps/s)에 **미달**한다는 점을 명시해 둔다: 이 항목은 게이트 0의 파지 테스트
+> (단일 env 534 steps/s × 러너)가 성립한다는 전제였고, 그 전제가 Ray 워커 불안정으로
+> 깨졌다. **회귀 기준 재판정이 필요한 사항이다.**
+
+> **성공 기준을 계획 원안에서 조정했다.** §5 게이트 2의 원안은 "lift 후 2초 유지 ≥80 %"
+> 였지만, 손목이 고정이라 **lift 동작 자체가 없다.** 대신 중력 하 유지 + 다지 접촉으로
+> 정의하고, 판정은 **고정 정책 기준선 13 % 대비 얼마나 올라가는가**로 본다. 게이트 2의
+> 목적은 "SuperDex에서 접촉 기반 파지가 이 throughput으로 학습되는가"에 답하는 것이다.
+
+#### ⚠️ 거리 기준만으로 성공을 판정하면 안 된다
+
+초기 버전은 파지중심 거리만 봤고, 그때 고정 정책이 **100 %** 성공했다. 실제로는 근위
+지골로 **가두는(cage)** 것이었고 지문 접촉은 1~2개였다 — 프로젝트 목표인 "다지 안정
+접촉"이 아니다. 성공 판정에 `min_tips`(기본 3)를 넣은 뒤 기준선이 13 %로 내려갔다.
+
+### 게이트 1 결과 — ONNX 3자 파리티 통과
+
+**판정: 통과.** 같은 32개 관찰 벡터에 대해 세 런타임의 액션이 일치한다.
+
+| # | 비교 | 최대 오차 | 허용 |
+|---|---|---|---|
+| 1 | 래퍼 `nn.Module` vs **RLlib 실제 커넥터 경로** | **0.000e+00** | 1e-5 |
+| 2 | `onnxruntime` vs RLlib 경로 | 1.431e-06 | 1e-5 |
+| 3 | **Unity Inference Engine (C#)** vs Python 기준값 | **9.537e-07** | 1e-5 |
+
+3번 실측 예: `unity 2.833229 vs python 2.833228`. 즉 **다이어그램에서 유일하게 "될지
+모르는" 구간이 닫혔다** — SuperDex에서 학습한 정책이 Unity와 ROS2 양쪽에서 같은 값을 낸다.
+
+산출물: `superdex/policies/cart_pole_ppo.onnx`(268 KB) + `.parity.json`(fixture),
+`unity/Assets/Editor/PolicyParityCheck.cs`, `unity/Assets/Policies/`(ONNX 임포트 자산).
+
+#### ⚠️ 커넥터가 액션을 되돌린다 — 실측으로 확인된 함정
+
+체크포인트의 커넥터 구성을 실측한 결과:
+
+```
+env_to_module : AddObservationsFromEpisodesToBatch, AddTimeDimToBatchAndZeroPad,
+                AddStatesFromEpisodesToBatch, BatchIndividualItems, NumpyToTensor
+                -> 관찰 정규화 없음 (state.pkl 5바이트 = 빈 상태)
+module_to_env : GetActions, TensorToNumpy, UnBatchToIndividualItems,
+                RemoveSingleTsTimeRankFromBatch,
+                NormalizeAndClipActions {normalize_actions: True, clip_actions: False},
+                ListifyDataForVectorEnv
+```
+
+**`NormalizeAndClipActions`가 기본으로 켜져 있다.** 신경망은 **[-1,1] 정규화 공간**의
+액션을 내고 커넥터가 실제 공간으로 되돌린다(`ray.rllib.utils.spaces.space_utils.unsquash_action`):
+
+```
+a = low + (a_norm + 1.0) * (high - low) / 2.0 ;  a = clip(a, low, high)
+```
+
+RLModule만 ONNX로 내보내면 이 되돌림이 빠져 **조용히 잘못된 정책**이 배포된다 —
+cart_pole(`Box(-3,3)`)이면 3배 작은 액션, DG5F 관절 지령이면 단위가 아예 틀린다.
+`superdex/scripts/export_onnx.py`는 이 변환을 **래퍼 `nn.Module`의 버퍼 상수로 그래프 안에
+박아** 내보내고, 그래서 위 1번 비교가 오차 0이다. 계획 §5 게이트 1에서 예측한 함정이
+실제로 존재함을 확인했다.
+
+관찰 정규화는 cart_pole에서 비활성이었다. **DG5FGraspEnv에서 `MeanStdFilter` 등을 켜면
+그 통계도 같은 방식으로 그래프에 박아야 한다** — JSON으로 빼서 Unity C#·ROS2 Python에
+각각 구현하면 구현이 셋으로 갈라진다.
+
+#### Unity 다리 실행 방법
+
+- 패키지: **`com.unity.ai.inference` 2.5.0** (구 Sentis), 네임스페이스 `Unity.InferenceEngine`.
+  ML-Agents 4.0.0이 `com.unity.ai.inference` 2.2.1을 의존해 이미 들어와 있다.
+- **ML-Agents를 거치지 않는다.** `ModelLoader.Load(ModelAsset)` → `new Worker(model,
+  BackendType.CPU)` → `SetInput("obs", tensor)` → `Schedule()` → `PeekOutput("action")`
+  → `ReadbackAndClone().DownloadToArray()`.
+- ⚠️ **런타임 ONNX 로드는 지원되지 않는다.** ONNX는 임포트 시점에 `ModelAsset`으로 변환되므로
+  `Assets/` 안에 있어야 한다. 그래서 `superdex/policies/*.onnx`를 `unity/Assets/Policies/`로
+  복사한다. fixture(JSON)는 저장소 원본을 `RtautoConfig.GetRepoPath()`로 직접 읽어
+  중복을 만들지 않는다(원칙 1).
+- 배치모드 실행 (첫 실행은 임포트로 수 분 걸린다):
+
+```powershell
+& "C:\Program Files\Unity\Hub\Editor\6000.4.0f1\Editor\Unity.exe" -batchmode -nographics `
+    -projectPath unity `
+    -executeMethod RtAuto.EditorTools.PolicyParityCheck.RunFromCommandLine `
+    -logFile parity.log
+```
+
+종료 코드 0 = 통과 / 2 = 오차 초과 / 3 = 자산·fixture 문제. 에디터에서는 상단 메뉴
+`RtAuto > Policy Parity Check`.
+
+#### 게이트 1 재현
+
+산출물(체크포인트·ONNX·fixture)은 **재생성 가능하므로 git에 넣지 않는다**(`.gitignore`).
+새 PC에서 아래 4단계로 그대로 재현된다 — 1~3은 각각 1분 내, 4는 첫 임포트만 수 분이다.
+
+**터미널 1 (PowerShell, 리포 루트, `superdex/.venv` 활성)**
+
+```powershell
+python superdex/scripts/sync_lab_configs.py
+python superdex/scripts/train_ppo.py --env cart_pole --iters 4
+python superdex/scripts/export_onnx.py --checkpoint superdex/results/cart_pole_ppo
+Copy-Item superdex/policies/cart_pole_ppo.onnx unity/Assets/Policies/ -Force
+```
+
+`export_onnx.py`가 1·2번 비교를 스스로 판정하고(불일치면 종료 코드 2) fixture를 낸다.
+그 다음 위 배치모드 명령으로 3번(Unity) 비교를 돌린다.
+
+### ⚠️ 게이트 1 블로커 3개 — 동봉 샘플 앱을 쓰지 않기로 결정한 이유
+
+`superdex_lab/apps/rllib/train_samples.py`(외부 클론의 **샘플 앱**)로 학습을 돌리려다
+연달아 3개를 만났다:
+
+| # | 증상 | 원인 | 처리 |
+|---|---|---|---|
+| 1 | `No samples to train, exitting...` | **`superdex-lab==1.0.0` wheel에 `.json`이 0개.** 학습 레시피(`*.train.json`)와 config variant가 클론에만 있다. `load_env_config()`가 `inspect.getfile(env_cls)` 옆을 보므로 설치본에서는 못 찾는다 → **공식 RL 워크플로가 wheel만으로는 돌지 않는다** | `superdex/scripts/sync_lab_configs.py`로 클론 → 설치본 복사(11개). 상위 버전에서 고쳐지면 no-op |
+| 2 | `DeprecationWarning: checkpoint_frequency is deprecated` (예외로 던져짐) | **Ray 2.58.0 비호환.** `CheckpointConfig(checkpoint_frequency=...)`가 `ray.train.v2`에서 거부된다. SuperDex 1.0.0은 구버전 Ray 기준으로 작성됨 | 자체 학습기로 회피 (아래) |
+| 3 | `use_libuv was requested but PyTorch was build without libuv support` | **Windows torch.distributed.** `num_learners>=1`이 분산 learner를 띄운다 | 자체 학습기 기본값 `num_learners=0` |
+
+**결론: 학습 진입점을 우리가 소유한다.** `superdex/scripts/train_ppo.py`를 만들어
+PPO를 직접 구성했다. 게이트 2에서 DG5FGraspEnv용 학습기를 어차피 우리가 써야 하므로,
+외부 샘플 앱에 환경변수(`RAY_TRAIN_V2_ENABLED=0`, `USE_LIBUV=0`)로 맞추는 대신 정공법을
+택했다 — 레시피 discover를 쓰지 않고, 폐기된 인자를 쓰지 않고, 분산 learner를 쓰지 않으니
+**블로커 1~3이 모두 사라진다.**
+
+> `ray[rllib]`·`onnx`·`onnxruntime` 핀이 아직 비어 있던 것이 블로커 2의 직접 원인이다
+> (R3 리스크가 실제로 발생). 실측 버전은 `ray 2.58.0`, `onnx 1.22.0`,
+> `onnxruntime 1.29.0`, `torch 2.6.0+cu124`.
+
+### 게이트 0 파지 테스트 결과와 시나리오 설계 (`gate0_grasp_test.py`)
+
+**판정: 통과.** SuperDex 접촉 물리가 DG5F로 2.5 cm 블록(15.6 g)을 잡고 **양방향 1g를
+버틴다.** 2초간 드리프트 1.3 mm, 블록 속도 0.001~0.002 m/s — 흔들림도 관통도 없다.
+
+시나리오를 이렇게 만든 이유(전부 실패를 거쳐 정한 것):
+
+| 설계 | 왜 |
+|---|---|
+| 손목을 `joints[0].type = HARD`로 용접 | 기본 `FREE`면 손이 자유부양한다. 용접 시 DOF가 정확히 **20** |
+| 컨트롤러는 `MOCHI_ARTICULATED_POSE` | `BASIC_*_PD`는 중력 항이 없어 링크 중력을 꺼야 한다. 중력을 뒤집어 판정하므로 중력 항이 있는 암시적 컨트롤러가 필요 |
+| 물체를 **떨어뜨리지 않고** 배치 | 손 기본 방향이 손가락 +Z, 손바닥 +X라 수평 손바닥이 없다. 떨어뜨리면 손을 지나쳐 바닥까지 간다(실측) |
+| 배치를 **손바닥 링크 좌표계**로 | 손 자세와 무관하게 적기 위해. 성공 조합은 `palm + [0.03, 0, 0.04]` (차선: `[0.04, 0, 0.06]`) |
+| 지문 중심이 아니라 **손바닥 앞 포켓** | 지문 중심에 두면 f=0.30에 닿았다가 더 조일 때 **밖으로 밀려난다**. 5지 파워 그립은 물체가 손바닥 쪽에 있어야 성립 |
+| 닫는 동안 **중력 0** | 손가락이 닫히는 1.25초 동안 자유낙하하면(≈7.7 m) 파지가 성립하지 않는다 |
+| **접촉이 생길 때까지** 조금씩 닫고, 뒤에 `grip_margin` 추가 | 고정 폐쇄율은 케이지가 블록보다 커서 닿지도 않는다. 성공 케이스는 f=0.62에서 접촉 → f=0.72로 조임 |
+| 판정 = 파지중심 거리 + 접촉점 수 | 거리만 보면 "손 밑면에 걸려 있는 것"도 성공으로 오판한다(초기 버전에서 실제로 겪었다) |
+
+배치 스윕 결과 (`--place`):
+
+| palm 좌표계 오프셋 | 접촉 시작 f | 최종 f | 최종 드리프트 | 판정 |
+|---|---|---|---|---|
+| `0.03, 0.00, 0.04` | 0.62 | 0.72 | **0.0256 m** | ✅ 성공 |
+| `0.04, 0.00, 0.06` | 0.54 | 0.64 | 0.0376 m | ✅ 성공 |
+| `0.05, 0.00, 0.09` | 0.28 | 0.38 | 0.0538 m | ❌ |
+| `0.03, 0.00, 0.02` | 0.18 | 0.28 | 4.37 m | ❌ |
+| `0.045, 0.02, 0.07` | 0.44 | 0.54 | 4.42 m | ❌ |
+
+> **게이트 2(RL)에 그대로 넘어가는 교훈**: 파지 성공 영역이 좁다. 손바닥 앞 3~4 cm ×
+> 높이 4~6 cm 구간만 잡히고, 조금만 벗어나면 놓친다. 이건 **정책이 학습해야 하는
+> 문제가 실재한다**는 뜻이기도 하다(스크립트로는 튜닝으로만 맞출 수 있다) — 보상 설계에서
+> **접촉 확보 → 조임 → 유지**의 단계 구분이 필요하다는 근거로 쓴다.
+
+### ⚠️ 접촉점 조회는 스텝 전에 쿼리를 등록해야 한다
+
+`actor.get_contact_points_world()`는 그냥 부르면 예외가 난다. 시뮬레이션 스텝 **전에**
+`actor.register_query(physics.QueryType.CONTACT_POINTS)`를 호출해야 결과가 채워진다.
+접촉력은 `get_contact_force_world()` / `get_contact_force_from_actor_world()`도 있다 —
+게이트 2의 관찰(지문 접촉·접촉력)에 쓸 경로다.
+
+### 동봉 예제는 GUI 디버거를 기다린다
+
+`example_bot_loading.py` / `example_osc_jsc_control.py` / `example_scene_loading.py`는 모두
+`if physics.debugger.attach(): while physics.debugger.is_attached(): scene.step(...)` 구조다.
+**디버거 앱이 붙기 전까지 블로킹**하고 스스로 끝나지 않는다(180초 넘겨 확인). 측정·자동화
+스크립트는 `attach()`를 호출하지 말고 그냥 `scene.step()` 루프를 돌린다 — `gate0_hand_probe.py`가
+그렇게 되어 있다.
+
+<!-- 게이트를 진행할 때마다 위 표에 한 줄씩 추가한다. 판정 근거(측정한 steps/sec,
+     성공률, 실패 로그)를 함께 적는다 — 회귀 기준(§6) 판단의 근거가 된다. -->
+
+---
+
+## 11. 게이트 0 실행 절차
+
+> 모든 명령은 **저장소 루트**(`D:\workspace\KDT_1_AX_rtauto` — 각자 clone 위치)에서
+> 실행한다. 저장소 상대경로는 `/`로 적었고 PowerShell도 그대로 받는다.
+> **새 터미널은 venv가 꺼져 있다** — 각 단계의 활성화 명령을 매번 포함했다.
+
+### 0-1. Python 3.12 준비
+
+기존 3.10.11은 그대로 둔다. 3.12를 **추가로** 설치한다 (python.org Windows installer,
+설치 시 "py launcher" 체크). 확인:
+
+**터미널 1 (PowerShell, 리포 루트, 환경 준비)**
+
+```powershell
+py -0p
+```
+
+목록에 `-V:3.12` 줄이 보여야 한다. 안 보이면 3.12가 설치되지 않은 것이다.
+
+### 0-2. venv 생성과 활성화
+
+**터미널 1 (PowerShell, 리포 루트, 환경 준비)**
+
+```powershell
+py -3.12 -m venv superdex/.venv
+```
+
+```bash
+python3.12 -m venv superdex/.venv
+```
+
+활성화 (이후 모든 단계에서 이 터미널을 계속 쓴다):
+
+```powershell
+superdex/.venv/Scripts/Activate.ps1
+```
+
+```bash
+source superdex/.venv/bin/activate
+```
+
+프롬프트 앞에 `(.venv)`가 붙어야 한다. 붙지 않으면 PowerShell 실행 정책 문제이므로
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`를 한 번 실행한 뒤 다시 활성화한다.
+
+```powershell
+python -m pip install --upgrade pip
+python -c "import sys; print(sys.version)"
+```
+
+`3.12.x`가 찍혀야 한다.
+
+### 0-3. torch (CUDA) 먼저 설치
+
+**터미널 1 (PowerShell, 리포 루트, `(.venv)` 활성 상태)**
+
+```powershell
+pip install torch --index-url https://download.pytorch.org/whl/cu124
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+```
+
+`True`가 찍혀야 learner를 4070 Ti로 돌릴 수 있다. `False`면 CPU learner로도 게이트는
+진행 가능하니 멈추지 말고 기록만 남긴다. CUDA 태그(`cu124`)가 안 맞으면
+<https://pytorch.org/get-started/locally/>에서 현재 태그를 확인해
+`requirements-superdex.txt`의 주석을 정정한다.
+
+### 0-4. SuperDex 설치
+
+> **소스 빌드는 하지 않는다.** README의 "Building from Source"(CMake 3.25+ / Ninja /
+> Clang 17+ / Windows는 MSVC Build Tools)는 **엔진을 직접 고칠 때만** 필요한 경로다.
+> PyPI에 pre-built wheel이 있고 Windows용 `superdex_physics-1.0.0-cp312-cp312-win_amd64.whl`이
+> 실제로 올라와 있다(2026-09-07 확인). 그냥 설치한다.
+
+**터미널 1 (PowerShell, 리포 루트, `(.venv)` 활성 상태)**
+
+```powershell
+pip install -r requirements-superdex.txt
+python -c "import superdex.physics, superdex.robotics; print('import OK')"
+```
+
+`import OK`가 찍히면 설치 성공이다.
+
+남은 핀을 고정한다 — `superdex` 계열은 `==1.0.0`으로 이미 박혀 있고 `ray`/`onnx`/
+`onnxruntime`만 남았다:
+
+```powershell
+pip freeze | Select-String -Pattern "^ray|^onnx|^gymnasium|^torch"
+```
+
+```bash
+pip freeze | grep -E "^ray|^onnx|^gymnasium|^torch"
+```
+
+> 나온 버전으로 `requirements-superdex.txt`의 해당 줄을 `패키지==버전`으로 고치고 파일
+> 맨 아래 ⚠️ 블록을 지운다. 핀을 걸지 않으면 며칠 뒤 `pip install`이 다른 버전을 물어와
+> 재현이 깨진다(§9 R3).
+
+Studio가 실행되는지 확인한다 (진입점 이름은 `superdex-studio`):
+
+```powershell
+superdex-studio
+```
+
+창이 뜨면 성공이다. 닫아서 종료한다. 창이 안 뜨고 명령을 못 찾으면 venv가 활성 상태인지
+확인한다(`superdex/.venv/Scripts/` 안에 실행파일이 들어간다).
+
+> **`uv`를 쓰고 싶다면** README가 권하는 경로는 `uv venv` + `uv pip install superdex`이고
+> 실행은 `uv run superdex-studio` / `uv run --no-project <스크립트>`다. 위 절차와 결과는
+> 같다 — `uv run --no-project X`는 "이 venv를 활성화하고 `python X`"와 동등하며,
+> `--no-project`는 클론 안에서 실행할 때 그 저장소의 `pyproject.toml`을 무시하게 하는
+> 옵션이다. 이 리포의 기존 venv들이 `python -m venv` + pip 관례를 쓰므로(원칙 2,
+> `PYTHON_ENV_SETUP.md`) 여기서도 그쪽으로 통일했다.
+
+### 0-5. 저장소 클론과 asset 경로 설정
+
+asset 트리는 wheel에 없고 저장소 안에만 있다. 클론 위치는 자유이며 이 리포 밖에 둔다.
+
+**터미널 1 (PowerShell, 리포 루트, `(.venv)` 활성 상태)**
+
+```powershell
+git clone --branch stable https://github.com/facebookresearch/project_superdex D:/src/project_superdex
+```
+
+> `main`이 아니라 **`stable`**을 받는다. `stable`이 없거나 비어 있으면 `main`에서
+> 릴리스 태그 `v1.0.0`을 체크아웃한다: `git -C D:/src/project_superdex checkout v1.0.0`.
+
+클론 경로를 `.env`에 적는다 (**코드나 명령에 박지 않는다** — 원칙 1). `.env`가 없으면
+`.env.example`을 복사해 만든다.
+
+```powershell
+Copy-Item .env.example .env -WhatIf
+```
+
+`-WhatIf`로 먼저 확인하고, `.env`가 아직 없을 때만 `-WhatIf`를 떼고 실행한다.
+그 다음 `.env`를 열어 아래 한 줄을 **주석 해제하고 실제 경로로** 고친다:
+
+```text
+RTAUTO_SUPERDEX_REPO=D:/src/project_superdex
+```
+
+확인:
+
+```powershell
+python -c "import sys; sys.path.insert(0,'config'); import rtauto_config as c; print(c.superdex_assets_path())"
+```
+
+`None`이 아니라 실제 `...\project_superdex\assets` 경로가 찍혀야 한다.
+
+**이어서 asset 루트 배선을 만든다 — 새 머신에서 반드시 한 번 돌린다(원칙 2).**
+우리 결합 asset이 공식 손 asset을 `@superdex` 태그로 참조하는데, 그 태그를 정의하는
+`superdex/assets/bots/.superdex_root`가 **클론 위치를 담아 머신마다 다르므로 git에
+없다.** 없으면 결합 bot이 손을 찾지 못한다.
+
+**터미널 1 (PowerShell, 리포 루트, `(.venv)` 활성 상태)**
+
+```powershell
+python -u superdex/scripts/gate3_setup_asset_root.py
+```
+
+**터미널 1 (bash, Linux/WSL2, 리포 루트, venv 활성 상태)**
+
+```bash
+python -u superdex/scripts/gate3_setup_asset_root.py
+```
+
+정상이면 `[생성]` 두 줄에 이어
+`통과  결합 bot 로드  links=41 joints=41` 과 `=== 게이트 3 배선: 통과 ===` 이 찍힌다.
+팔 asset(`superdex/assets/bots/arms/ur16e/`)은 **커밋돼 있으므로 새 머신에서도 Studio
+bake 를 다시 할 필요가 없다.**
+
+대신 `통과  대역 배선 확인 (공식 fr3 팔로 대체)` 가 찍히고 "팔 asset 을 Studio 에서
+만들라"는 안내로 끝난다면, 팔 asset 이 없는 것이다 — 클론이 불완전한지 확인하라.
+
+### 0-6. U1·U2 확정 — DG5F asset 경로와 손목 길이
+
+**터미널 1 (PowerShell, 리포 루트, `(.venv)` 활성 상태)**
+
+```powershell
+Get-ChildItem -Recurse -Filter *.superdex_bot (& python -c "import sys; sys.path.insert(0,'config'); import rtauto_config as c; print(c.superdex_assets_path())") | Select-Object FullName
+```
+
+출력에서 확인할 것:
+
+1. **U2** — 손 단독 asset의 실제 파일명이
+   `config/rtauto_config.py`의 `superdex_hand_asset()`이 만드는 경로
+   (`bots/hands/dg5f_long/right/dg5f_long_right.superdex_bot`)와 일치하는가.
+   다르면 그 함수를 실제 경로 형식으로 고치고 docstring의 ⚠️ 주석을 지운다.
+2. **U1** — `assets/bots/hands/dg5f_long/README.md`와 `dg5f_short/README.md`를 읽고
+   손목 길이 치수를 Tesollo DG-5F-M 도면/실물과 대조한다. **이 판정을 미루면 손목
+   길이만큼 틀린 기하로 전 학습이 진행된다.**
+
+   > ⚠️ **판정 결과를 바로 `.env`에 반영하지 않는다.** `RTAUTO_DG5F_SHORT`는
+   > `dg5f_variant()`를 통해 **기존 파이프라인의 URDF·메시 선택까지 바꾼다.** 결과는
+   > 먼저 §10 진행 기록에 적고, `.env` 변경은 §12의 절차대로 기존 파이프라인 회귀
+   > 확인과 함께 별도로 처리한다.
+
+### 0-7. 동봉 예제 실행
+
+> 여기서는 **직접 스크립트를 쓰지 않고 SuperDex가 동봉한 예제를 그대로 돌린다.**
+> API 시그니처를 추측해 만든 코드로 물리를 판정하면 실패 원인이 SuperDex인지 우리
+> 코드인지 구분되지 않는다. 측정 스크립트는 이 단계에서 실제 시그니처를 확인한 뒤 쓴다.
+
+**터미널 1 (PowerShell, **클론 루트**, `(.venv)` 활성 상태)**
+
+SuperDex Lab이 asset을 찾는 환경변수를 이 세션에 내보낸다 (리포 루트에서 값을 읽어온다):
+
+```powershell
+$env:SUPERDEX_ASSETS_PATH = & python -c "import sys; sys.path.insert(0,'D:/workspace/KDT_1_AX_rtauto/config'); import rtauto_config as c; print(c.superdex_assets_path())"
+echo $env:SUPERDEX_ASSETS_PATH
+```
+
+```bash
+export SUPERDEX_ASSETS_PATH=$(python -c "import sys; sys.path.insert(0,'$HOME/workspace/KDT_1_AX_rtauto/config'); import rtauto_config as c; print(c.superdex_assets_path())")
+echo $SUPERDEX_ASSETS_PATH
+```
+
+클론 루트로 이동해 예제를 순서대로 실행한다:
+
+```powershell
+cd D:/src/project_superdex
+python superdex_robotics/examples/basic/example_bot_loading.py
+python superdex_robotics/examples/control/example_osc_jsc_control.py
+```
+
+> README는 같은 것을 `uv run --no-project superdex_robotics/examples/control/example_osc_jsc_control.py`
+> 로 적는다. venv를 활성화한 상태에서는 위처럼 `python <스크립트>`가 동등하다.
+> 접촉이 많은 씬을 물리 검증용으로 돌릴 때 fp64가 필요하면 이 터미널에
+> `$env:SUPERDEX_PRECISION = "double"`을 내보낸 뒤 실행한다(기본은 fp32).
+
+`example_osc_jsc_control.py`는 FR3를 OSC로, DG5F를 JSC(target joint position → torque)로
+제어하며 200 Hz로 스텝한다. `argparse`가 없어 인자를 받지 않는다. 종료는 `Ctrl+C`.
+
+**정상 판정** — 예외 없이 시뮬레이션이 진행되고 콘솔에 스텝/시간 로그가 흐른다.
+`asset not found` 계열 에러면 0-5의 `SUPERDEX_ASSETS_PATH`가 이 터미널에 실제로
+내보내졌는지(`echo`) 다시 확인한다.
+
+접촉을 눈으로 보려면 예제가 쓰는 `get_debug_server`에 `superdex_physics_debugger`를
+붙인다 — 실행 방법은 0-4에서 확인한 콘솔 스크립트 이름으로 결정된다.
+
+### 0-8. 스크립트 파지 테스트와 측정 (U6 해소)
+
+0-7에서 확인한 실제 시그니처를 근거로 측정 스크립트를 `superdex/scripts/` 아래에 쓴다.
+필요한 것:
+
+- 손 단독 asset 로드(0-6에서 확정한 경로), 중력 ON, 큐브 rigid actor 배치
+- JSC로 닫는 관절 자세 지령 → 일정 시간 유지 (**학습 아님**)
+- 측정: **단일 env steps/sec**, **realtime factor**(200 Hz 기준), 접촉 jitter,
+  물체 관통 여부
+
+**판정 기록** — 측정값을 §10 진행 기록 표에 남긴다. 이 숫자가 §8의 throughput 계산과
+§6 회귀 기준 3을 판정하는 근거다.
+
+> `superdex/scripts/`와 `superdex/envs/`는 **아직 존재하지 않는다** — 0-8에서 처음
+> 만들어진다. 문서에 적힌 경로가 실제로 없으면 새 PC 사용자가 막히므로(원칙 2), 이
+> 문서는 그 사실을 여기서 명시한다.
+
+---
+
+## 12. 급한 시연이 생겼을 때 — 기존 환경 보전
+
+**SuperDex PoC는 기존 텔레옵·학습 환경을 건드리지 않도록 설계했다.** 시연 요청이 갑자기
+들어와도 되돌릴 것이 없다.
+
+### mediapipe는 영향받지 않는다
+
+이 저장소는 `mediapipe==0.10.11`에 고정돼 있고 그 버전은 **Python 3.12를 지원하지
+않는다.** 상위 버전으로 올리면 protobuf 4.x가 `mlagents`와 충돌한다
+(`vision/requirements-vision-mlagents.constraints.txt`가 이걸 막고 있다).
+
+그래서 **venv를 올리지 않고 따로 만든다.** 기존 환경은 손대지 않는다.
+
+| venv | Python | 용도 | PoC의 영향 |
+|---|---|---|---|
+| `vision/.vision/` | 3.10.11 | mediapipe 텔레옵, ML-Agents, UR RTDE 브리지 | **없음 — 재설치·업그레이드 안 함** |
+| `superdex/.venv/` | 3.12 | SuperDex, RLlib, ONNX | 신규 추가만 |
+
+`requirements-vision.txt`, `requirements-mlagents.txt`,
+`vision/requirements-vision-mlagents.constraints.txt`는 **이 브랜치에서 한 줄도 바뀌지
+않았다.** 3.10.11 인터프리터도 그대로 설치돼 있다 — 3.12를 **추가** 설치하는 것이다.
+
+### 브랜치 전환
+
+브랜치 `SuperDexTest`가 `main`에 대해 바꾼 것은 **문서 4개 + `config/rtauto_config.py`
+추가분 + 신규 파일 2개**뿐이다. `vision/`, `unity/`, `arm/`, `training/scripts/`의
+`.py`/`.cs`/`.unity`/`.prefab`은 **하나도 바뀌지 않았고**,
+`config/rtauto_config.py`도 **삭제·변경 라인이 0인 순수 추가**다(기존 키 그대로).
+
+즉 **`SuperDexTest`에서 그대로 시연해도 동작이 달라지지 않는다.** 그래도 최소 리스크로
+가려면 시연 전에 `main`으로 옮긴다:
+
+**터미널 1 (PowerShell, 리포 루트, 시연 준비)**
+
+```powershell
+git status --short
+```
+
+출력이 비어 있어야 한다(미커밋 변경 없음). 그 다음:
+
+```powershell
+git checkout main
+```
+
+시연이 끝나면 돌아온다:
+
+```powershell
+git checkout SuperDexTest
+```
+
+> Unity 에디터가 열려 있는 상태로 브랜치를 바꾸지 않는다 — 에디터를 먼저 닫고 전환한
+> 뒤 다시 연다. 이 브랜치는 `unity/` 아래를 바꾸지 않으므로 실제로는 재임포트가 없지만,
+> 습관을 여기서 만들어 두면 나중 게이트에서 Unity 파일을 건드릴 때 사고가 없다.
+
+### ⚠️ 진짜 위험한 것은 브랜치가 아니라 `.env`다
+
+`.env`는 **git 비추적**이라 브랜치를 바꿔도 따라 바뀌지 않는다. 게이트 0에서 여기에
+값을 넣으므로, 기존 파이프라인에 영향을 주는 키를 구분해야 한다.
+
+| `.env` 키 | 기존 파이프라인 영향 | 비고 |
+|---|---|---|
+| `RTAUTO_SUPERDEX_*` | **없음** | 기존 코드가 읽지 않는다. 넣어도 안전 |
+| `RTAUTO_DG5F_SHORT` | **있음 — 위험** | 아래 참고 |
+| `RTAUTO_PYTHON` | **있음 — 위험** | Unity "브리지 실행" 버튼이 이걸로 `arm/ur_rtde_bridge.py`를 띄운다. **절대 `superdex/.venv`로 바꾸지 않는다** — 3.12에는 `ur_rtde`가 없어 브리지가 죽는다 |
+
+**`RTAUTO_DG5F_SHORT`** — 게이트 0-6(U1)에서 DG-5F-M의 손목 길이를 판정하는데, `short`로
+드러나면 `dg5f_variant()`의 반환값이 `dg5f_right` → `dg5f_right_short`로 바뀌어
+**기존 URDF·메시 선택 경로가 함께 달라진다.** 이건 오염이 아니라 "기존 설정이 틀렸다"는
+발견이지만, **시연이 걸려 있는 동안 이 값을 뒤집지 않는다.**
+
+- U1 판정 결과는 먼저 **이 문서 §10 진행 기록에만 적는다.**
+- `.env`의 `RTAUTO_DG5F_SHORT` 변경은 시연이 끝난 뒤, 기존 파이프라인 회귀 확인
+  (텔레옵 실행 + URDF 빌드)과 함께 별도로 처리한다.
+- SuperDex 쪽에서 다른 변형을 먼저 써 봐야 하면 `.env`를 고치지 말고 그 세션에서만
+  `superdex_hand_asset()`의 결과를 인자로 덮어쓴다.

@@ -185,3 +185,20 @@ IPv4>`를 설정하고 Unity PC의 방화벽에서 UDP 5006 인바운드를 허�
   `.gitattributes`가 줄바꿈을 LF로 고정한다. 이 오류가 나면 CRLF로 체크아웃된
   것이므로 `git rm --cached -r . && git reset --hard`로 재정규화한다.
 - Unity가 반응하지 않음: Unity Play 상태, `.env`의 IP/포트, 방화벽을 확인한다.
+
+## 부록 — SuperDex 전용 가상환경 (브랜치 `SuperDexTest` 한정)
+
+`SuperDexTest` 브랜치에서 진행 중인 SuperDex PoC는 **Python 3.12 전용 wheel**을 쓴다.
+위 §2의 공용 venv(3.10.11 — mediapipe + ML-Agents)와 **섞지 않고 분리**한다.
+
+| venv | Python | 용도 | 위치 |
+|---|---|---|---|
+| 공용 (§2) | 3.10.11 | mediapipe 텔레옵, ML-Agents, UR RTDE 브리지 | `vision/.vision/` |
+| SuperDex | 3.12 | SuperDex Physics/Robotics/Lab, RLlib, ONNX | `superdex/.venv/` |
+
+`.gitignore`의 `.venv/` 패턴이 모든 깊이에서 매칭하므로 `superdex/.venv/`는 이미 추적
+제외다. 요구사항은 [`../requirements-superdex.txt`](../requirements-superdex.txt)가 정본이다.
+
+생성·설치·검증 절차는 **[`SUPERDEX_POC_PLAN.md`](SUPERDEX_POC_PLAN.md) §11 게이트 0 실행
+절차**에 단계별로 적혀 있다 — 여기서 중복하지 않는다. 이 브랜치를 쓰지 않는다면 이 절은
+건너뛰어도 §2~§5의 텔레옵·학습 절차에 영향이 없다.

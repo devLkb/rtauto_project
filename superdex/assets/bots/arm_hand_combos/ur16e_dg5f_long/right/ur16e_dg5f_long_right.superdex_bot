@@ -1,0 +1,26 @@
+{
+  "base": "//arms/ur16e/ur16e.superdex_bot",
+  "name": "ur16e_dg5f_long_right",
+  "modifications": [
+    {
+      "AttachBot": {
+        "enabled": true,
+        "joint": {
+          "name": "tool0_to_dg_mount",
+          "type": "Hard",
+          "parentLinkFromJoint": {
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          }
+        },
+        "name": "dg5f_right",
+        "parentLinkName": "tool0",
+        "path": "@superdex/hands/dg5f_long/right/dg5f_long_right.superdex_bot"
+      }
+    }
+  ]
+}

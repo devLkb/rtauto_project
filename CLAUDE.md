@@ -7,9 +7,24 @@
 
 ## 프로젝트 목적
 
-반도체 웨이퍼 캐리어(**FOUP**)의 **Pick & Place**를 자율 수행하는 모바일 매니퓰레이터를
-만든다. 최종 목표는 **디지털 트윈** — 시뮬레이션과 실물이 같은 모델·같은 설정 체계를
-공유해 서로를 검증하는 상태.
+> ⚠️ **2026-09-10 변경.** 이전 목적은 "반도체 웨이퍼 캐리어(FOUP)의 Pick & Place"였다.
+> **특정 물체 전용에서 범용 파지로 바뀌었다** — 아래가 현재 목적이고, FOUP은 최종 대상이
+> 아니라 **적용 예시 중 하나**로 강등된다.
+
+**처음 보는 물체도 스스로 파지점을 찾아 파지하고, pick & place 등의 행동으로 이어가는
+것**을 자율 수행하는 모바일 매니퓰레이터를 만든다. 최종 목표는 **디지털 트윈** —
+시뮬레이션과 실물이 같은 모델·같은 설정 체계를 공유해 서로를 검증하는 상태.
+
+핵심은 **일반화**다. 물체별 CAD 등록·손잡이 좌표·파지 자세를 사람이 넣어 주는 방식은
+목적에 부합하지 않는다. 학습·평가에 쓰는 물체 목록은 **예시이지 지원 대상 목록이 아니며**,
+검증된 작업 범위(크기·질량·개구폭·관측 품질) 안에서 **학습하지 않은 물체로 넘어가는 것**이
+성공 조건이다. 이 범위 정의의 정본은
+[`docs/RL_POLICY_REDESIGN.md`](docs/RL_POLICY_REDESIGN.md) §0-2다.
+
+> **이 변경으로 결함이 된 것 하나 — 물체별 상수.** 현행 파지 환경은 스폰 오프셋
+> (`place`)을 **물체마다 사람이 맞춘 상수**로 쓴다. 게이트 4 실측에서 이 값이 성공을
+> 지배했다(paper_cup 은 배치만 바꿔 성립률 30 % → 100 %). 새 목적에서는 그 값을
+> **시스템이 스스로 정해야** 하므로, 물체별 상수는 편의가 아니라 고쳐야 할 결함이다.
 
 ## 하드웨어 스펙 (확정)
 
@@ -31,12 +46,30 @@
 ## 파이프라인
 
 ```text
-sim { Unity (ML-Agents 학습, 물리=Unity 자체 엔진/PhysX) }
+sim { SuperDex (다지 파지 RL 학습·접촉 물리)  --ONNX-->  Unity (디지털 트윈·시각화·ROS2) }
   -> real (UR16e RTDE + DG-5F-M-R dgsdk + 엔스퀘어 AMR, ROS2 + Nav2 오케스트레이션)
 
 ROS2 통합: Unity <-> ROS-TCP-Connector/Endpoint (Unity-Robotics-Hub) <-> ROS2(WSL2/Docker)
-  매니퓰레이션 정책 검증 + Nav2 주행 공용 — 별도 Gazebo 단계 없음
+  Nav2 주행 + 정책 실행 공용 — 별도 Gazebo 단계 없음
 ```
+
+> ⚠️ **DG5F 다지 파지 RL은 SuperDex로 이관됐다 (2026-09-09 채택 확정, 브랜치
+> `SuperDexTest`).** 게이트 0~4가 전부 통과했고 Unity 회귀 기준은 하나도 발동하지
+> 않았다. 판정 근거·실측·재현 명령의 정본은
+> [`docs/SUPERDEX_POC_PLAN.md`](docs/SUPERDEX_POC_PLAN.md) §0 "최종 판정"이다.
+>
+> - **왜**: Unity PhysX는 non-kinematic Rigidbody에 concave collider를 허용하지 않아
+>   DG5F 지골·대상 물체가 전부 convex hull로 근사된다 — 보상 튜닝으로 메울 수 없는
+>   **표현력** 문제다. 게다가 ML-Agents 환경 상태가 인스펙터 직렬화에 있어 AI agent가
+>   편집하지 못한다.
+> - **Unity는 버리지 않는다.** ROS2/Nav2/AMR 통합, URSim 양방향 트윈, 시연·모니터링을
+>   계속 소유한다. 정책은 ONNX 경계로 넘어간다(3자 파리티 최대 오차 7.18e-07).
+> - ⚠️ **Unity 트윈으로 파지 물리를 검증하지 않는다** — 접촉 지배 구간에서 SuperDex와
+>   반드시 발산한다.
+> - **환경 분리**: SuperDex는 Python 3.12 전용이라 `superdex/.venv/`로 venv를 나눈다
+>   (기존 3.10.11 venv와 섞지 않는다). 핀은 `requirements-superdex.txt`.
+> - 🛑 **현재 범위는 "엔진 선택"까지다.** 손목 자세 액션·들기 결합·UR16e 통합 정책·
+>   실물 규모·sim2real은 **별도 승인이 필요하다**(2026-09-09 사용자 지시).
 
 > ⚠️ **MuJoCo 폐기 완료 (2026-08-26 결정, 2026-08-27 잔재 제거).** 물리 엔진으로
 > MuJoCo를 도입하는 방안(2026-08-25 확정·검증됨)은 **파이프라인 통합 및 후속 유지보수
@@ -174,7 +207,8 @@ ROS2 통합: Unity <-> ROS-TCP-Connector/Endpoint (Unity-Robotics-Hub) <-> ROS2(
 | `vision/dg5f/` | DG5F 텔레옵 파이프라인 (보정→트래킹→UDP 송신) |
 | `vision/zed_object_detection/` | 3D 비전(ZED) 객체 검출 |
 | `tools/urdf_hand_import/` | URDF→Unity 임포트/물리검증/구동준비 범용 스크립트 |
-| `training/` | ML-Agents 학습 설정·스크립트·평가 도구 |
+| `superdex/` | **DG5F 파지 RL (현행)** — `envs/` 환경, `scripts/` 게이트·학습·평가, `assets/bots/` 우리 asset, `policies/` ONNX. venv는 `superdex/.venv/`(Python 3.12) |
+| `training/` | ML-Agents 학습 설정·스크립트·평가 도구 (**Unity RL — 파지 RL은 `superdex/`로 이관됨**) |
 | `config/rtauto_config.py` | 경로/IP/포트/하드웨어 구성의 유일한 정본 |
 | `docs/` | 로드맵, 정책 계약, 작업 이력 — `SIM2REAL_ROADMAP.md`가 최상위 정본 |
 
@@ -182,5 +216,8 @@ ROS2 통합: Unity <-> ROS-TCP-Connector/Endpoint (Unity-Robotics-Hub) <-> ROS2(
 
 1. [`docs/SIM2REAL_ROADMAP.md`](docs/SIM2REAL_ROADMAP.md) — 아키텍처 확정 사항, Phase별 계획, 리스크. **가장 먼저 확인.**
 2. [`README.md`](README.md) — 환경 셋업, 텔레옵 실행법 (하드웨어 전환 반영해 최신화 필요할 수 있음 — 착수 전 UR16e/오른손 기준으로 맞는지 확인)
-3. [`training/README.md`](training/README.md) — 학습·평가 명령
-4. [`config/rtauto_config.py`](config/rtauto_config.py) — 모든 IP/포트/경로 설정의 출처
+3. [`docs/SUPERDEX_POC_PLAN.md`](docs/SUPERDEX_POC_PLAN.md) — **파지 RL의 정본.** §0에 판정·증거·재현 명령·함정이 모두 있다
+4. [`docs/RL_POLICY_REDESIGN.md`](docs/RL_POLICY_REDESIGN.md) — **관찰·행동·보상 계약의 정본.** §0-2가 목적(범용 파지)의 작업 범위 정의
+5. [`docs/GRASP_POINT_ARCHITECTURE.md`](docs/GRASP_POINT_ARCHITECTURE.md) — 파지점 자율 결정 아키텍처 조사·권고 (**승인 대기**)
+6. [`training/README.md`](training/README.md) — Unity ML-Agents 학습·평가 명령
+7. [`config/rtauto_config.py`](config/rtauto_config.py) — 모든 IP/포트/경로 설정의 출처
