@@ -140,19 +140,21 @@
 
 ### 5-1. 왜
 
-**현행 게이트 2 환경은 이미 teacher 구성이다.** 관찰 65차원에 GT 물체 자세
-(`(bt - center) * 10`)와 GT 기반 지문 거리를 넣고 있다. 계약 §2 는 이를 "GT 유출"로
-금지하지만, 그 금지는 **배포 정책**을 향한 것이다. teacher-student 에서는 **teacher 가
-특권 상태를 쓰는 것이 정상이고 의도**다.
+**게이트 2 hand20 환경과 새 arm_hand26 환경은 모두 teacher 구성이다.** GT 물체 자세
+(`(bt - center) * 10`)와 GT 기반 지문 거리를 넣고 있다. arm_hand26은 여기에 팔 관절각·
+각속도를 추가할 뿐 그 특권 정보 경계를 바꾸지 않는다. 계약 §2 의 GT 유출 금지는 **배포
+정책**을 향한 것이다. teacher-student 에서는 **teacher 가 특권 상태를 쓰는 것이 정상이고
+의도**다.
 
 즉 이 권고는 **지금까지 만든 것을 버리지 않는다**:
 
 | 자산 | teacher-student 에서의 위치 |
 |---|---|
-| `Dg5fGraspEnv` (obs65/act20, GT 관찰) | **teacher 환경** — 그대로 쓴다 |
+| `Dg5fGraspEnv` 기본 `arm_hand26` (obs77/act26, GT 관찰) | **teacher 환경** — 게이트 3 결합 bot으로 확장 |
+| `Dg5fGraspEnv` `hand20` (obs65/act20, GT 관찰) | 기존 teacher·게이트 2/4 체크포인트 재현 |
 | 학습된 `dg5f_grasp_v8` | **teacher 정책의 출발점** |
-| 게이트 1 ONNX 계약 | student 배포 경로로 그대로 유효 |
-| 게이트 3 팔+손 결합 bot | 팔 6축 확장 시 teacher 환경에 투입 |
+| 게이트 1 ONNX 계약 | act26은 `dg5f-grasp-2`, hand20 과거 정책은 `dg5f-grasp-1` |
+| 게이트 3 팔+손 결합 bot | act26 teacher 환경의 물리 기반 |
 | 게이트 4 DR·물체 스윕 도구 | teacher 의 일반화 측정에 그대로 |
 
 ### 5-2. 단계

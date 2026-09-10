@@ -146,6 +146,7 @@ def main() -> None:
         sys.exit("--checkpoint 또는 --baseline 중 하나가 필요하다.")
 
     base_config = json.loads(args.env_config)
+    base_config.setdefault("control_mode", "hand20")  # 게이트 4의 기존 정책 계약
     if "object_prefab" in base_config:
         sys.exit("--env-config 에 object_prefab 를 넣지 마라 — 스윕이 물체마다 설정한다.")
     if args.place:

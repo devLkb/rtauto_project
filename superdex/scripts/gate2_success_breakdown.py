@@ -51,7 +51,9 @@ def main() -> None:
     from dg5f_grasp_env import Dg5fGraspEnv
     from eval_policy import load_policy
 
-    env = Dg5fGraspEnv(json.loads(args.env_config) if args.env_config else {})
+    env_config = json.loads(args.env_config) if args.env_config else {}
+    env_config.setdefault("control_mode", "hand20")
+    env = Dg5fGraspEnv(env_config)
 
     if args.baseline:
         fixed = env.full_closed.astype(np.float32)

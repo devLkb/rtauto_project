@@ -68,8 +68,11 @@ ROS2 통합: Unity <-> ROS-TCP-Connector/Endpoint (Unity-Robotics-Hub) <-> ROS2(
 >   반드시 발산한다.
 > - **환경 분리**: SuperDex는 Python 3.12 전용이라 `superdex/.venv/`로 venv를 나눈다
 >   (기존 3.10.11 venv와 섞지 않는다). 핀은 `requirements-superdex.txt`.
-> - 🛑 **현재 범위는 "엔진 선택"까지다.** 손목 자세 액션·들기 결합·UR16e 통합 정책·
->   실물 규모·sim2real은 **별도 승인이 필요하다**(2026-09-09 사용자 지시).
+> - 🛑 **범위 갱신 (2026-09-10).** "엔진 선택"은 끝났고 **teacher-student 채택과
+>   팔 6축(act26)이 승인·구현됐다** — 환경에 `control_mode`(`arm_hand26` 기본 / `hand20`
+>   과거 재현)가 생겼고 ONNX 계약은 `dg5f-grasp-2`. 다음 착수점은 **`place` 상수 제거**다.
+>   **아직 별도 승인이 필요한 것**: 실물 규모, sim2real, 손목 자세 액션.
+>   현황 정본은 [`docs/SUPERDEX_POC_PLAN.md`](docs/SUPERDEX_POC_PLAN.md) §0 인수인계 블록.
 
 > ⚠️ **MuJoCo 폐기 완료 (2026-08-26 결정, 2026-08-27 잔재 제거).** 물리 엔진으로
 > MuJoCo를 도입하는 방안(2026-08-25 확정·검증됨)은 **파이프라인 통합 및 후속 유지보수
@@ -218,6 +221,6 @@ ROS2 통합: Unity <-> ROS-TCP-Connector/Endpoint (Unity-Robotics-Hub) <-> ROS2(
 2. [`README.md`](README.md) — 환경 셋업, 텔레옵 실행법 (하드웨어 전환 반영해 최신화 필요할 수 있음 — 착수 전 UR16e/오른손 기준으로 맞는지 확인)
 3. [`docs/SUPERDEX_POC_PLAN.md`](docs/SUPERDEX_POC_PLAN.md) — **파지 RL의 정본.** §0에 판정·증거·재현 명령·함정이 모두 있다
 4. [`docs/RL_POLICY_REDESIGN.md`](docs/RL_POLICY_REDESIGN.md) — **관찰·행동·보상 계약의 정본.** §0-2가 목적(범용 파지)의 작업 범위 정의
-5. [`docs/GRASP_POINT_ARCHITECTURE.md`](docs/GRASP_POINT_ARCHITECTURE.md) — 파지점 자율 결정 아키텍처 조사·권고 (**승인 대기**)
+5. [`docs/GRASP_POINT_ARCHITECTURE.md`](docs/GRASP_POINT_ARCHITECTURE.md) — 파지점 자율 결정 아키텍처 조사·권고 (**2026-09-10 채택 승인됨** — 계약은 `RL_POLICY_REDESIGN.md` v6 에 반영)
 6. [`training/README.md`](training/README.md) — Unity ML-Agents 학습·평가 명령
 7. [`config/rtauto_config.py`](config/rtauto_config.py) — 모든 IP/포트/경로 설정의 출처

@@ -129,6 +129,7 @@ def main() -> None:
     from superdex.physics.viewer import Viewer, ViewerCfg
 
     env_config = {
+        "control_mode": "hand20",  # 기존 손20 정책 시각화의 계약을 보존한다.
         "episode_seconds": args.episode_seconds,
         "object_prefab": OBJECTS[args.object],
     }

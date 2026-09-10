@@ -87,7 +87,8 @@ def main() -> None:
 
     from dg5f_grasp_env import Dg5fGraspEnv
 
-    env_cfg = {"episode_seconds": args.episode_seconds}
+    # 게이트 2의 과거 손 단독 기준선을 act26 기본 모드와 분리해 재현한다.
+    env_cfg = {"control_mode": "hand20", "episode_seconds": args.episode_seconds}
     if args.grace is not None:
         env_cfg["grace_steps"] = args.grace
     if args.min_tips is not None:

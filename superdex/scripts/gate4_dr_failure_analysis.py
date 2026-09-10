@@ -103,7 +103,9 @@ def main() -> None:
     if not ckpt.is_dir():
         sys.exit(f"체크포인트가 없다: {ckpt}")
 
-    env = Dg5fGraspEnv({**json.loads(args.env_config), **DR_ON})
+    env_config = json.loads(args.env_config)
+    env_config.setdefault("control_mode", "hand20")  # 게이트 4의 기존 정책 계약
+    env = Dg5fGraspEnv({**env_config, **DR_ON})
     policy = load_policy(ckpt, env.joint_low, env.joint_high)
 
     print(f"=== 게이트 4 DR 실패 원인 분해: {ckpt.name} ===")

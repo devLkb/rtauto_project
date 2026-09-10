@@ -1,5 +1,15 @@
 # -*- coding: utf-8 -*-
-"""DG5FGraspEnv — 손목 고정 DG5F 다지 파지 강화학습 환경 (게이트 2).
+"""DG5FGraspEnv — 고정 베이스 UR16e + DG5F 다지 파지 강화학습 환경.
+
+**제어 모드.** 기본 `control_mode="arm_hand26"`은 게이트 3의 구운 UR16e + 공식
+DG5F 결합체를 쓴다. 액션은 `0..5` 팔 6축, `6..25` 손 20관절의 **절대 목표각**이고,
+관찰은 기존 손20 관찰 65개 뒤에 팔 각 6개와 각속도 6개를 더한 77개다. 정책 문서의
+델타 서술과 달리, 게이트 1에서 닫힌 RLlib/ONNX 경로의 절대 목표각 규약을 이번 확장에서도
+그대로 유지한다.
+
+`control_mode="hand20"`은 기존 손 단독 asset과 관찰65/행동20을 보존한다. 게이트 2·4의
+과거 체크포인트와 기준선은 반드시 이 모드로 재현한다. 새 기본 모드가 과거 체크포인트를
+조용히 26차원 정책으로 오독하지 않도록, 해당 스크립트가 이 값을 명시한다.
 
 docs/SUPERDEX_POC_PLAN.md §5 게이트 2. 게이트 0에서 **실측한 값들이 그대로 들어간다**:
 
@@ -9,7 +19,7 @@ docs/SUPERDEX_POC_PLAN.md §5 게이트 2. 게이트 0에서 **실측한 값들�
   - 동적 물체는 surface mesh가 있어야 하므로 Box and Blocks Test 블록 프리팹을 쓴다
   - 컨트롤러는 `MOCHI_ARTICULATED_POSE` (BASIC_*_PD는 중력 항이 없다)
 
-**태스크.** 손목은 고정이다. 블록이 파지 포켓에 생성되고, `grace_steps` 동안은 무중력이며
+**태스크.** 베이스는 용접해 고정한다. 블록이 파지 포켓에 생성되고, `grace_steps` 동안은 무중력이며
 그 뒤 중력이 켜진다. 정책은 그 사이에 손가락을 닫아 블록을 붙잡고, 에피소드가 끝날 때까지
 파지 중심 근처에 유지해야 한다. `grace_steps`를 줄이는 것이 커리큘럼 축이다.
 
@@ -17,14 +27,15 @@ docs/SUPERDEX_POC_PLAN.md §5 게이트 2. 게이트 0에서 **실측한 값들�
 > 자세 컨트롤러가 거기까지 가는 데 0.1~0.2초가 걸린다. 중력을 처음부터 켜면 완벽한
 > 정책이라도 블록이 10 cm 이상 떨어져 보상 신호가 생기지 않는다.
 
-**행동.** 20개 관절의 목표 각도. 액션 공간을 실제 관절 한계로 선언하므로 RLlib의
+**행동.** 관절별 절대 목표 각도. 액션 공간을 실제 관절 한계로 선언하므로 RLlib의
 `normalize_actions`가 [-1,1] <-> 관절범위 변환을 담당하고, 게이트 1에서 검증한 ONNX
 익스포트 경로(래퍼가 unsquash를 그래프에 박음)가 그대로 성립한다.
 
-**관찰 (65차원).** 관절각 20 + 관절속도 20 + 블록 위치(파지중심 기준) 3 + 블록 자세 4
+**관찰 (arm_hand26에서 77차원).** 손 관절각 20 + 손 관절속도 20 + 블록 위치(파지중심 기준) 3 + 블록 자세 4
 + 블록 선속도 3 + 블록 각속도 3 + **지문별 접촉력 크기 5** + 지문-블록 거리 5
-+ 진행도 1 + 중력 ON 1. 스펙 정본은 docs/RL_POLICY_REDESIGN.md — 바꾸면 거기와 ONNX
-스펙 버전을 함께 올린다.
++ 진행도 1 + 중력 ON 1 + 팔 관절각 6 + 팔 관절속도 6. 손20 모드는 앞의 기존 65개만 쓴다.
+스펙 정본은 docs/RL_POLICY_REDESIGN.md이며, 이번 구현의 ONNX 계약 버전은
+`dg5f-grasp-2`다.
 
 > ⚠️ 지문 접촉을 **거리로 근사하지 않는다.** 처음엔 "지문-블록중심 거리 < 3 cm"를 썼는데
 > 실측에서 완전 폐쇄 시 지문 거리가 `[3.4, 4.0, 3.4, 2.3, 5.2] cm`이고 블록 AABB가
@@ -59,6 +70,10 @@ from superdex.physics.paths import get_assets_root, resolve_asset  # noqa: E402
 
 BLOCK_PREFAB = "prefabs/box_and_blocks/block_red.mochi_prefab"       # 2.5cm / 15.6g
 DUCK_LAMP_PREFAB = "prefabs/duck_lamp/duck_lamp_recumbent.mochi_prefab"  # 11.9x11.0x7.5cm / 545g
+CONTROL_MODE_ARM_HAND26 = "arm_hand26"
+CONTROL_MODE_HAND20 = "hand20"
+ARM_DOFS = 6
+HAND_DOFS = 20
 PALM_LINK = "dg5f_link_palm"
 TIP_LINKS = tuple(f"dg5f_link_{f}_tip" for f in "12345")
 FLEX_SUFFIXES = ("_2", "_3", "_4")
@@ -82,6 +97,13 @@ class Dg5fGraspEnv(gym.Env):
         super().__init__()
         c = dict(config or {})
         self.hz = int(c.get("sim_hz", cfg.SUPERDEX_SIM_HZ))
+        self.control_mode = str(c.get("control_mode", CONTROL_MODE_ARM_HAND26))
+        if self.control_mode not in (CONTROL_MODE_ARM_HAND26, CONTROL_MODE_HAND20):
+            raise ValueError(
+                "control_mode 는 'arm_hand26' 또는 'hand20' 이어야 한다 "
+                f"(실제 {self.control_mode!r})"
+            )
+        self._uses_combined_bot = self.control_mode == CONTROL_MODE_ARM_HAND26
         self.dt = 1.0 / self.hz
         self.episode_seconds = float(c.get("episode_seconds", 3.0))
         self.max_steps = int(self.episode_seconds * self.hz)
@@ -148,8 +170,8 @@ class Dg5fGraspEnv(gym.Env):
         # 비용이 자릿수로 뛴다. 물체 종류 교체(`object_prefab`)로 대신 다룬다.
         #
         # 정책에 이 값들을 **관찰로 주지 않는다.** DR의 목적이 "관측되지 않는 변화에
-        # 견디는 정책"이기 때문이다. 관찰 차원(65)은 그대로다 — 게이트 1의 ONNX 계약
-        # (`dg5f-grasp-1`)이 깨지지 않는다.
+        # 견디는 정책"이기 때문이다. DR은 control_mode별 관찰 계약을 바꾸지 않는다
+        # (hand20=65, arm_hand26=77) — ONNX 소비자가 차원 불일치를 감지할 수 있어야 한다.
         self.dr_mass_range = c.get("dr_mass_range")
         self.dr_friction_range = c.get("dr_friction_range")
 
@@ -159,12 +181,14 @@ class Dg5fGraspEnv(gym.Env):
         self._build_scene()
 
         n_obs = 20 + 20 + 3 + 4 + 3 + 3 + 5 + 5 + 1 + 1
+        if self._uses_combined_bot:
+            n_obs += ARM_DOFS + ARM_DOFS
         self.observation_space = spaces.Box(-np.inf, np.inf, (n_obs,), dtype=np.float32)
         # 실제 관절 한계를 그대로 선언한다 -> RLlib이 정규화/역정규화를 맡고,
         # 게이트 1에서 검증한 ONNX 익스포트 경로가 그대로 성립한다.
         self.action_space = spaces.Box(
             self.joint_low.astype(np.float32), self.joint_high.astype(np.float32),
-            (20,), dtype=np.float32,
+            (self.n_dofs,), dtype=np.float32,
         )
 
         self._steps = 0
@@ -178,29 +202,69 @@ class Dg5fGraspEnv(gym.Env):
         ground = physics.create_plane_shape(normal=[0, 0, 1], distance=0)
         self.scene.create_rigid_actor(name="ground", shape=ground, is_static=True)
 
-        prefab = robotics.load_bot_prefab_from_file(
-            str(resolve_asset(cfg.superdex_hand_asset()))
-        )
-        # 손목 용접 — 이걸 안 하면 world_joint가 FREE라 손이 자유부양한다(게이트 0 실측).
+        if self._uses_combined_bot:
+            combo = cfg.SUPERDEX_OUR_ASSETS_DIR / cfg.superdex_combo_asset()
+            if not combo.is_file():
+                raise FileNotFoundError(
+                    f"결합 bot asset 이 없다: {combo}\n"
+                    "gate3_setup_asset_root.py 의 배선과 gate 3 Studio bake 를 확인하라."
+                )
+            prefab = robotics.load_bot_prefab_from_file(str(combo))
+
+            # 공식 DG5F asset의 defaultPose는 손가락 20개가 모두 비영인 굽은 자세다.
+            # 그 값을 그대로 두면 reset()이 반쯤 쥔 손에서 시작한다. 게이트 3의
+            # hand-mount 수치 대조와 같은 방식으로 결합체의 기준 자세를 관절 0으로
+            # 정규화한다. hand20 호환 모드는 과거 게이트의 시작 조건을 보존하려고 건드리지
+            # 않는다.
+            default_pose = prefab.default_pose
+            if len(default_pose):
+                for i in range(len(default_pose)):
+                    default_pose[i] = 0.0
+                prefab.default_pose = default_pose
+        else:
+            prefab = robotics.load_bot_prefab_from_file(
+                str(resolve_asset(cfg.superdex_hand_asset()))
+            )
+
+        # root 용접 — 이걸 안 하면 world_joint가 FREE라 로봇이 자유부양한다(게이트 0·3 실측).
+        # CLAUDE.md 동작 원칙상 매니퓰레이션은 베이스가 정지한 상태에서만 수행한다.
         prefab.joints[0].type = physics.ArticulatedJointType.HARD
-        prefab.world_from_root = physics.TransformRT(
-            rotation=[0.0, 0.0, 0.0, 1.0], translation=[0.0, 0.0, 0.4]
-        )
+        if not self._uses_combined_bot:
+            # 손 단독 asset의 과거 게이트 2 배치 조건을 그대로 보존한다.
+            prefab.world_from_root = physics.TransformRT(
+                rotation=[0.0, 0.0, 0.0, 1.0], translation=[0.0, 0.0, 0.4]
+            )
 
         self.link_names = [prefab.links[i].name for i in range(len(prefab.links))]
-        self.palm_idx = self.link_names.index(PALM_LINK)
-        self.tip_idx = [self.link_names.index(n) for n in TIP_LINKS]
+
+        def link_index(name):
+            candidates = [
+                i for i, actual in enumerate(self.link_names)
+                if actual == name or actual.endswith("/" + name)
+            ]
+            if len(candidates) != 1:
+                raise RuntimeError(
+                    f"링크 '{name}' 를 유일하게 찾지 못했다: "
+                    f"{[self.link_names[i] for i in candidates]}"
+                )
+            return candidates[0]
+
+        self.palm_idx = link_index(PALM_LINK)
+        self.tip_idx = [link_index(n) for n in TIP_LINKS]
 
         ctx = robotics.create_context()
         self.bot = robotics.create_bot(self.scene, prefab, ctx)
         self.actor = self.bot.get_articulated_actor()
-        assert self.actor.get_num_dofs() == 20, (
-            f"손목 용접 후 DOF가 20이어야 한다 (실제 {self.actor.get_num_dofs()})"
+        self.n_dofs = self.actor.get_num_dofs()
+        expected_dofs = ARM_DOFS + HAND_DOFS if self._uses_combined_bot else HAND_DOFS
+        assert self.n_dofs == expected_dofs, (
+            f"root 용접 후 DOF가 {expected_dofs}이어야 한다 (실제 {self.n_dofs})"
         )
 
         # 관절 한계 (min_limit/max_limit은 축별 Real3다 — 게이트 0 실측)
         lows, highs, flex = [], [], []
         dof = 0
+        revolute_names = []
         for i in range(len(prefab.joints)):
             j = prefab.joints[i]
             if j.type != physics.ArticulatedJointType.REVOLUTE:
@@ -211,13 +275,33 @@ class Dg5fGraspEnv(gym.Env):
             highs.append(float(j.max_limit[k]))
             if j.name.endswith(FLEX_SUFFIXES):
                 flex.append(dof)
+            revolute_names.append(j.name)
             dof += 1
         self.joint_low = np.asarray(lows, dtype=np.float64)
         self.joint_high = np.asarray(highs, dtype=np.float64)
+        self.dof_names = tuple(revolute_names)
+        if len(self.joint_low) != self.n_dofs:
+            raise RuntimeError(
+                "prefab REVOLUTE 수와 actor DOF 수가 다르다: "
+                f"{len(self.joint_low)} != {self.n_dofs}"
+            )
+        if self._uses_combined_bot:
+            # 결합 bot 정본의 REVOLUTE 순서는 UR16e 6축 뒤 DG5F 20축이다(게이트 3 실측).
+            # 액션 v3의 0..5/6..25 계약을 순서가 어긋난 asset에 조용히 연결하지 않도록
+            # 이름도 함께 검사한다. 한계값 자체는 위 prefab(URDF bake 원본)에서 읽었다.
+            if (any("dg5f" in name.lower() for name in revolute_names[:ARM_DOFS])
+                    or not all("dg5f" in name.lower()
+                               for name in revolute_names[ARM_DOFS:])):
+                raise RuntimeError("결합 bot의 팔 6축/손 20축 순서가 act26 계약과 다르다")
+            self.arm_dofs = np.arange(ARM_DOFS, dtype=np.int64)
+            self.hand_dofs = np.arange(ARM_DOFS, self.n_dofs, dtype=np.int64)
+        else:
+            self.arm_dofs = np.empty(0, dtype=np.int64)
+            self.hand_dofs = np.arange(self.n_dofs, dtype=np.int64)
         self.flex_dofs = np.asarray(flex, dtype=np.int64)
 
-        self._pose_buf = physics.DynamicArrayReal(20)
-        self._vel_buf = physics.DynamicArrayReal(20)
+        self._pose_buf = physics.DynamicArrayReal(self.n_dofs)
+        self._vel_buf = physics.DynamicArrayReal(self.n_dofs)
         self._tf_buf = physics.DynamicArrayTransformRT(len(self.link_names))
 
         self.actor.get_articulated_pose(self._pose_buf)
@@ -346,9 +430,14 @@ class Dg5fGraspEnv(gym.Env):
         # (2) running filter(MeanStdFilter)를 쓰면 통계가 커넥터에 살아 ONNX 밖으로 새어나간다.
         #     게이트 1에서 정한 원칙 — 변환은 전부 그래프 안에 상수로 박는다 — 을 지키려면
         #     스케일이 **고정 상수**여야 한다.
-        obs = np.concatenate([
-            q,                                  # 이미 O(1) (rad)
-            qd / 20.0,                           # ±41 -> ±2
+        # hand20의 기존 65개를 앞에 고정한다. arm_hand26은 마지막 12개에 팔 각/속도를
+        # 붙인다. 이 순서라야 호환 모드의 관찰을 같은 접두부로 재현하면서도, 새 ONNX 계약은
+        # 77차원이라는 차이로 과거 65차원 정책과 확실히 분리된다.
+        hand_q = q[self.hand_dofs]
+        hand_qd = qd[self.hand_dofs]
+        obs_parts = [
+            hand_q,                             # 이미 O(1) (rad)
+            hand_qd / 20.0,                     # ±41 -> ±2
             (bt - center) * 10.0,                # ±0.1 -> ±1
             bq,                                  # 쿼터니언, 이미 O(1)
             bv / 2.0,                            # ±2 -> ±1
@@ -357,7 +446,13 @@ class Dg5fGraspEnv(gym.Env):
             tip_dist * 10.0,                     # 0.04~0.30 -> 0.4~3.0
             [self._steps / max(1, self.max_steps)],
             [1.0 if self._steps >= self.grace_steps else 0.0],
-        ])
+        ]
+        if self._uses_combined_bot:
+            obs_parts.extend([
+                q[self.arm_dofs],                # 팔 각 [rad]
+                qd[self.arm_dofs] / 20.0,        # 팔 각속도, 손과 같은 고정 스케일
+            ])
+        obs = np.concatenate(obs_parts)
         return obs.astype(np.float32), center, bt, tip_dist, tip_force
 
     # ------------------------------------------------------------------ gym API

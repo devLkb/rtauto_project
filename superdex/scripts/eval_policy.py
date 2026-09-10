@@ -70,6 +70,8 @@ def main() -> None:
     from dg5f_grasp_env import Dg5fGraspEnv
 
     env_config = json.loads(args.env_config) if args.env_config else {}
+    # 과거 손20 체크포인트/게이트 2 수치를 재현하는 기본값이다.
+    env_config.setdefault("control_mode", "hand20")
     env = Dg5fGraspEnv(env_config)
 
     if args.baseline:

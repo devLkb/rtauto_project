@@ -143,6 +143,7 @@ def main() -> None:
         sys.exit("--checkpoint 또는 --baseline 중 하나가 필요하다.")
 
     base_config = json.loads(args.env_config)
+    base_config.setdefault("control_mode", "hand20")  # 게이트 4의 기존 정책 계약
     for k in ("dr_mass_range", "dr_friction_range"):
         if k in base_config:
             sys.exit(f"--env-config 에 {k} 를 넣지 마라 — 스윕이 단계마다 설정한다.")

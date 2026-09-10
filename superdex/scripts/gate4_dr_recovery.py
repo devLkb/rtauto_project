@@ -139,6 +139,7 @@ def main() -> None:
     args = ap.parse_args()
 
     base_config = json.loads(args.env_config)
+    base_config.setdefault("control_mode", "hand20")  # 게이트 4의 기존 정책 계약
     for k in DR_ON:
         if k in base_config:
             sys.exit(f"--env-config 에 {k} 를 넣지 마라 — 이 스크립트가 켜고 끈다.")

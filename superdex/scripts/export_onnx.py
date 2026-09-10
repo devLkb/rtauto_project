@@ -55,6 +55,7 @@ import torch.nn as nn  # noqa: E402
 SPEC_VERSIONS = {
     (4, 1): "gate1-cartpole-1",      # cart_pole 대리 환경 (게이트 1)
     (65, 20): "dg5f-grasp-1",        # DG5FGraspEnv: 관찰 65 / 행동 20 (게이트 2)
+    (77, 26): "dg5f-grasp-2",        # UR16e 6축 + DG5F 20축, 절대 목표각 (게이트 3 확장)
 }
 
 
@@ -147,7 +148,7 @@ def main() -> None:
     if spec_version is None:
         sys.exit(
             f"관찰 {obs_dim} / 행동 {act_dim} 조합에 스펙 버전이 등록돼 있지 않다.\n"
-            f"SPEC_VERSIONS 에 추가하고 docs/RL_POLICY_REDESIGN.md 를 함께 갱신할 것 "
+            f"SPEC_VERSIONS 와 docs/SUPERDEX_POC_PLAN.md 의 계약 기록을 함께 갱신할 것 "
             f"— 계약 변경을 버전 없이 내보내면 소비자가 불일치를 감지할 수 없다."
         )
     print(f"spec ver  : {spec_version}")
