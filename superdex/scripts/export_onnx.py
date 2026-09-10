@@ -178,6 +178,16 @@ def main() -> None:
     if max_ref > args.tol:
         sys.exit(f"래퍼가 RLlib 경로를 복제하지 못했다 (허용 {args.tol}). 중단한다.")
 
+    # ⚠️ `dynamo=False` 를 **명시한다** — 생략하면 torch 버전에 따라 익스포터가 조용히
+    # 바뀐다(원칙 2 위반). torch 2.6(회사 머신)은 legacy TorchScript 익스포터가 기본이라
+    # 게이트 1 의 3자 파리티가 그 경로로 검증됐는데, torch 2.14(개인 노트북)부터는
+    # dynamo 익스포터가 기본이다.
+    #
+    # 실측 (2026-09-10, torch 2.14.0+cpu): dynamo 익스포터는 `opset_version=17` 을 줘도
+    # **opset 18 에서 도입된 `Split.num_outputs` 를 emit** 해 onnxruntime 로드가 깨진다:
+    #   InvalidGraph: Unrecognized attribute: num_outputs for operator Split
+    # opset 을 18 로 올려 회피하지 않는다 — 17 은 Unity Inference Engine 소비자와 맞춰
+    # 검증된 계약이고, 여기서 바꾸면 Unity 다리를 다시 검증해야 한다.
     torch.onnx.export(
         policy,
         (torch.as_tensor(obs[:1]),),
@@ -186,6 +196,7 @@ def main() -> None:
         output_names=["action"],
         dynamic_axes={"obs": {0: "batch"}, "action": {0: "batch"}},
         opset_version=17,
+        dynamo=False,
     )
 
     # 스펙 버전을 ONNX 메타데이터에 박는다 — 소비자가 계약 불일치를 즉시 감지하게.

@@ -71,8 +71,11 @@
 >    🛑 **기본값은 아직 `palm` 이다.** 정책이 실제로 접근을 배우는지 **학습으로 확인한 뒤**
 >    기본값을 바꿔라. 이게 지금 가장 우선순위 높은 실험이다.
 >    검증: `python superdex/scripts/smoke_workspace_spawn.py`
-> 2. **게이트 1 재검증(act26).** ONNX 계약을 `dg5f-grasp-2` 로 올렸지만 **act26 체크포인트가
->    아직 없어 3자 파리티를 못 돌렸다.** act26 학습을 한 번 돌린 뒤 재검증해야 한다.
+> 2. **게이트 1 재검증(act26) — 2개 다리 완료, Unity 다리만 남았다.**
+>    래퍼 **0.000e+00** / onnxruntime **1.907e-06** 로 통과했다(스펙 `dg5f-grasp-2`).
+>    **남은 것은 Unity Inference Engine 다리뿐**이고 개인 노트북에 Unity 가 없어서 못 했다 —
+>    `unity/Assets/Editor/PolicyParityCheck.cs` 에 fixture 를 먹이면 된다.
+>    ⚠️ 이 과정에서 익스포터가 torch 버전에 따라 바뀌던 버그를 찾아 고쳤다(`dynamo=False`).
 > 3. **물체 다양성 확보.** 동봉 asset 중 손 크기에 맞는 것이 `duck_lamp`·`paper_cup`
 >    둘뿐이라 **확보 자체가 작업**이다.
 > 4. **점군 합성 프로토타입** (teacher-student 2단계). 아직 실측 전인 최대 미검증 항목이다.
@@ -487,6 +490,59 @@ python superdex/scripts/smoke_workspace_spawn.py
 > 돌려야 알 수 있다.** 이 저장소의 보상 변경은 v5·v6·v8 모두 학습+실측으로 판정해 왔고
 > 이번도 예외가 아니다. 기본값 전환은 그 측정 뒤에 한다. 노트북은 CPU learner 라
 > 이 검증은 회사 머신에서 하는 편이 낫다(§8).
+
+### 게이트 1 재검증 — act26 (2026-09-10)
+
+act26 으로 관찰·행동 차원이 바뀌었으므로 ONNX 계약을 `dg5f-grasp-2` 로 올렸고, 그
+계약이 실제로 성립하는지 다시 측정했다. 파리티는 **정책 품질과 무관**하므로 학습된
+정책이 필요 없다 — workspace 스모크 학습(2 이터레이션)이 만든 체크포인트로 충분하다.
+
+```bash
+python superdex/scripts/train_ppo.py --env dg5f_grasp --iters 2 --num-env-runners 2 \
+  --env-config '{"control_mode":"arm_hand26","spawn_mode":"workspace","spawn_radius_frac":0.3,"episode_seconds":2.0}'
+python superdex/scripts/export_onnx.py --checkpoint superdex/results/<run>
+```
+
+| 다리 | 결과 | 허용 |
+|---|---|---|
+| [1] 래퍼 vs RLlib 커넥터 경로 | **0.000e+00** | 1e-05 |
+| [3] onnxruntime vs RLlib 경로 | **1.907e-06** | 1e-05 |
+| [4] Unity Inference Engine | ⏳ **미실시** — Unity 가 개인 노트북에 없다 | 1e-05 |
+
+**판정: 통과 (2개 다리).** 스펙 `dg5f-grasp-2`, obs 77 / act 26, 391 KB.
+남은 Unity 다리는 `unity/Assets/Editor/PolicyParityCheck.cs` 로 같은 fixture
+(`superdex/policies/<run>.parity.json`)를 먹여 검증한다 — **Unity 가 있는 머신에서 해야 한다.**
+
+> ⚠️ 학습 파이프라인 통과도 함께 확인됐다 — RLlib 가 `spawn_mode`/`control_mode` 를
+> 포함한 `--env-config` 를 그대로 받고, `.env` 의 `RTAUTO_SUPERDEX_GPUS_PER_LEARNER=0`
+> 이 `gpu/learner: 0` 으로 반영된다. **다만 2 이터레이션은 학습 판정이 아니다** —
+> return_mean 20.45 → 22.37 은 통계적으로 아무 의미가 없다.
+
+#### 발견 — ONNX 익스포트가 torch 버전에 따라 조용히 바뀌고 있었다 (원칙 2)
+
+`export_onnx.py` 는 `opset_version=17` 만 고정하고 익스포터 종류를 지정하지 않았다.
+그런데 `torch.onnx.export` 의 `dynamo` 기본값이 **torch 버전마다 다르다**:
+
+| 머신 | torch | `dynamo` 기본값 | 결과 |
+|---|---|---|---|
+| 회사 | 2.6.0+cu124 | `False` (legacy TorchScript) | 게이트 1 이 검증된 경로 |
+| 개인 노트북 | 2.14.0+cpu | **`True`** (dynamo) | **깨진다** |
+
+dynamo 익스포터는 `opset_version=17` 을 줘도 **opset 18 에서 도입된
+`Split.num_outputs` 를 emit** 해 onnxruntime 로드 자체가 실패한다:
+`InvalidGraph: Unrecognized attribute: num_outputs for operator Split`.
+그 전에 `ModuleNotFoundError: onnxscript` 로 먼저 막히기도 한다(dynamo 경로 의존성).
+
+**고친 방법: `dynamo=False` 를 명시**했다. opset 을 18 로 올려 회피하지 **않았다** —
+17 은 Unity Inference Engine 소비자와 맞춰 검증된 계약이고, 바꾸면 Unity 다리를
+전부 다시 검증해야 한다. 익스포터를 고정하는 쪽이 계약을 지키는 방향이다.
+
+> `onnxscript` 는 **의존성에 넣지 않았다.** legacy 익스포터는 그것을 쓰지 않는다 —
+> 제거한 뒤 재실행해 결과가 `1.907e-06` 로 동일함을 확인했다. dynamo 경로에서만
+> 필요한 패키지라 `requirements-superdex.txt` 를 늘릴 이유가 없다.
+
+이 버그는 **torch 가 올라간 머신이면 어디서든 터진다** — 회사 머신도 torch 를
+업그레이드하는 순간 같은 일이 난다. 노트북으로 옮긴 덕에 미리 드러났다.
 
 ### (기록) 게이트 3 착수 절차 — bake 전 상태
 
