@@ -197,6 +197,11 @@ UNITY_PROJECT = _env("RTAUTO_UNITY_PROJECT", "")   # tools/urdf_hand_import용 U
 UNITY_CLI = _env("RTAUTO_UNITY_CLI", "")           # unity-cli 실행파일 경로
 DG5F_DLL = _env("RTAUTO_DG5F_DLL", "")             # 비우면 dg5f_sdk_bridge.py가 상대경로 기본값 사용
 
+# 공식 벤더 파이썬 SDK(dgsdk) 바이너리 디렉터리 — vision/dg5f/dg5f_sdk_bridge_dgsdk.py(미검증,
+# 드라이런 전용) 가 쓴다. 저장소에 vendor로 커밋돼 있어(vision/dg5f/vendor/dgsdk-python/libs)
+# 기본값이 있다 — 다른 DLL/so로 바꿔 실험할 때만 비워지지 않은 값으로 오버라이드한다.
+DG5F_DGSDK_LIB_DIR = _env("RTAUTO_DG5F_DGSDK_LIB_DIR", "")
+
 # Universal_Robots_ROS2_Description 체크아웃 루트 (urdf/, meshes/, config/가 바로 안에 있는 폴더).
 # urdf 빌드 스크립트(urdf/build_arm_hand.py)가 xacro 해석과 메시 복사에 쓴다.
 # 저장소에 포함하지 않는 외부 공개 레포이므로 머신마다 위치가 다르다 — 기본값 없음.

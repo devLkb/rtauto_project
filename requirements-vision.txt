@@ -17,3 +17,8 @@ scipy==1.10.1
 # UR16e RTDE (arm/ur_rtde_bridge.py) — URSim/실물 팔 디지털 트윈. mediapipe/mlagents와
 # 별개 기능이라 버전 충돌 이력 없음. Windows/Linux 모두 PyPI 휠 제공.
 ur_rtde==1.6.5
+
+# vision/dg5f/dg5f_sdk_bridge_dgsdk.py(공식 dgsdk 래퍼, 2026-09-14 — 미검증/드라이런 전용)가
+# 요구하는 유일한 외부 의존성. 벤더 패키지 자체(vision/dg5f/vendor/dgsdk-python/)는
+# 저장소에 vendor로 커밋돼 있어 별도 설치가 필요 없다.
+cffi>=1.15.0

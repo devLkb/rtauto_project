@@ -54,6 +54,17 @@ Unity UrArmReceiver.cs <──UDP 5010── 이 브리지(--echo-to-unity) <─
 실시간 구동은 `dg5f_sdk_bridge.py`, 자세 캡처·별도 읽기 실험은 `dg5f_readback_bridge.py`를 사용한다.
 `dg5f_modbus_readback.py`는 과거 통신 조사 기록이다.
 
+> 🛑 **`vision/dg5f/dg5f_sdk_bridge_dgsdk.py` (2026-09-14 추가, 미검증) — 아래
+> `dg5f_sdk_bridge.py`를 대체하는 코드가 아니다.** 벤더가 `DGSDK.dll`과 함께 제공한
+> 공식 파이썬 래퍼(`dgsdk`, `vision/dg5f/vendor/dgsdk-python/`로 vendor 커밋)로 SDK
+> 호출부만 바꾼 버전이며, 관절 대응·클램프·미러·슬루 리밋은 `dg5f_sdk_bridge.py`에서
+> import해 그대로 공유한다(정본 하나 원칙). **그리퍼가 UR16e 팔에 물려 있어 배선을
+> 풀 수 없는 동안 작성됐다 — 드라이런(`--ip` 생략)까지만 확인됐고 실물 재검증은
+> 안 됐다.** 실물 연결에는 `--i-know-this-is-unverified` 플래그가 필수(안전 게이트).
+> 배선을 풀 수 있게 되면 `--jog`/`--track`으로 재검증한 뒤에만 정식 구동 경로로
+> 승격할지 판단한다. 그 전까지 실물 구동의 정본은 여전히 아래 `dg5f_sdk_bridge.py`다.
+> 교체 검토 배경은 `docs/docs2/TESOLLO_SDK_기술부채_조사.md` 부채①.
+
 ### `vision/dg5f/dg5f_sdk_bridge.py` — 현재 구동 경로
 
 ```text

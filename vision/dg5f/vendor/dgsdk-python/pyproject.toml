@@ -1,0 +1,55 @@
+[project]
+name = "dgsdk"
+version = "2.0.0"
+description = "Python wrapper for DGSDK 2.0.0 (Delto Gripper SDK, x64 only, firmware 3.0+ grippers; DG-3F-B unsupported)"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Tesollo", email = "khc@tesollo.com" }
+]
+keywords = ["gripper", "robotics", "dgsdk", "delto"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = ["cffi>=1.15.0"]
+
+[project.urls]
+Homepage = "https://github.com/tesollo/dgsdk-python"
+Documentation = "https://github.com/tesollo/dgsdk-python#readme"
+Repository = "https://github.com/tesollo/dgsdk-python.git"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dgsdk"]
+
+# Force-include native binaries inside the package itself so the runtime
+# loader (DGSDK._load_library) finds them at <site-packages>/dgsdk/libs/.
+# 런타임 로더가 <site-packages>/dgsdk/libs/에서 찾을 수 있도록 패키지 내부로 번들링.
+[tool.hatch.build.targets.wheel.force-include]
+"libs/libDGSDK.so" = "dgsdk/libs/libDGSDK.so"
+"libs/DGSDK.dll" = "dgsdk/libs/DGSDK.dll"
+
+[tool.hatch.build.targets.sdist]
+exclude = ["Release-*.zip", "dist/", ".venv/", "__pycache__"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+]
