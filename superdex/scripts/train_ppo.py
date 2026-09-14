@@ -167,7 +167,9 @@ def main() -> None:
             minibatch_size=256,
             num_epochs=10,
             lr=3e-4,
-            gamma=0.99,
+            # 할인율 정본은 config/rtauto_config.py 다 — 환경의 potential-based shaping 이
+            # **같은 값**을 써야 불변성이 성립하므로 두 곳에 따로 타이핑하지 않는다(원칙 1).
+            gamma=cfg.SUPERDEX_PPO_GAMMA,
             lambda_=0.95,
         )
         .debugging(log_level="ERROR")

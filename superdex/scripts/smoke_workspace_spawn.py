@@ -107,6 +107,40 @@ def main():
             insta += int(term)
         check("중력 직후 즉시 낙하종료", f"{insta}/{args.episodes}",
               insta == 0, "0 건")
+
+        # 5. 접근 shaping 이 **정책 불변**인가 — 이론값과 수치로 대조한다.
+        #
+        # potential-based shaping 의 정리(Ng et al. 1999)는 "할인 리턴이 -Phi(s0) 만큼만
+        # 달라진다"는 것이다. 같은 궤적을 shaping 켜고/끄고 돌려 **할인** 리턴 차이를 재면
+        # 이론값과 맞아야 한다:
+        #     차이 = w * ( -Phi(s0) + gamma^T * Phi(s_T) )
+        # 종료(낙하)로 끝나면 흡수 상태라 Phi(s_T)=0, 시간 초과로 끝나면 Phi(s_T)=-dist_T 다.
+        # ⚠️ **할인하지 않은 단순 합으로 재면 이 검사는 통과하지 않는다** — 그게 바로
+        # gamma 를 맞춰야 하는 이유이고, 2026-09-14 에 고친 결함이다.
+        g = env.shaping_gamma
+        worst = 0.0
+        for k in range(args.episodes):
+            rets, ends = {}, {}
+            for w in (0.0, 1.0):
+                env.approach_shaping = w
+                env.reset(seed=7000 + k)
+                rng = np.random.default_rng(7000 + k)
+                ret, t = 0.0, 0
+                for t in range(env.max_steps):
+                    a = rng.uniform(env.action_space.low, env.action_space.high).astype(np.float32)
+                    _, r, term, trunc, info = env.step(a)
+                    ret += (g ** t) * r
+                    if term or trunc:
+                        break
+                rets[w] = ret
+                ends[w] = (t, term, float(info["dist"]), env._spawn_dist)
+            steps_t, term_t, dist_t, d0 = ends[1.0]
+            phi_T = 0.0 if term_t else -dist_t
+            expect = d0 + (g ** (steps_t + 1)) * phi_T
+            worst = max(worst, abs((rets[1.0] - rets[0.0]) - expect))
+        env.approach_shaping = 1.0
+        check("shaping 이 할인 리턴을 -Phi(s0) 만큼만 바꾼다", f"최대 오차 {worst:.2e}",
+              worst < 1e-6, "< 1e-6")
     finally:
         env.close()
 

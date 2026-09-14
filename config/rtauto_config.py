@@ -311,6 +311,14 @@ _SUPERDEX_ASSETS_RAW = _env("RTAUTO_SUPERDEX_ASSETS", "").strip()
 # 접촉 시뮬레이션 품질에 직결되는 값이라 게이트 0에서 검증 대상이다.
 SUPERDEX_SIM_HZ = int(_env("RTAUTO_SUPERDEX_SIM_HZ", "200"))
 
+# PPO 할인율. **학습기(train_ppo.py)와 환경의 potential-based shaping 이 반드시 같은 값을
+# 써야 한다** — Ng et al. 1999 의 "최적 정책이 바뀌지 않는다"는 보장이 `F = gamma*Phi(s') -
+# Phi(s)` 의 gamma 와 MDP 할인율이 같을 때만 성립하기 때문이다. 두 곳에 따로 타이핑하면
+# 조용히 어긋나고(실제로 어긋나 있었다 — 환경 gamma=1 vs 학습 0.99, 2026-09-14 수정),
+# 그 차이가 스텝마다 `-(1-gamma)*dist` 라는 거리 벌점으로 남는다.
+# 그래서 정본을 여기 하나로 둔다(원칙 1). 바꾸면 학습기와 환경이 함께 따라간다.
+SUPERDEX_PPO_GAMMA = float(_env("RTAUTO_SUPERDEX_PPO_GAMMA", "0.99"))
+
 # Ray env runner 수. SuperDex 기본값 32는 세 작업 머신 어느 쪽의 스레드 수도 넘는다
 # (회사 Ryzen 5 7600 = 6C/12T, 집 Ryzen 7 7800X3D = 8C/16T,
 #  개인 노트북 Core Ultra 5 225H = 14C/14T). train_samples.py가 가용 CPU에 맞춰 자동

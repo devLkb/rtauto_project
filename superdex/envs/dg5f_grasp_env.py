@@ -164,6 +164,15 @@ class Dg5fGraspEnv(gym.Env):
         default_shaping = 1.0 if self.spawn_mode == SPAWN_MODE_WORKSPACE else 0.0
         self.approach_shaping = float(c.get("approach_shaping", default_shaping))
 
+        # ⚠️ **정리의 gamma 는 학습기의 할인율과 같아야 한다** (2026-09-14 수정).
+        # Ng et al. 의 불변성은 F = gamma*Phi(s') - Phi(s) 에서 이 gamma 가 **MDP 의 할인율과
+        # 같을 때만** 성립한다. 이전 구현은 F = Phi(s') - Phi(s) (gamma=1)였는데 PPO 는
+        # gamma=0.99 로 학습했다. 그 차이 (1-gamma)*Phi(s') = -0.01*dist 는 스텝마다 붙는
+        # **거리 벌점**이라, 크기는 작아도 "불변"이라는 근거가 성립하지 않았다.
+        # 기본값은 학습기와 같은 정본(config/rtauto_config.py)에서 읽는다 — 숫자를 두 번째
+        # 파일에 타이핑하지 않는다(원칙 1). 학습기 할인율을 바꾸면 여기도 따라 바뀐다.
+        self.shaping_gamma = float(c.get("shaping_gamma", cfg.SUPERDEX_PPO_GAMMA))
+
         # 낙하 판정 여유. palm 모드의 기존 상수 0.25 m 를 이름만 붙인 것이다.
         # workspace 모드에서는 물체가 처음부터 멀리 있으므로 **스폰 거리 기준 상대값**으로
         # 쓴다 — 그렇지 않으면 리셋 직후 dist > 0.25 로 즉시 낙하 판정이 나 버린다.
@@ -835,22 +844,31 @@ class Dg5fGraspEnv(gym.Env):
         reward += (-self.action_rate_penalty * rate
                    + self.force_penalty * r_force)
 
-        # 접근 shaping (potential-based). Phi = -dist, gamma=1 로 두면 F = -(d' - d) 로
-        # **거리를 줄인 만큼만** 보상한다. 합이 telescoping 이라 에피소드 전체 리턴에
-        # 주는 영향이 Phi(끝) - Phi(시작) 뿐이고, 최적 정책이 바뀌지 않는다(Ng et al. 1999).
-        # palm 모드는 가중치 0 이 기본이라 기존 실측 조건이 그대로 보존된다.
-        if self.approach_shaping:
-            reward += self.approach_shaping * (self._prev_dist - dist)
-        self._prev_dist = dist
-
         # 낙하 판정. palm 모드는 기존 상수(0.25 m)와 동일하다.
         # workspace 모드는 물체가 처음부터 멀리 있으므로 **스폰 거리 기준 상대값**이어야
         # 한다 — 절대 0.25 를 쓰면 리셋 직후 즉시 낙하로 종료돼 학습이 시작조차 못 한다.
+        # ⚠️ shaping 보다 **먼저** 계산한다 — 종료 여부를 알아야 종료 상태의 퍼텐셜을 0 으로
+        # 둘 수 있다(아래). 계산 자체는 순서를 옮겨도 값이 달라지지 않는다.
         drop_at = self.drop_margin
         if self.spawn_mode == SPAWN_MODE_WORKSPACE:
             drop_at = max(drop_at, self._spawn_dist + self.drop_margin)
         dropped = gravity_on and dist > drop_at
         terminated = bool(dropped)
+
+        # 접근 shaping (potential-based, Ng et al. 1999). Phi = -dist,
+        # F = gamma*Phi(s') - Phi(s) 이며 **gamma 는 학습기 할인율과 같다**(__init__ 주석).
+        # 이 형태라야 할인 리턴에 주는 영향이 -Phi(s0) 하나로 닫혀 최적 정책이 보존된다.
+        #
+        # ⚠️ **종료(흡수) 상태의 퍼텐셜은 0 이다.** 낙하로 끝나는 스텝에서 Phi(s')=-dist 를
+        # 그대로 쓰면 정리의 전제가 깨진다 — 그 에피소드의 shaping 합이 telescoping 으로
+        # 닫히지 않고 잔차가 남아, 멀리서 떨어뜨리는 쪽에 유리한 편향이 생긴다.
+        # 시간 초과(truncated)는 흡수 상태가 아니라 관측 창의 끝이므로 0 으로 두지 않는다.
+        # palm 모드는 가중치 0 이 기본이라 기존 실측 조건이 그대로 보존된다.
+        if self.approach_shaping:
+            phi_next = 0.0 if terminated else -dist
+            reward += self.approach_shaping * (self.shaping_gamma * phi_next + self._prev_dist)
+        self._prev_dist = dist
+
         if dropped:
             reward -= 5.0
         truncated = self._steps >= self.max_steps
