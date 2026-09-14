@@ -72,6 +72,8 @@ BLOCK_PREFAB = "prefabs/box_and_blocks/block_red.mochi_prefab"       # 2.5cm / 1
 DUCK_LAMP_PREFAB = "prefabs/duck_lamp/duck_lamp_recumbent.mochi_prefab"  # 11.9x11.0x7.5cm / 545g
 SPAWN_MODE_PALM = "palm"
 SPAWN_MODE_WORKSPACE = "workspace"
+OBJECT_REF_ROOT = "root"
+OBJECT_REF_COM = "com"
 
 CONTROL_MODE_ARM_HAND26 = "arm_hand26"
 CONTROL_MODE_HAND20 = "hand20"
@@ -202,11 +204,36 @@ class Dg5fGraspEnv(gym.Env):
         #   block_red 2.5cm : 성공 궤적이 존재하는 시드 1/10, 시드별 최선 tips_best 중앙 2
         #   duck_lamp        : 성공 궤적이 존재하는 시드 7/10, 최선 고정 궤적 6/10,
         #                      시드별 최선 tips_best 중앙 4 / max 5
-        # 2.5cm 블록은 사람 크기 손에 너무 작아 **3지 접촉이 기하적으로 성립하지 않는다**
-        # (지문이 1~2개만 닿는다). 큰 물체가 (1) 달성 가능한 상한을 올리고, (2) 실제
-        # 목표인 FOUP에 더 충실하며, (3) 비볼록 접촉 — Unity 대비 SuperDex를 택한 근거
-        # 자체 — 를 시험한다.
+        # 2.5cm 블록은 지문이 1~2개만 닿아 3지 접촉을 만들기 어렵다. 큰 물체가
+        # (1) 달성 가능한 상한을 올리고, (2) 비볼록 접촉 — Unity 대비 SuperDex를 택한
+        # 근거 자체 — 를 시험한다.
+        # ⚠️ 2026-09-14 정정: 위 1/10 은 배치를 x=0.03 **하나만** 훑은 값이다. 배치 후보를
+        # 0.02/0.03/0.04 로 넓히면 block_red 도 6/10 이 된다(object_oracle_sweep.py).
+        # "기하적으로 불가능"이 아니라 **배치에 극도로 민감하고 성공 상한이 낮다**가 맞다.
+        # 기본 물체를 duck_lamp 으로 두는 판단 자체는 유효하다.
         self.object_prefab = str(c.get("object_prefab", DUCK_LAMP_PREFAB))
+        # 조립 프리팹(shape_box 는 도형 12조각 + 몸체 + 뚜껑이 한 파일)에서 쓸 actor 이름.
+        # 지정하면 그 조각만 남기고 나머지는 씬에서 지운다. None 이면 단일 actor 프리팹이어야
+        # 한다 — 예전에는 여러 개면 조용히 첫 번째를 집고 나머지를 같은 자리에 겹쳐 두었다.
+        self.object_actor = c.get("object_actor")
+
+        # 물체 위치의 기준점. 관찰의 물체 위치, 파지중심 거리(성공·낙하 판정), 스폰 배치가
+        # 전부 이 점을 쓴다.
+        #   "root" (기본) : actor root = **메시 원점**. 게이트 0~4 의 모든 실측이 이 조건이다.
+        #   "com"         : 질량중심. rigid actor 만 된다.
+        # ⚠️ 메시 원점은 asset 마다 제각각이다(실측, root 기준 질량중심 오프셋):
+        #   block_red (1.25, 1.25, 1.25) cm — 모서리 / paper_cup (0, 0, 5.6) cm — 바닥면 /
+        #   shape_box 조각 대부분 (0, 2.0, 0) cm — 한쪽 면
+        # rigid actor 는 recentering 이 꺼져 있어(use_recentering=False) root 가 질량중심으로
+        # 옮겨지지 않는다. 즉 "root" 에서는 물체마다 다른 오프셋이 배치·판정에 섞인다 —
+        # 물체별 상수가 숨어 있는 셈이다. 기본값을 바꾸면 기존 실측과 비교할 수 없게 되므로
+        # 기본은 그대로 두고 opt-in 으로 연다.
+        self.object_ref = str(c.get("object_ref", OBJECT_REF_ROOT))
+        if self.object_ref not in (OBJECT_REF_ROOT, OBJECT_REF_COM):
+            raise ValueError(
+                f"object_ref 는 '{OBJECT_REF_ROOT}' 또는 '{OBJECT_REF_COM}' 이어야 한다 "
+                f"(실제 {self.object_ref!r})"
+            )
 
         # --- 게이트 4 — domain randomization -------------------------------------
         # ⚠️ **기본값은 꺼짐(None)이다.** 게이트 0~3의 모든 실측이 DR 없는 조건에서
@@ -380,8 +407,45 @@ class Dg5fGraspEnv(gym.Env):
         )
         found = []
         self.scene.for_each_actor(lambda a: found.append(a))
-        self.block = next(a for a in found
-                          if a.get_name().startswith("block") and not a.is_static())
+        dynamic = [a for a in found
+                   if a.get_name().startswith("block") and not a.is_static()]
+        # actor 이름은 "block/<프리팹 안의 이름>" 이다(실측).
+        names = [a.get_name().split("/", 1)[-1] for a in dynamic]
+        if self.object_actor is not None:
+            if self.object_actor not in names:
+                raise ValueError(
+                    f"object_actor={self.object_actor!r} 가 {self.object_prefab} 에 없다. "
+                    f"가능한 값: {names}"
+                )
+            self.block = dynamic[names.index(self.object_actor)]
+            for a in dynamic:
+                if a is not self.block:
+                    self.scene.destroy_actor(a)
+        elif len(dynamic) != 1:
+            raise ValueError(
+                f"{self.object_prefab} 에 동적 actor 가 {len(dynamic)}개다 — "
+                f"object_actor 로 하나를 골라라. 가능한 값: {names}"
+            )
+        else:
+            self.block = dynamic[0]
+
+        # 기준점의 root 좌표계 오프셋. "root" 면 None — 기존 코드 경로를 그대로 탄다.
+        self._ref_local = None
+        if self.object_ref == OBJECT_REF_COM:
+            # ⚠️ get_rigid_center_of_mass_local() 은 soft actor(duck_lamp)에서도 값을 돌려준다.
+            # soft 는 recentering 이 켜져 있어 root 의 의미가 다르므로 그 값을 믿으면 안 된다.
+            # rigid 판정은 soft 에서 확실히 실패하는 get_center_of_mass_transform() 으로 한다
+            # (실측: "CRigidBodyInertia const component not found").
+            try:
+                self.block.get_center_of_mass_transform()
+                self._ref_local = np.asarray(
+                    self.block.get_rigid_center_of_mass_local(), dtype=float
+                )
+            except Exception as e:
+                raise ValueError(
+                    f"object_ref='com' 은 rigid actor 만 된다 — {self.object_prefab} 에서 "
+                    f"질량중심을 못 읽었다: {e}"
+                ) from e
         # 접촉점·접촉력은 스텝 전에 쿼리를 등록해야 채워진다 (게이트 0 실측).
         self.block.register_query(physics.QueryType.CONTACT_POINTS)
         self.block.register_query(physics.QueryType.TOTAL_CONTACT_FORCE)
@@ -436,10 +500,11 @@ class Dg5fGraspEnv(gym.Env):
         return np.array([xy[0], xy[1], self._rest_z], dtype=float)
 
     def _measure_rest_height(self, settle_steps=400):
-        """물체가 지면에 안착했을 때 root 의 z. 물체마다 다르므로 **측정**한다.
+        """물체가 지면에 안착했을 때 기준점(`object_ref`)의 z. 물체마다 다르므로 **측정**한다.
 
-        AABB 를 직접 못 읽는다(rigid actor 에 node position 컴포넌트가 없다 — 실측).
-        그래서 로봇에서 충분히 떨어진 곳에 떨어뜨려 정착시킨 뒤 z 를 읽는다.
+        로봇에서 충분히 떨어진 곳에 떨어뜨려 정착시킨 뒤 z 를 읽는다 — 접촉 침투까지
+        반영된 실제 안착 높이다. (`get_aabb_local()` 로 AABB 를 읽을 수는 있지만 그건
+        정착 전 기하라 이 값을 대신하지 못한다.)
         측정이 끝나면 중력·물체 상태를 원래대로 되돌린다.
         """
         saved = self.block.get_root_transform()
@@ -451,11 +516,11 @@ class Dg5fGraspEnv(gym.Env):
         prev_z = None
         for _ in range(settle_steps):
             self.scene.step(self.dt)
-            z = float(self.block.get_root_transform().translation[2])
+            z = float(self._object_position()[2])
             if prev_z is not None and abs(z - prev_z) < 1e-6:
                 break
             prev_z = z
-        rest_z = float(self.block.get_root_transform().translation[2])
+        rest_z = float(self._object_position()[2])
         # 원상복구 — 이 측정이 이후 상태에 남지 않게 한다.
         self.scene.set_gravity([0, 0, 0])
         self.block.set_root_transform(saved)
@@ -523,6 +588,15 @@ class Dg5fGraspEnv(gym.Env):
         pts.append(np.asarray(tf[self.palm_idx].translation, dtype=float))
         return np.mean(pts, axis=0)
 
+    def _object_position(self):
+        """물체 기준점(`object_ref`)의 world 위치. "root" 면 기존과 같은 root translation."""
+        root = self.block.get_root_transform()
+        if self._ref_local is None:
+            return np.asarray(root.translation, dtype=float)
+        local = physics.TransformRT()
+        local.translation = [float(v) for v in self._ref_local]
+        return np.asarray((root * local).translation, dtype=float)
+
     def _world_to_palm(self, tf, world_pos):
         """world 좌표를 손바닥 링크 좌표계로. 슬립(파지 후 물체 변위) 측정에 쓴다."""
         local = physics.TransformRT()
@@ -548,7 +622,7 @@ class Dg5fGraspEnv(gym.Env):
 
         tf = self._link_positions()
         center = self._grasp_center(tf)
-        bt = np.asarray(self.block.get_root_transform().translation, dtype=float)
+        bt = self._object_position()
         bq = np.asarray(self.block.get_root_transform().rotation, dtype=float)
         bv = np.asarray(self.block.get_linear_velocity(), dtype=float)
         bw = np.asarray(self.block.get_angular_velocity(), dtype=float)
@@ -627,8 +701,11 @@ class Dg5fGraspEnv(gym.Env):
         else:
             jitter = self.np_random.uniform(-self.place_jitter, self.place_jitter, size=3)
             spawn = self._palm_to_world(tf, self.place + jitter)
+        # spawn 은 기준점이 놓일 위치다. 리셋 자세의 회전은 identity 이므로 root 는
+        # 기준점 오프셋만큼 빼 준 곳에 둔다("root" 면 오프셋이 없어 기존과 같다).
+        root_pos = spawn if self._ref_local is None else spawn - self._ref_local
         t = physics.TransformRT()
-        t.translation = [float(v) for v in spawn]
+        t.translation = [float(v) for v in root_pos]
         self.block.set_root_transform(t)
         self.block.set_velocity([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
 
