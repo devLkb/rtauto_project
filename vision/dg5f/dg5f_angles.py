@@ -150,66 +150,91 @@ def _bend_mcp(lm, finger):
 
 
 # ─────────────────────── 벌림(옆으로 벌어짐) 계산 방식 ───────────────────────
-# "lateral"(기본, 2026-09-16 신설): 손가락 첫 마디 **단위벡터의 옆 방향 성분**을 arcsin으로
-#   각도로 바꾼다. 굽힘은 '앞↔손바닥' 평면에서 일어나 옆 성분을 거의 바꾸지 않으므로,
-#   굽힘이 벌림에 섞이는 문제가 구조적으로 사라진다.
+# "lateral"(기본, 2026-09-16 신설): 손가락 첫 마디가 **자기 굽힘 평면에서 옆으로 얼마나
+#   벗어났는지**를 잰다. 굽힘은 그 평면 안에서 일어나므로 원리상 섞이지 않는다.
+#   축은 `_bend_mcp`가 굽힘을 뽑을 때 쓰는 것과 **같은 축**을 쓴다(한 관절을 굽힘/벌림
+#   두 성분으로 가르는 같은 기준 — 두 함수가 서로의 짝이 된다).
+#   0도는 옛 방식과 같게 맞춘다: **손 앞방향(중지와 나란함) = 0**.
 # "planar"(옛 방식): 손가락 방향을 손바닥 평면에 눌러 붙인 뒤 중지와의 각도를 잰다.
-#   기하학적으로는 이쪽이 '관절 각도' 정의에 더 가깝지만, 손가락을 굽히면 눌러 붙인 그림자가
-#   짧아져 각도가 노이즈에 폭주한다(수학적으로 나쁜 조건). 실측 근거(2026-09-16):
-#     · 사람 새끼 좌우값 폭 102°(p2 −51.4°~p98 +50.7°) — 로봇 허용 폭 24°의 4배
-#     · 새끼 좌우값 vs 새끼 굽힘 상관 −0.77 (중지는 0.00) = 굽히기만 해도 좌우값이 움직인다
-#     · 보정 기록의 78.5%가 로봇 허용 범위 밖 → 클램프에 눌려 "벌려도 안 움직임"
-#   근거 파일: logs/calib_log_20260911_165841.csv, analyze_abduction.py로 재현 가능.
+#   굽히면 눌러 붙인 그림자가 짧아져 각도가 폭주한다.
 #
-# ⚠️ "lateral"의 알려진 성질: 손가락을 굽힐수록 읽히는 벌림각이 cos(굽힘각)만큼 줄어든다
-#   (쭉 편 상태에서는 정확히 일치). 다 굽히면 0으로 수렴한다 — 옛 방식처럼 폭주하는 대신
-#   **예측 가능하게 작아지는** 쪽을 택한 것이다. 굽힌 채로 벌림을 유지해야 한다는 요구가
-#   생기면 그때 굽힘각으로 보정(나눗셈)을 넣되, 상한을 걸어야 한다(1/cos가 발산하므로).
+# 실측 비교 (2026-09-16, 실제 손 녹화 2개. 재현: analyze_abduction.py):
+#   녹화 ① 손 편 채로 새끼만 벌렸다 오므리기(704프레임) — 여기서 값이 **크게** 움직여야 좋다
+#   녹화 ② 새끼(+약지)만 굽혔다 펴기(608프레임)     — 여기서 값이 **안** 움직여야 좋다
+#     옛 방식            벌림 42.5° / 굽힘 76.7°  → 신호대오염 0.55
+#     굽힘평면 축        벌림 41.0° / 굽힘 43.4°  → 1.13 (아래 굽힘 보정 전)
+#     + 굽힘 보정        벌림 43.4° / 굽힘 26.0°  → **1.67**  ← 채택
 ABDUCTION_METHOD = "lateral"
 
+# 굽힘이 벌림에 남기는 **체계적인** 끌림을 빼는 계수(deg). 축을 바꿔도 남는 성분이 있는데,
+# 이는 잡음이 아니라 손 구조 때문이다 — MCP 관절의 회전축이 손 축과 정확히 직각이 아니라서,
+# 손가락을 굽히면 첫 마디가 실제로 옆으로 따라 눕는다. 굽힘각의 sin에 비례한다:
+#     보정된 벌림 = 잰 벌림 − (계수) × sin(굽힘각)
+# 계수는 녹화 ②에서 최소제곱으로 구했다. 앞 절반으로 구해 뒤 절반에 적용해도 결과가
+# 거의 같아(26.7° vs 25.1°) 한 번의 녹화에 과하게 맞춘 값이 아님을 확인했다.
+#
+# ⚠️ 검지·중지가 0인 이유: 녹화 ②에서 그 두 손가락은 거의 굽히지 않아(굽힘 폭 10° 미만)
+#   계수를 믿을 만하게 잴 수 없었다. 억지로 맞추면 오히려 해롭다(중지는 +48°라는 말도 안
+#   되는 값이 나왔다). 그 손가락들을 크게 굽힌 녹화를 얻으면 같은 방법으로 채우면 된다:
+#     python vision/dg5f/probe_landmarks.py bend   → analyze_abduction.py
+ABD_BEND_SIN_DEG = {
+    "index": 0.0,     # 미측정(위 ⚠️ 참고)
+    "middle": 0.0,    # 미측정
+    "ring": -16.8,    # 녹화 ②에서 굽힘 폭 43.7°로 측정 — 신호대오염 0.47 → 0.64
+    "pinky": -38.3,   # 녹화 ②에서 굽힘 폭 71.1°로 측정 — 신호대오염 0.94 → 1.67
+}
 
-def _hand_lateral_axis(lm):
-    """손의 '옆 방향'(엄지→새끼 쪽) 단위벡터. 못 구하면 None.
+# 랜드마크 번호 → 손가락 이름(위 표를 찾을 때 쓴다). finger[0]이 그 손가락의 MCP 번호다.
+_FINGER_NAME = {INDEX[0]: "index", MIDDLE[0]: "middle", RING[0]: "ring", PINKY[0]: "pinky"}
 
-    부호는 옛 _abduction_planar와 **같게** 맞춰져 있다: 옛 방식은
-    dot(cross(중지방향, 손가락방향), 손바닥법선) > 0 일 때 +였는데, 손가락이
-    cross(손바닥법선, 앞방향) 쪽으로 기울 때가 바로 그 경우다(계산으로 확인).
+
+def _finger_frame(lm, finger):
+    """(옆 방향 축, 손 앞 방향) 단위벡터. 못 구하면 (None, None).
+
+    옆 방향 축은 `_bend_mcp`가 쓰는 것과 **같은 정의**다(손바닥 법선 × 손목→MCP).
+    손 앞 방향은 손목→중지 MCP를 손바닥 평면에 투영한 것 — 0도의 기준이 된다.
     """
     palm_n = np.cross(lm[INDEX[0]] - lm[WRIST], lm[PINKY[0]] - lm[WRIST])
     n = np.linalg.norm(palm_n)
     if n < 1e-9:
-        return None
+        return None, None
     palm_n /= n
-    fwd = lm[MIDDLE[0]] - lm[WRIST]                 # 손목→중지 MCP = 손의 '앞' 방향
-    fwd = fwd - palm_n * np.dot(fwd, palm_n)        # 손바닥 평면 성분만
-    nf = np.linalg.norm(fwd)
-    if nf < 1e-9:
-        return None
-    lat = np.cross(palm_n, fwd / nf)
+    axis = lm[finger[0]] - lm[WRIST]              # 손목→MCP = 이 손가락이 뻗은 방향
+    na = np.linalg.norm(axis)
+    if na < 1e-9:
+        return None, None
+    lat = np.cross(palm_n, axis / na)
     nl = np.linalg.norm(lat)
     if nl < 1e-9:
-        return None
-    return lat / nl
+        return None, None
+    fwd = lm[MIDDLE[0]] - lm[WRIST]
+    fwd = fwd - palm_n * np.dot(fwd, palm_n)
+    nf = np.linalg.norm(fwd)
+    if nf < 1e-9:
+        return None, None
+    return lat / nl, fwd / nf
 
 
-def _lateral_tilt(lm, finger, lat):
-    """손가락 첫 마디(MCP→PIP)가 옆으로 얼마나 기울었는지(rad). 굽힘과 무관."""
-    v = lm[finger[1]] - lm[finger[0]]
-    n = np.linalg.norm(v)
+def _lateral_tilt(vec, lat):
+    """벡터가 옆 방향으로 얼마나 기울었는지(rad). |성분|≤1이라 폭주하지 않는다."""
+    n = np.linalg.norm(vec)
     if n < 1e-9:
         return 0.0
-    return math.asin(float(np.clip(np.dot(v / n, lat), -1.0, 1.0)))
+    return math.asin(float(np.clip(np.dot(vec / n, lat), -1.0, 1.0)))
 
 
 def _abduction_lateral(lm, finger):
-    """벌림각(rad) — 중지 대비. 굽힘이 섞이지 않는다(위 ABDUCTION_METHOD 설명 참고)."""
+    """벌림각(rad). 굽힘이 섞이지 않는다(위 ABDUCTION_METHOD 설명 참고)."""
     lm = np.asarray(lm)
-    lat = _hand_lateral_axis(lm)
+    lat, fwd = _finger_frame(lm, finger)
     if lat is None:
         return 0.0
-    # 중지 값을 빼서 '중지 기준 상대 벌림'이라는 옛 규약을 유지한다
-    # (middle_abd는 자기 자신을 빼므로 정확히 0 — 옛 방식과 동일).
-    return _lateral_tilt(lm, finger, lat) - _lateral_tilt(lm, MIDDLE, lat)
+    # 0도 = 손 앞방향(중지와 나란함). 옛 방식과 같은 기준이라 로봇 쪽 규약이 그대로 맞는다.
+    ang = _lateral_tilt(lm[finger[1]] - lm[finger[0]], lat) - _lateral_tilt(fwd, lat)
+    coeff = ABD_BEND_SIN_DEG.get(_FINGER_NAME.get(finger[0]), 0.0)
+    if coeff:
+        ang -= math.radians(coeff) * math.sin(_bend_mcp(lm, finger))
+    return ang
 
 
 def _abduction(lm, finger):
@@ -462,7 +487,7 @@ def compute_raw(lm):
         _bend(lm, INDEX[0], INDEX[1], INDEX[2]),       # index_pip(6번) 관절의 각도
         DIP_PIP_COUPLING * _bend(lm, INDEX[0], INDEX[1], INDEX[2]),   # index_dip(7번): PIP에서 유도(측정 z 부실). =k×PIP
         # 중지
-        _abduction(lm, MIDDLE),                        # middle_abd — 기준(9→10)과 자기 자신 비교라 항상 ≈0 (중립 유지용)
+        _abduction(lm, MIDDLE),                        # middle_abd — 값은 계산하되 채널이 gated라 0으로 나간다(표 주석 참고)
         _bend_mcp(lm, MIDDLE),                         # middle_mcp(9번) 관절의 각도 (굽힘평면 투영)
         _bend(lm, MIDDLE[0], MIDDLE[1], MIDDLE[2]),    # middle_pip(10번) 관절의 각도
         DIP_PIP_COUPLING * _bend(lm, MIDDLE[0], MIDDLE[1], MIDDLE[2]),  # middle_dip(11번): PIP에서 유도. =k×PIP
@@ -580,7 +605,12 @@ DG5F_CHANNELS = [
     ("index_mcp",   0.05,  1.20,    0.0,  110.0,  False),
     ("index_pip",   0.10,  1.80,    0.0,   85.0,  False),
     ("index_dip",   0.05,  1.20,    0.0,   80.0,  False),
-    ("middle_abd", -0.30,  0.30,  -20.0,   20.0,  False),
+    # middle_abd(3_1): 2026-09-16부터 gated(항상 0). 옛 계산식에서는 "중지 기준 상대 벌림"이라
+    #   중지 자신은 정의상 0이었다. 새 계산식은 손가락마다 자기 축으로 재므로 중지도 값이
+    #   생기는데(실측: 손 편 상태 폭 3.9°, 손 오므릴 때 14.4°), 아무도 요청하지 않은 움직임을
+    #   새로 만들 이유가 없어 예전 결과(0)를 유지한다. 중지 벌림을 살리고 싶으면 True→False만
+    #   바꾸면 된다 — 계산은 이미 나와 있다.
+    ("middle_abd", -0.30,  0.30,  -20.0,   20.0,  True),
     ("middle_mcp",  0.05,  1.20,    0.0,  110.0,  False),
     ("middle_pip",  0.10,  1.80,    0.0,   85.0,  False),
     ("middle_dip",  0.05,  1.20,    0.0,   80.0,  False),
@@ -593,9 +623,16 @@ DG5F_CHANNELS = [
     #   굽힘만 해도 로봇 5_1이 40° 스윙 + 정지 노이즈 14°도 증폭. SNR 나빠 유지가치 낮음.
     #   컵핑을 조금 살리려면 gated False + dg (50,0)→(12,0)으로 '아주 적게 제한'이 대안(주석 참고).
     ("pinky_cmc",   0.09,  0.21,   50.0,    0.0,  True),
-    # pinky_lat(5_2): 2026-07-20 게이트 해제(True→False) — 사용자 요청("옆으로 벌림이 안 됨").
-    #   새끼 굽힘이 이 값에 섞이는 crosstalk(~50%)는 감수. 0 중심 매핑이라 crosstalk 영향은 ±12°로 제한.
-    ("pinky_lat",  -0.30,  0.30,  -12.0,   12.0,  False),
+    # pinky_lat(5_2): 2026-09-16 ±12° → (-15, 50)으로 확대. **"벌려도 안 움직인다"의 직접 원인**이
+    #   이 ±12°였다 — 사람 새끼의 좌우 폭이 그보다 훨씬 커서 보정 기록의 78.5%가 잘려 나갔고,
+    #   라이브 기록에서는 34%가 정확히 +12.0°에 붙어 있었다(중앙값 +10.3°). 손을 가만히 둬도
+    #   이미 한계값이라 더 벌려도 로봇이 반응할 수 없었다.
+    #   ±12°로 좁혀 뒀던 이유(2026-07-20)는 굽힘이 이 값에 섞여 들어와서였는데, 그 원인을
+    #   계산식 쪽에서 고쳤다(ABDUCTION_METHOD="lateral" + 굽힘 보정 — 실측 오염 76.7°→26.0°,
+    #   굽힘 상관 -0.94→+0.04). 그래서 이제 넓혀도 손가락이 엉뚱하게 흔들리지 않는다.
+    #   상한 50°: 실측 사람 벌림 p98이 +48.8°(2026-09-16 녹화). 기구 한계는 +90°라 여유가 있다.
+    #   하한 -15°: 기구 한계 그대로(실물 Motor 18 = -15°~+90°, DG5F_JOINT_RANGES.md §2).
+    ("pinky_lat",  -0.30,  0.30,  -15.0,   50.0,  False),
     ("pinky_mcp",   0.05,  1.20,    0.0,   85.0,  False),
     ("pinky_pip",   0.10,  1.80,    0.0,   80.0,  False),
 ]

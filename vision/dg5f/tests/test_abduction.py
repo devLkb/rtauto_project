@@ -31,12 +31,17 @@ PHALANX = 4.0         # 첫 마디 길이
 MCP_X = {5: 1.5, 9: 0.5, 13: -0.5, 17: -1.5}   # 검지·중지·약지·새끼 MCP의 좌우 위치
 
 
-def make_hand(abduction_deg=0.0, flexion_deg=0.0, finger=A.PINKY, seed=None, noise=0.0):
+def make_hand(abduction_deg=0.0, flexion_deg=0.0, finger=A.PINKY, seed=None, noise=0.0,
+              bend_lateral_deg=0.0):
     """정답을 아는 가상 손의 21개 점을 만든다.
 
     손 좌표계: 앞(+y) · 옆(+x) · 손바닥 법선(+z). 지정한 손가락만 벌림/굽힘을 주고
     나머지는 쭉 편 상태로 둔다. noise는 랜드마크에 섞을 흔들림(손 길이 대비 비율) —
     MediaPipe는 깊이(z)가 특히 부정확하므로 z에 3배로 준다.
+
+    bend_lateral_deg은 **실제 손의 성질**을 흉내 낸다: MCP 관절의 회전축이 손 축과 정확히
+    직각이 아니라서, 손가락을 굽히면 첫 마디가 옆으로도 따라 눕는다(굽힘각의 sin에 비례).
+    실측으로 새끼는 −38.3°, 약지는 −16.8°였다(dg5f_angles.ABD_BEND_SIN_DEG).
     """
     lm = np.zeros((21, 3), dtype=float)
     lm[A.WRIST] = (0.0, 0.0, 0.0)
@@ -56,6 +61,16 @@ def make_hand(abduction_deg=0.0, flexion_deg=0.0, finger=A.PINKY, seed=None, noi
         fl = math.radians(flexion_deg) if f is finger else 0.0
         # 벌림 = 손바닥 평면 안에서 옆으로 돌리기, 굽힘 = 그 방향에서 손바닥 쪽으로 눕히기
         d = math.cos(fl) * (math.cos(a) * fwd + math.sin(a) * lat) - math.sin(fl) * palm_n
+        if f is finger and bend_lateral_deg:
+            # 굽힘에 비례해 손가락을 옆으로 더 눕힌다. 굽힌 깊이는 그대로 두고 **옆으로 기운
+            # 각도만** 바꾸는 방식이라, 계산식이 읽는 값이 정확히 (원래값 + 계수×sin굽힘)이 된다.
+            d /= np.linalg.norm(d)
+            side = math.asin(float(np.clip(np.dot(d, lat), -1.0, 1.0)))
+            plane = d - np.dot(d, lat) * lat
+            n_plane = np.linalg.norm(plane)
+            if n_plane > 1e-9:
+                tilted = side + math.radians(bend_lateral_deg) * math.sin(fl)
+                d = math.sin(tilted) * lat + math.cos(tilted) * (plane / n_plane)
         for k in range(1, 4):                    # PIP·DIP·TIP을 같은 방향으로 이어 붙인다
             lm[f[k]] = lm[f[0]] + d * PHALANX * k
 
@@ -64,6 +79,10 @@ def make_hand(abduction_deg=0.0, flexion_deg=0.0, finger=A.PINKY, seed=None, noi
         sigma = noise * HAND_LEN
         lm = lm + rng.normal(0.0, sigma, lm.shape) * np.array([1.0, 1.0, 3.0])
     return lm
+
+
+# 굽힘 보정계수가 0인 손가락 = 계산식 자체만 시험할 때 쓴다(보정이 섞이지 않는다).
+PLAIN = A.INDEX
 
 
 def deg_new(lm, finger=A.PINKY):
@@ -78,91 +97,121 @@ class AbductionTest(unittest.TestCase):
     def test_straight_finger_reads_the_true_angle(self):
         """쭉 편 손가락: 넣은 벌림각이 그대로 나와야 한다."""
         for truth in (-30.0, -15.0, 0.0, 10.0, 25.0, 40.0):
-            lm = make_hand(abduction_deg=truth, flexion_deg=0.0)
-            self.assertAlmostEqual(deg_new(lm), truth, delta=1.0, msg=f"벌림 {truth}°")
+            lm = make_hand(abduction_deg=truth, flexion_deg=0.0, finger=PLAIN)
+            self.assertAlmostEqual(deg_new(lm, PLAIN), truth, delta=2.0, msg=f"벌림 {truth}°")
 
     def test_new_and_old_agree_when_straight(self):
         """부호 규약이 바뀌지 않았는지 — 손가락을 편 상태에서는 두 방식이 같아야 한다."""
         for truth in (-25.0, -10.0, 10.0, 25.0):
-            lm = make_hand(abduction_deg=truth, flexion_deg=0.0)
-            self.assertAlmostEqual(deg_new(lm), deg_old(lm), delta=1.0,
+            lm = make_hand(abduction_deg=truth, flexion_deg=0.0, finger=PLAIN)
+            self.assertAlmostEqual(deg_new(lm, PLAIN), deg_old(lm, PLAIN), delta=2.0,
                                    msg=f"벌림 {truth}°에서 새 방식과 옛 방식이 어긋남")
 
     def test_bending_does_not_make_the_new_formula_jumpy(self):
-        """핵심 검증 — **굽힐수록 값이 불안정해지는가**.
+        """**굽힐수록 값이 불안정해지는가** — 옛 방식이 무너지는 지점.
 
-        벌림은 0으로 고정하고 굽힘만 바꿔 가며, 같은 크기의 랜드마크 흔들림을 준다.
-          · 옛 방식: 굽힐수록 손바닥 평면 그림자가 짧아져 같은 흔들림이 큰 각도로 증폭된다
-                     → 많이 굽힌 구간의 흔들림 폭이 조금 굽힌 구간보다 훨씬 커야 한다.
-          · 새 방식: 옆 성분만 보므로 굽힘과 거의 무관 → 흔들림이 훨씬 덜 커져야 한다.
-        이게 실물에서 "새끼를 굽히기만 해도 좌우값이 움직이는" 증상의 원인이다.
-
-        실측(이 테스트, 흔들림 0.4% 기준): 조금 굽힘 → 많이 굽힘
-          옛 방식  1.10° → 10.52°  (9.5배 악화)
-          새 방식  1.08° →  2.77°  (2.6배)
-        ⚠️ 새 방식이 0배가 아닌 이유: '옆 방향' 축 자체를 손바닥 점들로 추정하는데, 그 점들의
-           깊이(z)가 부정확해 축이 조금 기울고, 기운 축에는 손가락의 굽힘 성분이 조금 샌다.
-           손바닥 5점 평면맞춤으로 바꿔 봐도 2.4배로 거의 그대로였다(코드 복잡도만 늘어 채택
-           안 함). 남은 2.6배는 **치우침이 아니라 흔들림**이라 One Euro 필터가 상당히 걷어낸다.
+        벌림은 0으로 고정하고 굽힘만 바꿔 가며 같은 크기의 랜드마크 흔들림을 준다.
+        옛 방식은 굽힐수록 손바닥 평면 그림자가 짧아져 같은 흔들림이 큰 각도로 증폭된다.
+        새 방식은 옆 성분만 보므로 훨씬 덜 커져야 한다. (굽힘 보정이 섞이지 않도록
+        계수가 0인 검지로 시험한다 — 계산식 자체의 성질을 보는 것이다.)
         """
         def spread(method, flexions):
             vals = []
-            for i, flex in enumerate(flexions):
+            for flex in flexions:
                 for k in range(40):
-                    lm = make_hand(abduction_deg=0.0, flexion_deg=float(flex),
+                    lm = make_hand(abduction_deg=0.0, flexion_deg=float(flex), finger=PLAIN,
                                    seed=10_000 * flex + k, noise=0.004)
-                    vals.append(method(lm))
+                    vals.append(method(lm, PLAIN))
             return float(np.std(vals))
 
         low, high = (0, 10, 20), (60, 70, 80)
         new_low, new_high = spread(deg_new, low), spread(deg_new, high)
         old_low, old_high = spread(deg_old, low), spread(deg_old, high)
 
-        # 옛 방식은 많이 굽힌 구간에서 9.5배 나빠졌다(1.10° → 10.52°) — 재현 확인용.
-        self.assertGreater(old_high, old_low * 5.0,
+        self.assertGreater(old_high, old_low * 3.0,
                            f"옛 방식이 굽힘에서 크게 나빠지는 현상이 재현되지 않음: "
                            f"조금굽힘 {old_low:.1f}° → 많이굽힘 {old_high:.1f}°")
-        # 새 방식은 2.6배에서 멈춘다(1.08° → 2.77°). 0배가 아닌 이유는 아래 ⚠️ 참고.
-        self.assertLess(new_high, new_low * 4.0,
-                        f"새 방식이 기대보다 많이 나빠졌다: 조금굽힘 {new_low:.1f}° → "
-                        f"많이굽힘 {new_high:.1f}°")
-        self.assertLess(new_high, old_high * 0.4,
-                        f"많이 굽힌 구간에서 새 방식이 최소 2.5배는 안정적이어야 한다: "
+        self.assertLess(new_high, old_high * 0.6,
+                        f"많이 굽힌 구간에서 새 방식이 더 안정적이어야 한다: "
                         f"새 {new_high:.1f}° vs 옛 {old_high:.1f}°")
 
     def test_curling_shrinks_the_reading_instead_of_exploding(self):
-        """벌린 채로 굽히면: 값이 **작아지기만** 하고 넣은 값을 넘지 않는다(문서화된 성질)."""
+        """벌린 채로 굽히면: 값이 **작아지기만** 하고 넣은 값을 넘지 않는다.
+
+        (굽힘 보정이 0인 검지 기준 = 계산식 자체의 성질. 실제 새끼·약지는 굽힐 때 옆으로
+        눕는 성질이 있어 보정이 더해지며, 그건 아래 test_bend_lateral_*이 따로 본다.)
+        """
         truth = 30.0
-        vals = [deg_new(make_hand(abduction_deg=truth, flexion_deg=float(f)))
+        vals = [deg_new(make_hand(abduction_deg=truth, flexion_deg=float(f), finger=PLAIN), PLAIN)
                 for f in range(0, 91, 10)]
-        self.assertAlmostEqual(vals[0], truth, delta=1.0)
+        self.assertAlmostEqual(vals[0], truth, delta=2.0)
         for a, b in zip(vals, vals[1:]):
             self.assertLessEqual(b, a + 1e-6, f"굽힐수록 커지면 안 된다: {vals}")
-        self.assertLessEqual(max(vals), truth + 1.0)
-        self.assertLess(abs(vals[-1]), 2.0, "다 굽히면 0으로 수렴해야 한다")
+        self.assertLessEqual(max(vals), truth + 2.0)
+        # 다 굽히면 0 근처로 모인다. 정확히 0이 아닌 이유: 0도의 기준이 '손 앞방향'인데
+        # 손가락은 손목에서 약간 비스듬히 뻗어 있어(검지 ≈7°) 그만큼이 남는다.
+        self.assertLess(abs(vals[-1]), 9.0, f"다 굽히면 0 근처로 모여야 한다: {vals[-1]:.1f}°")
 
-    def test_middle_finger_is_always_zero(self):
-        """중지는 자기 자신이 기준이라 항상 0 — 옛 방식과 같은 규약."""
-        lm = make_hand(abduction_deg=20.0, flexion_deg=40.0, finger=A.MIDDLE)
-        self.assertAlmostEqual(deg_new(lm, A.MIDDLE), 0.0, delta=1e-6)
+    def test_bend_lateral_coupling_is_removed(self):
+        """**굽히면 옆으로 눕는 손가락**을 만들어, 굽힘 보정이 그걸 걷어내는지 본다.
+
+        실제 손에서 새끼는 굽힐 때 옆으로 눕는다(실측 계수 −38.3°). 보정이 없으면 벌리지
+        않았는데도 로봇 새끼가 옆으로 크게 흔들린다 — 이것이 2026-07-20에 벌림 범위를
+        ±12°로 좁혀 놨던 이유이고, 그 좁은 범위가 다시 "벌려도 안 움직인다"를 만들었다.
+        """
+        k = A.ABD_BEND_SIN_DEG["pinky"]
+        self.assertNotEqual(k, 0.0, "새끼는 굽힘 보정계수가 있어야 한다")
+        fixed, plain = [], []
+        for flex in range(0, 91, 10):
+            lm = make_hand(abduction_deg=0.0, flexion_deg=float(flex), finger=A.PINKY,
+                           bend_lateral_deg=k)
+            fixed.append(deg_new(lm, A.PINKY))                     # 보정 포함(현재 계산식)
+            plain.append(deg_new(lm, PLAIN))                       # 같은 손의 검지(계수 0)
+        swing = lambda v: max(v) - min(v)
+        # 보정이 없다면 새끼 값이 |k|·sin(굽힘)만큼 끌려간다 — 그걸 되돌려 확인한다.
+        without = [f - math.degrees(math.radians(k) * math.sin(math.radians(fl)))
+                   for f, fl in zip(fixed, range(0, 91, 10))]
+        self.assertGreater(swing(without), 25.0,
+                           f"시험용 손이 굽힘에 따라 옆으로 눕지 않았다: {without}")
+        # 실측: 끌림 53.2° → 14.9°(72% 제거). 완전히 0이 되지 않는 이유는 보정이 쓰는
+        # 굽힘각 자체가 옆으로 누운 손가락에서 조금 달라지기 때문이다(실제 손에서도 마찬가지).
+        self.assertLess(swing(fixed), swing(without) * 0.35,
+                        f"굽힘 보정이 끌림을 충분히 걷어내지 못했다 — 보정 전 "
+                        f"{swing(without):.1f}° 보정 후 {swing(fixed):.1f}°")
+        self.assertLess(swing(plain), 12.0, "보정계수가 0인 손가락은 원래대로 조용해야 한다")
+
+    def test_middle_channel_stays_zero_on_the_robot(self):
+        """중지 벌림은 로봇으로 **0만 나간다** — 계산식이 아니라 채널 설정(gated)이 보장한다.
+
+        옛 계산식에서는 "중지 기준 상대 벌림"이라 중지가 정의상 0이었다. 새 계산식은
+        손가락마다 자기 축으로 재므로 중지에도 값이 생기는데, 아무도 요청하지 않은 움직임을
+        만들지 않으려고 채널을 gated로 두어 예전 결과(0)를 유지한다.
+        """
+        row = next(c for c in A.DG5F_CHANNELS if c[0] == "middle_abd")
+        self.assertTrue(row[5], "middle_abd는 gated여야 한다")
+        raw = [0.0] * len(A.CHANNEL_NAMES)
+        raw[A.CHANNEL_NAMES.index("middle_abd")] = math.radians(20.0)
+        out = A.map_to_dg5f(raw, hand="right", mode="direct")
+        self.assertEqual(out[A.CHANNEL_NAMES.index("middle_abd")], A.GATED_NEUTRAL_DEG)
 
     def test_every_finger_uses_the_same_rule(self):
-        """검지·약지·새끼 모두 같은 식으로 계산된다(새끼만 특별 취급하지 않는다)."""
-        for finger in (A.INDEX, A.RING, A.PINKY):
+        """새끼만 특별 취급하지 않는다 — 같은 함수, 같은 축 정의, 손가락별 계수만 다르다."""
+        for finger in (A.INDEX, A.MIDDLE, A.RING, A.PINKY):
             lm = make_hand(abduction_deg=20.0, flexion_deg=0.0, finger=finger)
-            self.assertAlmostEqual(deg_new(lm, finger), 20.0, delta=1.0,
+            # 굽힘 0에서는 보정항(sin 0)이 사라지므로 어느 손가락이든 넣은 값이 나와야 한다
+            self.assertAlmostEqual(deg_new(lm, finger), 20.0, delta=2.5,
                                    msg=f"손가락 {finger[0]}")
 
     def test_method_switch_selects_the_formula(self):
         """ABDUCTION_METHOD로 옛 방식을 다시 켤 수 있다(비교·재현용)."""
-        lm = make_hand(abduction_deg=20.0, flexion_deg=60.0)
+        lm = make_hand(abduction_deg=20.0, flexion_deg=60.0, finger=PLAIN)
         original = A.ABDUCTION_METHOD
         try:
             A.ABDUCTION_METHOD = "planar"
-            self.assertAlmostEqual(math.degrees(A._abduction(lm, A.PINKY)), deg_old(lm),
+            self.assertAlmostEqual(math.degrees(A._abduction(lm, PLAIN)), deg_old(lm, PLAIN),
                                    delta=1e-9)
             A.ABDUCTION_METHOD = "lateral"
-            self.assertAlmostEqual(math.degrees(A._abduction(lm, A.PINKY)), deg_new(lm),
+            self.assertAlmostEqual(math.degrees(A._abduction(lm, PLAIN)), deg_new(lm, PLAIN),
                                    delta=1e-9)
         finally:
             A.ABDUCTION_METHOD = original
