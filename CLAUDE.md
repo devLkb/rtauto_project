@@ -248,6 +248,47 @@ ROS2 통합: Unity <-> ROS-TCP-Connector/Endpoint (Unity-Robotics-Hub) <-> ROS2(
 - 이 분야를 모르는 사람이 읽고 **무엇을 결정해야 하는지** 알 수 있는가?
 - 설명 없이 쓴 전문용어나 영어 약어가 남아 있는가?
 
+## 원칙 5 — 세션끼리 `claudeDocs/`로 인수인계한다
+
+이 프로젝트는 한 사람이 혼자 맡고 있고 **작업 중 대화가 비정상적으로 끊기는 일이 잦다.**
+그때마다 사용자가 새 대화에 상황을 처음부터 설명하게 두지 않는다. 그 설명을 파일로
+대신하는 곳이 [`claudeDocs/`](claudeDocs/)다. 규칙의 정본은
+[`claudeDocs/README.md`](claudeDocs/README.md)이며, 아래는 그 요약이다.
+
+| 파일 | 역할 |
+|---|---|
+| [`claudeDocs/BACKLOG.md`](claudeDocs/BACKLOG.md) | 앞으로 구현해야 하는 것 — **파일 하나로 유지**. 상태와 "끝났다고 볼 조건"을 여기서 관리한다 |
+| `claudeDocs/daily/YYYY-MM-DD.md` | 날짜별 작업 기록 — 한 파일에 다 쌓으면 사람도 AI도 못 읽으므로 하루 단위로 나눈다 |
+
+### 세션 시작 — 읽는 순서
+
+1. `claudeDocs/README.md`
+2. `claudeDocs/BACKLOG.md`
+3. `claudeDocs/daily/` 의 **가장 최근 파일 1~2개** (`ls claudeDocs/daily/ | sort | tail -3`)
+4. `git status --short --branch` 와 `git log --oneline -5` 로 대조 — **문서와 리포가 다르면
+   리포가 사실이고, 문서 쪽을 고친다.**
+
+### 세션 중 — 끝날 때 몰아 쓰지 않는다
+
+대화가 언제 끊길지 모른다. **파일을 고쳤을 때 / 실험 결과가 나왔을 때 / 사용자가 결정했을 때 /
+막혔을 때**, 그 자리에서 오늘 날짜 문서에 적는다. 몰아 쓰려다 끊기면 기록이 통째로 사라진다.
+
+### 세션 끝 — 반드시 채울 것
+
+- 오늘 문서의 **"다음에 할 일"**. 비어 있으면 인수인계가 아니다.
+- 끝난 항목이 있으면 `BACKLOG.md`의 상태를 바꾸고 날짜 문서를 링크한다.
+- 커밋했으면 커밋 해시를 오늘 문서에 적는다.
+
+### 지켜야 할 경계
+
+- **`claudeDocs/`는 정본이 아니다.** 아키텍처·계약·실측값의 정본은 계속 `docs/`다.
+  여기에는 "오늘 뭘 했고 다음에 뭘 할지"만 쓰고 근거는 정본 문서를 링크한다 — 수치를
+  복사해 두면 정본이 둘이 되어 곧 서로 어긋난다.
+- **직접 돌려서 확인한 것만 "확인함"이라고 쓴다.** 코드를 읽기만 했으면 "코드만 읽음,
+  실행 안 함"이라고 적는다. 틀린 인수인계는 인수인계가 없는 것보다 나쁘다.
+- 날짜는 `2026-09-16`처럼 전부 적는다. "어제", "지난주"는 나중에 읽으면 뜻을 잃는다.
+- 서브에이전트에게 작업을 시킬 때도 이 원칙을 프롬프트에 함께 넘긴다.
+
 ## 리포 구조
 
 | 경로 | 내용 |
@@ -261,13 +302,16 @@ ROS2 통합: Unity <-> ROS-TCP-Connector/Endpoint (Unity-Robotics-Hub) <-> ROS2(
 | `training/` | ML-Agents 학습 설정·스크립트·평가 도구 (**Unity RL — 파지 RL은 `superdex/`로 이관됨**) |
 | `config/rtauto_config.py` | 경로/IP/포트/하드웨어 구성의 유일한 정본 |
 | `docs/` | 로드맵, 정책 계약, 작업 이력 — `SIM2REAL_ROADMAP.md`가 최상위 정본 |
+| `claudeDocs/` | **AI 세션끼리의 인수인계** — `BACKLOG.md`(구현할 것) + `daily/`(날짜별 작업 기록). 원칙 5 |
 
 ## 우선 참고 문서
 
-1. [`docs/SIM2REAL_ROADMAP.md`](docs/SIM2REAL_ROADMAP.md) — 아키텍처 확정 사항, Phase별 계획, 리스크. **가장 먼저 확인.**
-2. [`README.md`](README.md) — 환경 셋업, 텔레옵 실행법 (하드웨어 전환 반영해 최신화 필요할 수 있음 — 착수 전 UR16e/오른손 기준으로 맞는지 확인)
-3. [`docs/SUPERDEX_POC_PLAN.md`](docs/SUPERDEX_POC_PLAN.md) — **파지 RL의 정본.** §0에 판정·증거·재현 명령·함정이 모두 있다
-4. [`docs/RL_POLICY_REDESIGN.md`](docs/RL_POLICY_REDESIGN.md) — **관찰·행동·보상 계약의 정본.** §0-2가 목적(범용 파지)의 작업 범위 정의
-5. [`docs/GRASP_POINT_ARCHITECTURE.md`](docs/GRASP_POINT_ARCHITECTURE.md) — 파지점 자율 결정 아키텍처 조사·권고 (**2026-09-10 채택 승인됨** — 계약은 `RL_POLICY_REDESIGN.md` v6 에 반영)
-6. [`training/README.md`](training/README.md) — Unity ML-Agents 학습·평가 명령
-7. [`config/rtauto_config.py`](config/rtauto_config.py) — 모든 IP/포트/경로 설정의 출처
+1. [`claudeDocs/`](claudeDocs/) — **직전 세션이 어디까지 했는지. 새 대화는 여기부터.**
+   `README.md` → `BACKLOG.md` → `daily/` 최신 파일 순서(원칙 5).
+2. [`docs/SIM2REAL_ROADMAP.md`](docs/SIM2REAL_ROADMAP.md) — 아키텍처 확정 사항, Phase별 계획, 리스크. **최상위 정본 — 기술적인 것은 여기부터.**
+3. [`README.md`](README.md) — 환경 셋업, 텔레옵 실행법 (하드웨어 전환 반영해 최신화 필요할 수 있음 — 착수 전 UR16e/오른손 기준으로 맞는지 확인)
+4. [`docs/SUPERDEX_POC_PLAN.md`](docs/SUPERDEX_POC_PLAN.md) — **파지 RL의 정본.** §0에 판정·증거·재현 명령·함정이 모두 있다
+5. [`docs/RL_POLICY_REDESIGN.md`](docs/RL_POLICY_REDESIGN.md) — **관찰·행동·보상 계약의 정본.** §0-2가 목적(범용 파지)의 작업 범위 정의
+6. [`docs/GRASP_POINT_ARCHITECTURE.md`](docs/GRASP_POINT_ARCHITECTURE.md) — 파지점 자율 결정 아키텍처 조사·권고 (**2026-09-10 채택 승인됨** — 계약은 `RL_POLICY_REDESIGN.md` v6 에 반영)
+7. [`training/README.md`](training/README.md) — Unity ML-Agents 학습·평가 명령
+8. [`config/rtauto_config.py`](config/rtauto_config.py) — 모든 IP/포트/경로 설정의 출처
