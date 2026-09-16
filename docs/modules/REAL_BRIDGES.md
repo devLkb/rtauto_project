@@ -219,9 +219,14 @@ python vision/dg5f/dg5f_sdk_bridge.py [--ip [주소]] [--port 502] [--model 5f_r
 
 **관절 대응 상수 3종**(2026-08-31 실물 실측으로 확정): `JOINT_ORDER = list(range(20))`(항등),
 `JOINT_SIGN = [1.0]*20`, `JOINT_OFFSET_DEG = [0.0]*20`. 즉 순서·부호·오프셋 변환이 없다.
-실물로 나가는 값을 실제로 제한하는 것은 **`JOINT_CLAMP_RIGHT`** — 채널별 실측 가동범위다.
-`dg5f_angles.URDF_LIMITS_DEG`(Unity 쪽 clamp)와 값이 다른 채널이 있다
-(예: `middle_abd` 설명서 ±30 vs URDF ±25). **실물 clamp가 더 보수적이라는 보장은 없으니 둘 다 본다.**
+실물로 나가는 값을 실제로 자르는 것은 **`JOINT_CLAMP_RIGHT`** — 채널마다 실제로 움직일 수 있는
+범위다.
+
+> ✅ **2026-09-16 정리.** 예전에는 이 표가 `dg5f_angles.URDF_LIMITS_DEG`(화면 쪽 한계)와 한 채널
+> (`middle_abd`)에서 달랐다. 제조사가 준 **설명서(±30°)와 URDF(±25°)가 서로 달랐기** 때문이다.
+> 실측할 방법이 없는 동안에는 **좁은 쪽(±25°)** 을 쓰기로 하고 맞췄다 — 지금은 **관절 20개가
+> 오른손 URDF 와 전부 일치한다.** 좌우 뒤집히는 6개 채널의 부호 차이는 규약대로다.
+> 근거와 되돌리는 조건은 [`DG5F_JOINT_RANGES.md`](DG5F_JOINT_RANGES.md) §5.
 
 **SDK 호출 순서**(`Dg5fSdk.connect()`):
 `SetGripperSystem` → `ConnectToGripper` → `SetGripperOption` → `SystemStart`,

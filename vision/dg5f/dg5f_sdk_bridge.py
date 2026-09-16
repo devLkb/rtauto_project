@@ -116,7 +116,14 @@ JOINT_CLAMP_RIGHT = [
     (  0.0, 115.0),   #  5 index_mcp   Motor 6
     (-90.0,  90.0),   #  6 index_pip   Motor 7
     (-90.0,  90.0),   #  7 index_dip   Motor 8
-    (-30.0,  30.0),   #  8 middle_abd  Motor 9   (dg5f_angles.URDF_LIMITS_DEG는 ±25 — 설명서가 더 넓다)
+    # middle_abd: 제조사가 준 두 자료가 서로 다르다 — 하드웨어 설명서 §3.3.1 은 ±30 인데
+    # 제조사 URDF 는 **좌우 양손 모두** ±25(=0.4363323 rad)다. 실측할 방법이 없는 동안에는
+    # 좁은 쪽을 쓴다: 클램프는 안전 한계라 좁은 것은 위험하지 않고, 넓으면 하드 스톱에
+    # 밀어붙일 수 있다(같은 이유로 위 thumb_opp 도 설명서보다 좁게 잡았다).
+    # 이 값을 ±25 로 맞추면 JOINT_CLAMP_RIGHT 20채널이 오른손 URDF 와 전부 일치한다.
+    # 실물로 ±30 이 나오는 것을 재서 확인하면 여기와 urdf/dg5f/*.urdf 를 함께 넓힐 것.
+    # (2026-09-16 ±30 → ±25. 현재 middle_abd 는 dg5f_angles 에서 gated(항상 0)라 동작 변화 없음)
+    (-25.0,  25.0),   #  8 middle_abd  Motor 9   (설명서 ±30 / URDF ±25 → 좁은 쪽)
     (  0.0, 115.0),   #  9 middle_mcp  Motor 10
     (-90.0,  90.0),   # 10 middle_pip  Motor 11
     (-90.0,  90.0),   # 11 middle_dip  Motor 12
