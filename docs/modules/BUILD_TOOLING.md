@@ -4,9 +4,15 @@
 
 ## 먼저 이해할 입력과 산출물
 
-이 문서의 도구는 장비 주소·경로 설정, 로봇 모델 생성, Unity 임포트·빌드를 담당한다.
-URDF는 로봇의 링크·관절·물리값을 적은 모델 파일이고, 메시는 화면과 충돌 계산에 쓰는 형상이다.
-프리팹은 Unity에서 재사용하는 로봇 원본, 플레이어는 Unity Editor 없이 실행하는 빌드 결과다.
+여기 나오는 도구들은 **장비 주소와 경로를 정하고, 로봇 모델을 만들고, 그걸 Unity 에 넣어
+실행파일로 묶는** 일을 한다.
+
+| 말 | 뜻 |
+|---|---|
+| **URDF** | 로봇의 **부품·관절·무게 같은 것을 적어 둔 설계 파일** |
+| **메시(mesh)** | 로봇의 **겉모양**. 화면에 그릴 때와 부딪힘을 계산할 때 쓴다 |
+| **프리팹(prefab)** | Unity 에서 **몇 번이고 꺼내 쓰는 로봇 원본**. 도장 원판이라고 보면 된다 |
+| **플레이어(player)** | Unity 에디터 없이 혼자 도는 **실행파일**. 학습은 이걸 돌려서 한다 |
 
 현재 결합 로봇이 학습에 들어가는 흐름은 다음과 같다. 범용 손 임포트 도구는 §3에 따로 설명한다.
 
@@ -24,9 +30,12 @@ UR description + DG5F URDF/메시
 
 ## 1. 설정 정본 — `config/rtauto_config.py`
 
-이 저장소에서 가장 중요한 규칙 하나: **경로·IP·포트를 코드에 리터럴로 적지 않는다**(CLAUDE.md 원칙 1).
-Python은 이 설정 모듈을 읽고, Unity 런타임은 `RtautoConfig.cs`, Unity 빌드 도구는
-`BuildEnvironment.cs`가 설정 파일을 각각 읽는다. 모든 값이 Python을 거쳐 전달되는 구조는 아니다.
+이 저장소에서 가장 중요한 규칙 하나: **경로·주소·번호를 코드 안에 직접 적어 넣지 않는다**
+(CLAUDE.md 원칙 1). 컴퓨터마다 달라지는 값이기 때문이다.
+
+읽는 쪽은 **세 군데**다 — 파이썬은 이 설정 파일을, Unity 가 돌 때는 `RtautoConfig.cs` 가,
+Unity 로 빌드할 때는 `BuildEnvironment.cs` 가 각각 읽는다. **파이썬을 거쳐 전달되는 게 아니라
+셋이 따로 읽는다** — 그래서 셋을 같이 고쳐야 한다.
 
 우선순위: **환경변수 > 리포 루트 `.env` > `.env.example` > 코드 기본값**
 
@@ -81,9 +90,11 @@ Python은 이 설정 모듈을 읽고, Unity 런타임은 `RtautoConfig.cs`, Uni
 같은 우선순위를 의도해 `.env`를 직접 파싱한다). 이게 없으면 `.env`에서 포트를 바꿨을 때 파이썬은 새 포트로 쏘고
 Unity는 옛 포트에서 기다리는 **에러 없는 조용한 실패**가 난다.
 
-빈 값·잘못된 숫자의 처리까지 동일하지는 않다. Python의 숫자 변환은 오류를 낼 수 있고,
-Unity 런타임의 정수 설정은 기본값으로 돌아간다. 설정은 시작 시 읽거나 캐시하므로 실행 중 즉시 반영을
-기대하지 않는다. Python은 재시작하고, Unity는 설정을 다시 로드하는 세션에서 적용값을 확인한다.
+🛑 **값이 비었거나 숫자가 잘못됐을 때 둘의 반응이 다르다.** 파이썬은 **에러를 내고 멈출 수 있고**,
+Unity 는 **아무 말 없이 기본값으로 돌아간다.** 그래서 Unity 쪽은 값이 안 먹은 걸 모르고 지나치기 쉽다.
+
+또 설정은 **프로그램이 시작할 때 한 번 읽는다.** 돌아가는 중에 파일을 고쳐도 바로 반영되지 않는다 —
+파이썬은 다시 실행하고, Unity 는 설정을 다시 읽는 상태에서 값이 맞는지 확인한다.
 
 ### 설정·모델을 바꾼 뒤 무엇을 다시 만들어야 하나
 
@@ -116,7 +127,7 @@ URDF를 Unity에 넣으면 그냥은 못 쓴다. 그 격차를 메우는 4단계
 | 파일 | 단계 | 하는 일 |
 |---|---|---|
 | `import_hand.py` | ① 임포트 | URDF·메시를 Unity `Assets/Robots/`로 복사하고 경로를 패치한 뒤, unity-cli로 URDF-Importer 실행 → 결과 감사 → 프리팹 저장 |
-| `phys_compare.py` | ② 검증 | Unity에 들어간 물리값을 URDF 원본과 **전수 대조**(질량·무게중심·관성·리밋·토크). 좌표계 변환까지 반영. PhysX 최소 관성 클램프처럼 알려진 정상 편차는 WARN으로 구분 |
+| `phys_compare.py` | ② 검증 | Unity 에 들어간 물리값을 설계 파일과 **하나도 빠짐없이 대조**한다(무게·무게중심·회전하기 어려운 정도·한계값·힘). 좌표 방식이 다른 것까지 감안한다. **Unity 물리 엔진이 너무 작은 값을 자동으로 키우는 것**처럼 정상인 차이는 경고로만 구분한다 |
 | `setup_drive.py` | ③ 구동 준비 | 임포트 직후엔 모터가 꺼져 있다(stiffness=0). 드라이브 게인 설정 + 중력 끄기 + 루트 고정 + 자기충돌 무시·초기 포즈 동기화 컴포넌트 부착. **멱등**(재실행 안전) |
 | `probe_test.py` | ④ 움직임 검증 | 관절에 사각파를 넣어 추종 오차·진동을 판정. 정착오차 ≤1.0°, 잔여진동 ≤0.5°. **`--urdf` 제공 시** 리밋 검사도 수행하며 ±0.5° 여유 밖의 침범 0건이 기준 |
 
@@ -133,7 +144,7 @@ URDF를 Unity에 넣으면 그냥은 못 쓴다. 그 격차를 메우는 4단계
 
 | 파일 | 하는 일 |
 |---|---|
-| `build-support/linux/libdl.so.2` | Linux headless 플레이어 빌드 후처리에 쓰는 벤더링된 라이브러리. Windows/macOS에서 Linux 빌드를 만들 수 있게 한다 |
+| `build-support/linux/libdl.so.2` | **리눅스용 실행파일을 만들 때 끼워 넣는 라이브러리**를 저장소에 같이 넣어 둔 것. 이게 있어야 윈도우나 맥에서도 리눅스용을 만들 수 있다 |
 | `tools/unity_firewall_toggle.ps1` / `.bat` | Unity Editor의 공용 프로필 인바운드 방화벽 규칙을 허용↔차단 토글. 다른 PC에서 UDP를 받아야 할 때만 잠깐 열고 닫는 용도(관리자 권한 자동 승격) |
 | `tools/plot_grasp_lift_*.py` | 학습 곡선 그래프 렌더링 → [RL_TRAINING.md](RL_TRAINING.md) 참고 |
 | `.gitattributes` | 저장소 줄바꿈을 LF로 고정. 없으면 Windows에서 커밋한 `.sh`가 Linux에서 `bad interpreter: /bin/bash^M`으로 죽는다 |
@@ -211,7 +222,7 @@ python urdf/build_arm_hand.py [--ur-type ur16e] [--hand right|left] [--short]
 | 단계 | 명령 | 핵심 인자·상수 |
 |---|---|---|
 | ① 임포트 | `python tools/urdf_hand_import/import_hand.py <urdf…>` | `--project`/`--cli`(기본은 `.env`의 `RTAUTO_UNITY_PROJECT`/`RTAUTO_UNITY_CLI`), `--name`, `--prefab`, `--remove-instance`, `--verify`, `--no-vhacd` |
-| ② 검증 | `phys_compare.py <urdf> [--name …]` | `MASS_TOL 1e-3 kg` · `COM_TOL 1e-4 m` · `INERTIA_RTOL 2%` · `LIM_TOL 0.1°`. `PHYSX_MIN_INERTIA 1e-6`(PhysX 최소 관성 클램프)은 WARN으로 분리. 리밋은 **부호 반전(flip)도 정상으로 인정**한다 |
+| ② 검증 | `phys_compare.py <urdf> [--name …]` | 허용 오차는 무게 `1e-3 kg` · 무게중심 `1e-4 m` · 회전 관성 `2%` · 한계각 `0.1°`. `PHYSX_MIN_INERTIA 1e-6`(**물리 엔진이 너무 작은 값을 자동으로 키우는 것**)은 경고로만 분리한다. 한계값은 **부호가 뒤집힌 것도 정상으로 본다** |
 | ③ 구동 준비 | `setup_drive.py <prefab…>` | `--stiffness 10000` · `--damping 200` · `--force-limit 100000` · `--components`. **멱등** |
 | ④ 움직임 검증 | `probe_test.py <로봇이름> [--urdf …]` | 판정 `SETTLE_TOL 1.0°` · `P2P_TOL 0.5°` · `LIMIT_MARGIN 0.5°`(침범 0건). 측정창 `SETTLE_WIN 0.3s`/`P2P_WIN 0.5s`, 사각파 `--phases 8` × `--phase-dur 1.5s`, 진폭 `--frac-a 0.8`/`--frac-b 0.15` |
 

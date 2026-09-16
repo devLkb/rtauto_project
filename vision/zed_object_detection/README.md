@@ -42,9 +42,11 @@ python zed_sender.py
 
 ## UDP 포트
 
-- Unity 쪽 수신 스크립트: `unity/Assets/Scripts/CameraTargetReceiver.cs` (이 저장소의 `unity/Assets/Scripts/`에 있음).
-  이전에 있던 `ObjectCoordinateReceiver.cs`(로그만 찍는 미완성 스텁)는 삭제됐다 — CameraTargetReceiver가
-  그 역할(좌표를 실제로 오브젝트에 반영)까지 포함해서 대체한다.
+- 🛑 **받는 쪽이 없다 (2026-09-16 정정).** 예전에는 Unity `Assets/Scripts/CameraTargetReceiver.cs`
+  가 이 좌표를 받았지만 **그 파일은 지금 저장소에 없다.** 아래 설명은 그때의 기록이며,
+  지금 `zed_sender.py`를 실행해도 받는 쪽이 없어 아무 일도 일어나지 않는다
+  ([`DEPRECATED.md`](DEPRECATED.md), [`docs/modules/VISION_TELEOP.md`](../../docs/modules/VISION_TELEOP.md) §4).
+  그보다 앞에 있던 `ObjectCoordinateReceiver.cs`(로그만 찍던 미완성 코드)도 삭제됐다.
 - 포트 **5007** 사용 — 5005(SVH 핸드), 5006(`Dg5fReceiver`, 손가락 관절 각도), 5008(DG5F 실물 SDK 브리지)과
   겹치지 않게 고정한 값이니 다른 용도로 바꾸지 말 것. 값의 유일한 출처는 `config/rtauto_config.py`
   (`PORT_ZED_TARGET`) — 바꿔야 하면 거기서 바꾸고 여기 숫자는 그대로 참고용으로만 둔다.

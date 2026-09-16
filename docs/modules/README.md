@@ -4,8 +4,16 @@
 뒷부분은 **파일별 역할과 코드 레벨 상세**(클래스·함수 이름, 실행 인자, 상수 실제값, 패킷 배치)다.
 
 **입구는 [`MODULE_GUIDE.md`](MODULE_GUIDE.md)다.** 전체 데이터 흐름과 현재 범위를 거기서 먼저 읽는다.
+그림으로 먼저 보고 싶으면 [`ARCHITECTURE.md`](ARCHITECTURE.md)다.
 
-## 문서 6개 + 입구 1개
+> 🔶 **2026-09-16 정정.** 이 폴더는 **2026-09-07** 에 코드를 대조해 쓰였다. 그 이틀 뒤
+> **물체를 잡는 학습이 Unity 에서 SuperDex 로 옮겨갔다**
+> ([`SUPERDEX_POC_PLAN.md`](../SUPERDEX_POC_PLAN.md)). 강화학습을 Unity 일로 설명하는 대목은
+> 그때의 사실이다. **학습을 다루는 세 문서**(`MODULE_GUIDE.md`, `RL_TRAINING.md`,
+> `ARCHITECTURE.md`) 맨 위에 같은 안내를 달아 두었다. 나머지 문서(Unity 화면, 손동작 조작,
+> 장비 연결, 설정)는 학습과 무관하므로 그대로 유효하다.
+
+## 문서 7개 + 입구 1개 + 그림 1개
 
 | 문서 | 다루는 범위 | 코드 위치 | 짝이 되는 디렉터리 README |
 |---|---|---|---|
@@ -16,6 +24,7 @@
 | [`REAL_BRIDGES.md`](REAL_BRIDGES.md) | 실물·시뮬레이터 하드웨어와 붙는 브리지 | `arm/**`, `vision/dg5f/*bridge*.py` | [`arm/`](../../arm/README.md) |
 | [`BUILD_TOOLING.md`](BUILD_TOOLING.md) | 설정 정본, URDF 빌드·임포트, 패키징·방화벽 | `config/`, `urdf/`, `tools/`, `build-support/` | [`config/`](../../config/README.md) · [`urdf/`](../../urdf/README.md) · [`tools/`](../../tools/README.md) |
 | [`DG5F_JOINT_RANGES.md`](DG5F_JOINT_RANGES.md) | **실물 그리퍼 관절 20개의 각도 한계·부호 규약**(제조사 설명서 정리) | `vision/dg5f/dg5f_sdk_bridge.py`, `urdf/dg5f/**` | [`urdf/`](../../urdf/README.md) |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | 위 문서들의 내용을 **그림 9장**으로 — 연결·제어권·현재 경계 | 전체 | — |
 
 ## 모듈 문서와 디렉터리 README의 역할 분담
 

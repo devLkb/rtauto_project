@@ -43,10 +43,14 @@ Unity 는 버려진 게 아니라 **디지털 트윈·시각화·ROS2 통합**�
 
 "이 스크립트 왜 있지?" 싶을 때. 입구는 **[`MODULE_GUIDE.md`](modules/MODULE_GUIDE.md)** 다.
 
-[Unity](modules/UNITY.md) · [강화학습](modules/RL_TRAINING.md) ·
+[Unity](modules/UNITY.md) · [Unity 안의 학습](modules/RL_TRAINING.md) ·
 [비전/손동작](modules/VISION_TELEOP.md) · [실물 브리지](modules/REAL_BRIDGES.md) ·
 [설정·빌드 도구](modules/BUILD_TOOLING.md) ·
-[그리퍼 관절 한계](modules/DG5F_JOINT_RANGES.md)
+[그리퍼 관절 한계](modules/DG5F_JOINT_RANGES.md) ·
+**[그림 9장으로 보기](modules/ARCHITECTURE.md)**
+
+> 🔶 `modules/` 는 **2026-09-07** 기준이라, 강화학습을 Unity 일로 설명한다.
+> 파지 학습은 2026-09-09 에 SuperDex 로 옮겨갔다 — 각 문서 맨 위에 안내를 달아 두었다.
 
 **값이 서로 다르면 코드가 맞다.** 그다음이 모듈 문서, 그다음이 폴더별 README 다.
 
