@@ -177,10 +177,20 @@ Lift / Elbow / Wrist 1~3)로 움직인다.
 > python vision/dg5f/camera_caps.py 0 --backend=dshow --fourcc=MJPG   # 다른 조합과 비교
 > ```
 >
-> **카메라가 두 대 이상이면**(노트북 내장 + 외장 웹캠) `--list`로 번호를 확인해 `.env`의
-> `RTAUTO_VISION_CAMERA_INDEX`에 적습니다. 번호 대신 **`auto`**를 적으면 실행할 때마다
-> 꽂혀 있는 것 중 가장 좋은 카메라를 알아서 고릅니다 — Windows는 번호 순서가 바뀔 수
-> 있어 노트북으로 옮겨 다닐 때 안전합니다.
+> **카메라가 두 대 이상이면**(노트북 내장 + 외장 웹캠) 세 가지 방법이 있습니다.
+>
+> | 방법 | 어떻게 | 언제 |
+> |---|---|---|
+> | 번호 고정 | `.env`에 `RTAUTO_VISION_CAMERA_INDEX=1` (번호는 `--list`로 확인) | 늘 같은 카메라를 쓸 때 |
+> | 알아서 고르기 | `.env`에 `RTAUTO_VISION_CAMERA_INDEX=auto` | 노트북으로 옮겨 다닐 때 |
+> | **직접 고르기** | `.env`에 `=ask`, 또는 실행할 때 `--pick` | 시연 직전에 골라야 할 때 |
+>
+> `--pick`을 붙이면 **작은 창이 떠서 카메라 목록과 각 카메라의 사진**을 보여 줍니다 —
+> 어느 쪽이 외장 웹캠인지 화면을 보고 고르면 됩니다.
+>
+> ```powershell
+> python vision/dg5f/vision_node_dg5f.py --pick
+> ```
 >
 > Windows는 **백엔드(`msmf`/`dshow`)와 압축(`MJPG`) 조합에 따라 결과가 크게 다르다.**
 > 더 좋은 조합이 나오면 `.env`의 `RTAUTO_VISION_CAMERA_BACKEND` / `_FOURCC`에 적는다.

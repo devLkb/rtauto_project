@@ -16,6 +16,8 @@ svh/vision_node.py의 단일 카메라 경로를 DG5F 20채널용으로 개조.
       --map=ratio       : 사람각을 [사람min,사람max]→0~1 비율로 바꿔 [로봇min,로봇max]에 실어 전송
                           (로봇 범위=URDF 리밋, dg5f_angles.RATIO_ROBOT_RANGE로 전환). 정규화라
                           보정 신선도 민감 — 관절을 끝까지 안 움직인 보정이면 재보정 권장.
+      --pick   : 시작할 때 **카메라 선택 창**을 띄운다(노트북 내장 vs 외장 웹캠 고르기).
+                 .env의 RTAUTO_VISION_CAMERA_INDEX=ask 로 해 두면 항상 물어본다.
       --bridge: 같은 패킷을 실물 SDK 브리지(dg5f_sdk_bridge.py, 포트 BRIDGE_PORT)에도 동시 송신
                 — Unity 트윈과 실물 그리퍼를 한 스트림으로 함께 구동.
 """
@@ -90,6 +92,8 @@ ANGLE_Z_FLIP = False
 def main():
     args = [a.lower() for a in sys.argv[1:]]
     to_bridge = "--bridge" in args
+    # --pick: 이번 실행만 카메라 선택 창을 띄운다(.env를 고치지 않고 즉석에서 바꿀 때).
+    camera_index = camera_caps.ASK if "--pick" in args else VISION_CAMERA_INDEX
     # --map direct|ratio : 관절 매핑 방식 선택(기본 direct=1:1 직접, ratio=0~1 비율 정규화).
     #   ratio는 [사람min,사람max]→[0,1]→[로봇min,로봇max] 매핑(dg5f_angles.map_to_dg5f 참조).
     map_mode = "direct"
@@ -118,7 +122,7 @@ def main():
     # 여기서 cap.set()을 직접 부르지 말 것 — 웹캠에 따라 한 번에 3.5초를 먹는다.
     try:
         cap, cam_fmt = camera_caps.open_camera(
-            VISION_CAMERA_INDEX, backend_name=VISION_CAMERA_BACKEND,
+            camera_index, backend_name=VISION_CAMERA_BACKEND,
             width=VISION_CAMERA_WIDTH, height=VISION_CAMERA_HEIGHT,
             fps=VISION_CAMERA_FPS, fourcc=VISION_CAMERA_FOURCC,
             min_fps=VISION_CAMERA_MIN_FPS)
@@ -127,8 +131,9 @@ def main():
         hands.close()
         return
     if cap is None:
-        print(f"[오류] 카메라 {VISION_CAMERA_INDEX}을 열 수 없습니다. "
-              "레포 루트 .env의 RTAUTO_VISION_CAMERA_INDEX를 0, 1, 2 순으로 바꿔보세요.")
+        print(f"[오류] 카메라(설정 {camera_index!r})를 열 수 없습니다. "
+              "python vision/dg5f/camera_caps.py --list 로 어떤 카메라가 있는지 먼저 확인하거나,"
+              " --pick 을 붙여 실행해 직접 고르세요.")
         if sys.platform.startswith("linux"):
             print("       Linux: `ls /dev/video*`로 실제 인덱스를 확인하고, 권한이 없으면 "
                   "`sudo usermod -aG video $USER` 후 재로그인한다.")
@@ -143,8 +148,9 @@ def main():
                  if camera_caps.parse_size_spec(VISION_CAMERA_WIDTH) is None
                  else f"{VISION_CAMERA_WIDTH}x{VISION_CAMERA_HEIGHT}")
     # 설정이 "auto"였으면 실제로 고른 번호를 보여 준다 — 어느 카메라로 도는지 늘 보이게.
-    index_text = (f"{cam_fmt.index}번" if str(VISION_CAMERA_INDEX).strip().isdigit()
-                  else f"{cam_fmt.index}번(auto로 고름)")
+    how_picked = ("직접 고름" if camera_index == camera_caps.ASK
+                  else "" if str(camera_index).strip().isdigit() else "auto로 고름")
+    index_text = f"{cam_fmt.index}번" + (f"({how_picked})" if how_picked else "")
     print(f"[카메라] 실제 캡처 {cam_fmt.text} "
           f"(요청: {requested} @ {VISION_CAMERA_FPS}fps, "
           f"카메라 {index_text}, backend={VISION_CAMERA_BACKEND})")

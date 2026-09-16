@@ -336,6 +336,55 @@ class CameraCapsTest(unittest.TestCase):
         self.assertEqual(fmt.index, 1)
         self.assertEqual((fmt.width, fmt.height), (1920, 1080))
 
+    # ---------------- 사람에게 물어서 고르기(ask) ----------------
+    def test_ask_spec_is_recognised(self):
+        for word in ("ask", "ASK", " pick ", "choose"):
+            self.assertEqual(cc.parse_index_spec(word), cc.ASK, word)
+
+    def test_ask_shows_the_list_and_uses_the_answer(self):
+        """창 대신 가짜 응답을 끼워 넣어, 고른 번호가 그대로 쓰이는지 본다."""
+        import camera_picker
+        factory, _ = self._multi_factory({0: [(640, 480)], 1: [(640, 480), (1920, 1080)]})
+        shown = {}
+
+        def fake_choose(cams, recommended_index=None, **_kw):
+            shown["cams"] = cams
+            shown["recommended"] = recommended_index
+            return 0                                   # 사람이 0번을 골랐다고 치자
+
+        real = camera_picker.choose
+        camera_picker.choose = fake_choose
+        try:
+            cap, fmt = cc.open_camera("ask", cache_path=self.cache, log=_quiet,
+                                      capture_factory=factory)
+        finally:
+            camera_picker.choose = real
+        self.assertEqual([c["index"] for c in shown["cams"]], [0, 1])
+        self.assertEqual(shown["recommended"], 1)      # 추천은 더 좋은 1번
+        self.assertEqual(fmt.index, 0)                 # 그래도 사람이 고른 0번으로 연다
+        self.assertEqual((fmt.width, fmt.height), (640, 480))
+
+    def test_ask_can_be_cancelled(self):
+        """선택 창을 닫으면(취소) 카메라를 열지 않는다 — 아무 카메라나 켜지 않는다."""
+        import camera_picker
+        factory, _ = self._multi_factory({0: [(640, 480)], 1: [(1920, 1080)]})
+        real = camera_picker.choose
+        camera_picker.choose = lambda *a, **k: None
+        try:
+            cap, fmt = cc.open_camera("ask", cache_path=self.cache, log=_quiet,
+                                      capture_factory=factory)
+        finally:
+            camera_picker.choose = real
+        self.assertIsNone(cap)
+        self.assertIsNone(fmt)
+
+    def test_preview_photo_is_collected_when_asked(self):
+        factory, _ = self._multi_factory({0: [(640, 480)]})
+        cams = cc.list_cameras(cache_path=self.cache, log=_quiet, capture_factory=factory,
+                               with_preview=True)
+        self.assertIsNotNone(cams[0]["preview"])
+        self.assertEqual(cams[0]["preview"].shape[:2], (480, 640))
+
     # ---------------- 미리보기 창 크기 ----------------
     def test_preview_keeps_aspect_ratio(self):
         self.assertEqual(cc.preview_size(640, 480, 1280), (640, 480))    # 원본보다 키우지 않는다

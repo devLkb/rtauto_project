@@ -10,6 +10,7 @@
 |---|---|
 | `dg5f_angles.py` | MediaPipe 21 landmark → 20채널 사람 프록시(rad) → DG5F 관절각[deg] 매핑 (채널 테이블·보정 로드·엄지 리타게팅) |
 | `vision_node_dg5f.py` | 웹캠 캡처 → 각도 → One Euro 필터 → UDP 송신 메인 루프 |
+| `camera_picker.py` | **카메라 선택 창**(tkinter). 카메라 목록과 각 카메라의 사진을 보여 주고 하나를 고르게 한다. `vision_node_dg5f.py --pick` 또는 `.env`의 `RTAUTO_VISION_CAMERA_INDEX=ask`로 뜬다. 창을 못 띄우는 환경에서는 터미널로 묻는다 |
 | `camera_caps.py` | 웹캠 열기 + **화면 크기 결정 공용 부품**. 설정이 `max`(기본)면 큰 크기부터 실제로 열어 **크기와 속도를 같이 재서** 가장 좋은 것을 고르고 그 값을 저장해 둔다. 카메라가 여러 대면 번호를 고르거나(`auto`) `--list`로 확인한다. 단독 실행: `python camera_caps.py [번호|--list] [--refresh] [--backend=dshow] [--fourcc=MJPG]` |
 | `calibrate_dg5f.py` | 채널별 human_min/max + 엄지 직진도 보정 → `dg5f_calibration.json` 저장 |
 | `probe_sender.py` | 웹캠 없이 fist/open/cycle 패킷 송신 (배선 결정적 검증용) |

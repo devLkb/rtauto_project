@@ -405,7 +405,7 @@ def apply_best_format(cap, index=0, backend_name="auto", width=None, height=None
 
 
 def parse_index_spec(value):
-    """카메라 번호 설정을 해석한다. 숫자면 int, "auto"면 None(= 알아서 고르라는 뜻).
+    """카메라 번호 설정을 해석한다. 숫자면 int, "auto"면 None(알아서), "ask"면 ASK(물어보기).
 
     노트북에 외장 웹캠을 꽂으면 카메라가 두 대가 되는데, 어느 쪽이 0번인지는 OS가 정하고
     재부팅·USB 포트 변경으로 뒤바뀔 수 있다. 그래서 "번호 고정" 말고 "알아서 고르기"가 필요하다.
@@ -417,12 +417,14 @@ def parse_index_spec(value):
     text = str(value).strip().lower()
     if text in ("auto", "best", ""):
         return None
+    if text in ("ask", "pick", "choose"):
+        return ASK            # 실행할 때마다 사람에게 창으로 물어본다
     try:
         number = int(text)
     except ValueError:
         raise ValueError(
             f"카메라 번호 설정값을 이해할 수 없습니다: {value!r}\n"
-            "       0, 1, 2 같은 숫자 또는 auto 여야 합니다.")
+            "       0, 1, 2 같은 숫자 또는 auto(알아서 고르기) / ask(물어보기) 여야 합니다.")
     if number < 0:
         raise ValueError(f"카메라 번호는 0 이상이어야 합니다: {value!r}")
     return number
@@ -431,13 +433,19 @@ def parse_index_spec(value):
 # 자동으로 고를 때 몇 번까지 열어 볼지. 웹캠을 5대씩 꽂는 구성은 이 파이프라인에 없다.
 SCAN_MAX_INDEX = 5
 
+# 설정이 "ask"일 때 쓰는 표시값(숫자 0과 헷갈리지 않게 문자열로 둔다).
+ASK = "ask"
+
 
 def list_cameras(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS,
                  cache_path=CAMERA_CAPS_PATH, use_cache=True, log=print,
-                 max_index=SCAN_MAX_INDEX, stop_after_miss=None, capture_factory=None):
+                 max_index=SCAN_MAX_INDEX, stop_after_miss=None, capture_factory=None,
+                 with_preview=False):
     """0번부터 차례로 열어 보고 **쓸 수 있는 카메라 목록**을 돌려준다.
 
-    각 항목: {"index", "width", "height", "measured_fps"}. 못 여는 번호는 목록에 안 들어간다.
+    각 항목: {"index", "width", "height", "measured_fps", "preview"}. 못 여는 번호는 목록에
+    안 들어간다. with_preview=True면 각 카메라에서 사진 한 장을 함께 받아 온다 — 선택 창에서
+    "어느 쪽이 외장 웹캠인지" 눈으로 보려고 쓴다.
     stop_after_miss를 주면 그 횟수만큼 연속으로 실패했을 때 멈춘다(자동 고르기에서 시간을
     아끼려고 쓴다 — 카메라 번호는 보통 0부터 빈틈없이 붙는다).
     """
@@ -454,9 +462,17 @@ def list_cameras(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS,
             continue
         misses = 0
         measured = fmt.measured_fps or measure_fps(cap, seconds=1.0, warmup=5)
+        preview = None
+        if with_preview:
+            # 선택 창에 보여 줄 사진 한 장. 실패해도 목록에서 빼지 않는다 — 글자만으로도 고른다.
+            try:
+                ok, frame = cap.read()
+                preview = frame if ok else None
+            except Exception:
+                preview = None
         cap.release()
         found.append({"index": index, "width": fmt.width, "height": fmt.height,
-                      "measured_fps": measured})
+                      "measured_fps": measured, "preview": preview})
         log(f"[카메라] {index}번: {fmt.width}x{fmt.height}, 초당 {measured:.1f}장")
     return found
 
@@ -482,6 +498,31 @@ def pick_best_index(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS,
     return best["index"]
 
 
+def ask_user_to_choose(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS,
+                       cache_path=CAMERA_CAPS_PATH, use_cache=True, log=print,
+                       capture_factory=None):
+    """꽂혀 있는 카메라를 찾아 **사람에게 창으로 물어본다**. 고른 번호(취소하면 None).
+
+    창을 그리는 일은 camera_picker.py가 한다 — 여기서는 카메라를 찾아 넘겨줄 뿐이다.
+    카메라가 한 대뿐이면 묻지 않고 바로 그 번호를 쓴다(쓸데없이 클릭하게 만들지 않는다).
+    """
+    log("[카메라] 꽂혀 있는 카메라를 찾는 중입니다 — 잠시 걸립니다…")
+    cams = list_cameras(backend_name=backend_name, fourcc=fourcc, min_fps=min_fps,
+                        cache_path=cache_path, use_cache=use_cache,
+                        log=lambda *_a, **_k: None, capture_factory=capture_factory,
+                        with_preview=True)
+    if not cams:
+        log("[카메라] 쓸 수 있는 카메라를 찾지 못했습니다.")
+        return None
+    best = max(cams, key=lambda c: (c["measured_fps"] >= min_fps,
+                                    c["width"] * c["height"], -c["index"]))
+    import camera_picker
+    chosen = camera_picker.choose(cams, recommended_index=best["index"])
+    if chosen is not None:
+        log(f"[카메라] {chosen}번을 선택했습니다.")
+    return chosen
+
+
 def open_camera(index, backend_name="auto", width=None, height=None, fps=None,
                 fourcc="", min_fps=DEFAULT_MIN_FPS, cache_path=CAMERA_CAPS_PATH,
                 use_cache=True, log=print, capture_factory=None):
@@ -493,7 +534,14 @@ def open_camera(index, backend_name="auto", width=None, height=None, fps=None,
     factory = capture_factory or cv2.VideoCapture
     backend = backend_id(backend_name)
     index = parse_index_spec(index)
-    if index is None:                      # 설정이 "auto" — 꽂힌 것 중 가장 좋은 걸 고른다
+    if index == ASK:                       # 설정이 "ask" — 창을 띄워 사람에게 물어본다
+        index = ask_user_to_choose(backend_name=backend_name, fourcc=fourcc, min_fps=min_fps,
+                                   cache_path=cache_path, use_cache=use_cache, log=log,
+                                   capture_factory=capture_factory)
+        if index is None:
+            log("[카메라] 카메라 선택이 취소됐습니다.")
+            return None, None
+    elif index is None:                    # 설정이 "auto" — 꽂힌 것 중 가장 좋은 걸 고른다
         index = pick_best_index(backend_name=backend_name, fourcc=fourcc, min_fps=min_fps,
                                 cache_path=cache_path, use_cache=use_cache, log=log,
                                 capture_factory=capture_factory)

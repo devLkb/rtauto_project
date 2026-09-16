@@ -117,7 +117,7 @@ failure/legacy는 results에서 **파생**시킨다 — 경로를 두 번 타이
 
 ### 3-5. 카메라·캘리브레이션
 
-`VISION_CAMERA_INDEX`(0, 또는 `auto`) · `WIDTH`(`max`) · `HEIGHT`(`max`) · `FPS`(30) · `BACKEND`(`auto`) ·
+`VISION_CAMERA_INDEX`(0, 또는 `auto`/`ask`) · `WIDTH`(`max`) · `HEIGHT`(`max`) · `FPS`(30) · `BACKEND`(`auto`) ·
 `MIN_FPS`(15) · `FOURCC`(빈 값) · `VISION_PREVIEW_WIDTH`(1280) ·
 `VISION_CAMERA_INDICES`(다중 카메라용, 쉼표 구분) ·
 `CALIB_BOARD_COLS`(9) · `CALIB_BOARD_ROWS`(6) · `CALIB_SQUARE_SIZE_MM`(25.0) ·
@@ -135,7 +135,8 @@ failure/legacy는 results에서 **파생**시킨다 — 경로를 두 번 타이
 `python vision/dg5f/camera_caps.py 0`.
 
 `VISION_CAMERA_INDEX`도 문자열이다 — `auto`면 꽂혀 있는 카메라를 모두 열어 보고 **쓸 수
-있는 가장 좋은 것**을 고른다(노트북 내장 + 외장 웹캠 상황용). 어느 번호가 어느 카메라인지는
+있는 가장 좋은 것**을 고르고, `ask`면 **선택 창을 띄워 사람에게 물어본다**(노트북 내장 +
+외장 웹캠 상황용). 어느 번호가 어느 카메라인지는
 `python vision/dg5f/camera_caps.py --list`로 확인한다.
 
 `VISION_PREVIEW_WIDTH`는 **보기용 창 크기**일 뿐 화질과 무관하다 — 창을 키워도 인식
