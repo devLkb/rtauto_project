@@ -178,10 +178,35 @@ DG5F_GRASP_POSE_FILE = _env("RTAUTO_DG5F_GRASP_POSE", "config/dg5f_grasp_pose.js
 # ---------------- MediaPipe 카메라 ----------------
 # 카메라 열거 순서와 지원 모드는 PC/드라이버마다 다르므로 vision 스크립트에 고정하지 않는다.
 VISION_CAMERA_INDEX = int(_env("RTAUTO_VISION_CAMERA_INDEX", "0"))
-VISION_CAMERA_WIDTH = int(_env("RTAUTO_VISION_CAMERA_WIDTH", "1280"))
-VISION_CAMERA_HEIGHT = int(_env("RTAUTO_VISION_CAMERA_HEIGHT", "720"))
+
+# 화면 크기는 **숫자가 아니라 문자열 그대로** 둔다 — 기본값 "max"가 "이 웹캠이 낼 수 있는
+# 가장 큰 크기"라는 뜻이기 때문이다. 실제 해석과 카메라 적용은 vision/dg5f/camera_caps.py
+# 한 곳이 담당한다(parse_size_spec). 숫자(예: "1280")를 넣으면 그 크기로 고정된다.
+#
+# 왜 기본이 max인가(2026-09-16): 예전 기본값은 1280x720 고정이었다. 손가락 끝처럼 작은
+# 부분은 화면에 찍히는 점이 적을수록 위치가 흔들려서, 웹캠이 더 큰 화면을 낼 수 있는데도
+# 720p로 잘라 쓸 이유가 없다. 720p만 되는 웹캠이면 결과는 예전과 똑같다(요청이 깎일 뿐).
+VISION_CAMERA_WIDTH = _env("RTAUTO_VISION_CAMERA_WIDTH", "max").strip()
+VISION_CAMERA_HEIGHT = _env("RTAUTO_VISION_CAMERA_HEIGHT", "max").strip()
 VISION_CAMERA_FPS = int(_env("RTAUTO_VISION_CAMERA_FPS", "30"))
 VISION_CAMERA_BACKEND = _env("RTAUTO_VISION_CAMERA_BACKEND", "auto").strip().lower()
+
+# 영상 압축 형식(네 글자, 예: MJPG). 비워 두면 건드리지 않는다(기본).
+# 큰 화면에서 초당 장수가 뚝 떨어질 때의 탈출구다 — 압축 없이 보내면 USB 대역폭이 모자라
+# 1920x1080에서 초당 5장까지 떨어지는 웹캠이 흔하다. 단, Windows 기본 백엔드(msmf)는 이
+# 요청을 무시하므로 함께 RTAUTO_VISION_CAMERA_BACKEND=dshow 가 필요할 수 있다.
+VISION_CAMERA_FOURCC = _env("RTAUTO_VISION_CAMERA_FOURCC", "").strip()
+
+# "쓸 만하다"의 기준선 — 화면 크기를 자동으로 고를 때 **이보다 느린 크기는 버린다**.
+# 왜 필요한가(2026-09-16 실측): 같은 웹캠이 2592x1944에서는 초당 1장, 1920x1080에서는
+# 초당 30장이었다. 큰 화면이 항상 좋은 게 아니라서, 크기만 보고 고르면 손 동작을 전혀
+# 따라가지 못하는 설정이 선택된다. 30장을 원하면 25 정도로 올린다.
+VISION_CAMERA_MIN_FPS = float(_env("RTAUTO_VISION_CAMERA_MIN_FPS", "15"))
+
+# 미리보기 창을 모니터에 몇 픽셀 폭으로 띄울지(세로는 실제 영상 비율에 맞춰 계산된다).
+# 캡처 크기와는 무관한 **보기 편의** 값이다 — 창을 키워도 인식 정확도는 변하지 않는다.
+# 4K로 캡처하면 창이 모니터를 넘어가므로 상한이 필요하다.
+VISION_PREVIEW_WIDTH = int(_env("RTAUTO_VISION_PREVIEW_WIDTH", "1280"))
 
 # 다중 웹캠(디지털 트윈 다시점 모니터링 등, vision/dg5f/multi_camera_capture.py)용 인덱스
 # 목록 — 쉼표구분("0,1,2"). 비워두면 위 VISION_CAMERA_INDEX 하나만 쓴다 — 기존 단일

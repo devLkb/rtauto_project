@@ -30,6 +30,11 @@ LOG_DIR = os.path.join(_HERE, "logs")
 # 보정 파일: calibrate_dg5f.py(저장)와 dg5f_angles.py(로드)가 **이 상수 하나**를 공유
 CALIB_PATH = os.path.join(_HERE, "dg5f_calibration.json")
 
+# 웹캠이 낼 수 있는 최대 화면 크기를 한 번 알아낸 뒤 적어 두는 파일(camera_caps.py가 읽고 쓴다).
+# 알아내는 데 수 초~수십 초가 걸려서 매번 하면 실행이 느려진다. 꽂힌 카메라가 PC마다 다르므로
+# git에는 넣지 않는다(.gitignore) — 지워도 다음 실행이 다시 알아낼 뿐 아무것도 잃지 않는다.
+CAMERA_CAPS_PATH = os.path.join(_HERE, "camera_caps_cache.json")
+
 
 def unique_log_path(prefix, ext=".csv", log_dir=None):
     """logs/<prefix>_<YYYYMMDD_HHMMSS><ext> — 이미 있으면 _2, _3… 을 붙여 **절대 덮지 않는다**.

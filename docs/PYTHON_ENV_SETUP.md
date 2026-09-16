@@ -121,11 +121,38 @@ cp .env.example .env
 
 ```dotenv
 RTAUTO_VISION_CAMERA_INDEX=0
-RTAUTO_VISION_CAMERA_WIDTH=1280
-RTAUTO_VISION_CAMERA_HEIGHT=720
+RTAUTO_VISION_CAMERA_WIDTH=max
+RTAUTO_VISION_CAMERA_HEIGHT=max
 RTAUTO_VISION_CAMERA_FPS=30
+RTAUTO_VISION_CAMERA_MIN_FPS=15
 RTAUTO_VISION_CAMERA_BACKEND=auto
 ```
+
+`WIDTH`/`HEIGHT`의 기본값 `max`는 **이 웹캠에서 쓸 수 있는 가장 좋은 화면**을 쓰라는
+뜻이다. 처음 한 번만 실제로 큰 크기부터 열어 보며 **크기와 속도를 같이 재서** 고르고,
+그 값을 `vision/dg5f/camera_caps_cache.json`에 적어 둬 다음 실행부터는 건너뛴다.
+숫자를 적으면 그 크기로 고정된다.
+
+**왜 속도까지 보나** — 큰 화면이 항상 좋은 게 아니기 때문이다. 같은 웹캠 실측(2026-09-16):
+
+| 화면 크기 | 초당 들어온 장수 |
+|---|---|
+| 2592×1944 | 1장 (손 동작을 따라갈 수 없음) |
+| 1920×1080 | 30장 ← 가장 좋음 |
+| 1280×720 | 7.5장 (크기는 더 작은데 더 느리다) |
+| 640×480 | 30장 |
+
+`MIN_FPS`(기본 15)보다 느린 크기는 **더 크더라도 버린다.** 내 웹캠이 어떤지 확인하려면
+(카메라만 잠깐 열었다 닫는다):
+
+```bash
+python vision/dg5f/camera_caps.py 0                  # 0번 카메라
+python vision/dg5f/camera_caps.py 0 --refresh        # 저장된 값 무시하고 다시 탐색
+python vision/dg5f/camera_caps.py 0 --backend=dshow --fourcc=MJPG   # 다른 조합과 비교
+```
+
+Windows에서는 **백엔드(`msmf`/`dshow`)와 압축 형식(`MJPG`) 조합에 따라 결과가 크게
+달라진다.** 위 명령으로 조합을 비교해 가장 좋은 쪽을 `.env`에 적는다.
 
 카메라 인덱스는 `0`, `1`, `2` 순으로 시험한다. Linux에서는 `ls /dev/video*` 또는
 `v4l2-ctl --list-devices`의 번호가 곧 인덱스다.

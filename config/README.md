@@ -117,12 +117,25 @@ failure/legacy는 results에서 **파생**시킨다 — 경로를 두 번 타이
 
 ### 3-5. 카메라·캘리브레이션
 
-`VISION_CAMERA_INDEX`(0) · `WIDTH`(1280) · `HEIGHT`(720) · `FPS`(30) · `BACKEND`(`auto`) ·
+`VISION_CAMERA_INDEX`(0) · `WIDTH`(`max`) · `HEIGHT`(`max`) · `FPS`(30) · `BACKEND`(`auto`) ·
+`MIN_FPS`(15) · `FOURCC`(빈 값) · `VISION_PREVIEW_WIDTH`(1280) ·
 `VISION_CAMERA_INDICES`(다중 카메라용, 쉼표 구분) ·
 `CALIB_BOARD_COLS`(9) · `CALIB_BOARD_ROWS`(6) · `CALIB_SQUARE_SIZE_MM`(25.0) ·
 `CALIB_DIR`(`vision/dg5f/camera_calib`).
 
 보드 값은 **내부 코너 개수**다(9×6은 10×7 사각형 보드). 실제 보유한 보드에 맞춰 `.env`에서 덮어쓴다.
+
+`WIDTH`/`HEIGHT`는 **숫자가 아니라 문자열**로 둔다 — 기본값 `max`가 "이 웹캠에서 쓸 수
+있는 가장 좋은 화면 크기"라는 뜻이기 때문이다. 크기만이 아니라 **속도까지 재서** 고르며,
+`MIN_FPS`(초당 장수)보다 느린 크기는 더 크더라도 버린다. 해석과 카메라 적용은
+[`vision/dg5f/camera_caps.py`](../vision/dg5f/camera_caps.py) 한 곳이 담당한다
+(`parse_size_spec` → `open_camera`). 숫자(예: `1280`)를 넣으면 그 크기로 고정된다.
+알아낸 최대치는 `vision/dg5f/camera_caps_cache.json`(git 비추적)에 저장돼 다음 실행에서
+재사용된다 — 지워도 다음 실행이 다시 찾을 뿐이다. 직접 확인:
+`python vision/dg5f/camera_caps.py 0`.
+
+`VISION_PREVIEW_WIDTH`는 **보기용 창 크기**일 뿐 화질과 무관하다 — 창을 키워도 인식
+정확도는 변하지 않는다(세로는 실제 영상 비율로 자동 계산된다).
 
 ### 3-6. 학습·빌드
 

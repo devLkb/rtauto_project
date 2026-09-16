@@ -34,8 +34,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from config.rtauto_config import (
     UNITY_IP, PORT_DG5F_SIM, PORT_DG5F_BRIDGE,
     VISION_CAMERA_INDEX, VISION_CAMERA_WIDTH, VISION_CAMERA_HEIGHT,
-    VISION_CAMERA_FPS, VISION_CAMERA_BACKEND,
+    VISION_CAMERA_FPS, VISION_CAMERA_BACKEND, VISION_CAMERA_FOURCC,
+    VISION_CAMERA_MIN_FPS, VISION_PREVIEW_WIDTH,
 )
+
+import camera_caps
 
 from one_euro_filter import OneEuroFilter
 from dg5f_angles import (compute_raw, map_to_dg5f, compute_thumb_tip, landmarks_to_xyz,
@@ -53,8 +56,8 @@ BRIDGE_PORT = PORT_DG5F_BRIDGE  # --bridge 시 실물 SDK 브리지(dg5f_sdk_bri
 SEND_HZ_CAP = 120
 LOG_EVERY_SEC = 0.5
 WINDOW_NAME = "DG5F right-hand MediaPipe (q to quit)"
-WINDOW_WIDTH = 1280
-WINDOW_HEIGHT = 720
+# 창 크기는 상수로 박지 않는다 — 실제 캡처 비율에서 계산한다(camera_caps.preview_size).
+# 상한만 설정값 VISION_PREVIEW_WIDTH(.env의 RTAUTO_VISION_PREVIEW_WIDTH)로 정한다.
 # 경로 규칙은 dg5f_paths가 소유 — 초 단위 + 중복 시 접미사라 덮어쓰기 불가
 LOG_CSV = unique_log_path("vision_dg5f")
 # One Euro: 값 단위가 deg(0~115)라 SVH(rad) 대비 beta를 1/57 스케일로 낮춤.
@@ -111,32 +114,19 @@ def main():
         model_complexity=1, max_num_hands=1,
         min_detection_confidence=0.6, min_tracking_confidence=0.6)
 
-    # OpenCV의 백엔드 상수는 어느 OS 빌드에나 정의돼 있으므로(플랫폼별 컴파일 분기가
-    # 아니라 videoio enum 값) 여기서 전부 나열해도 import 에러가 나지 않는다.
-    # 실제로 열리는지는 OS가 결정하며, 실패하면 아래에서 auto로 되돌아간다.
-    backend_names = {
-        "auto": cv2.CAP_ANY,
-        "msmf": cv2.CAP_MSMF,           # Windows 기본
-        "dshow": cv2.CAP_DSHOW,         # Windows 레거시 — msmf가 카메라를 못 열 때
-        "v4l2": cv2.CAP_V4L2,           # Linux (/dev/video*)
-        "avfoundation": cv2.CAP_AVFOUNDATION,  # macOS
-        "gstreamer": cv2.CAP_GSTREAMER,        # Linux 산업용/네트워크 카메라
-    }
-    if VISION_CAMERA_BACKEND not in backend_names:
-        print("[오류] RTAUTO_VISION_CAMERA_BACKEND 값이 잘못됐습니다: "
-              f"{VISION_CAMERA_BACKEND!r}\n"
-              f"       사용 가능: {', '.join(backend_names)}\n"
-              "       Windows는 auto/msmf/dshow, Linux는 auto/v4l2, macOS는 "
-              "auto/avfoundation을 쓴다.")
+    # 카메라 열기 + 화면 크기 결정은 camera_caps가 소유한다(백엔드 표·최대치 탐색·저장).
+    # 여기서 cap.set()을 직접 부르지 말 것 — 웹캠에 따라 한 번에 3.5초를 먹는다.
+    try:
+        cap, cam_fmt = camera_caps.open_camera(
+            VISION_CAMERA_INDEX, backend_name=VISION_CAMERA_BACKEND,
+            width=VISION_CAMERA_WIDTH, height=VISION_CAMERA_HEIGHT,
+            fps=VISION_CAMERA_FPS, fourcc=VISION_CAMERA_FOURCC,
+            min_fps=VISION_CAMERA_MIN_FPS)
+    except ValueError as e:      # .env 값 오타 — 조용히 기본값으로 때우지 않는다
+        print(f"[오류] {e}")
         hands.close()
         return
-    backend = backend_names[VISION_CAMERA_BACKEND]
-    cap = cv2.VideoCapture(VISION_CAMERA_INDEX, backend)
-    if not cap.isOpened() and backend != cv2.CAP_ANY:
-        print(f"[카메라] {VISION_CAMERA_BACKEND} 열기 실패, 기본 백엔드로 재시도")
-        cap.release()
-        cap = cv2.VideoCapture(VISION_CAMERA_INDEX)
-    if not cap.isOpened():
+    if cap is None:
         print(f"[오류] 카메라 {VISION_CAMERA_INDEX}을 열 수 없습니다. "
               "레포 루트 .env의 RTAUTO_VISION_CAMERA_INDEX를 0, 1, 2 순으로 바꿔보세요.")
         if sys.platform.startswith("linux"):
@@ -148,24 +138,23 @@ def main():
         hands.close()
         return
 
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, VISION_CAMERA_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, VISION_CAMERA_HEIGHT)
-    cap.set(cv2.CAP_PROP_FPS, VISION_CAMERA_FPS)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-
-    actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    actual_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    actual_fps = cap.get(cv2.CAP_PROP_FPS)
-    print(f"[카메라] 실제 캡처 {actual_width}x{actual_height} @ {actual_fps:.1f}fps "
-          f"(요청 {VISION_CAMERA_WIDTH}x{VISION_CAMERA_HEIGHT} @ {VISION_CAMERA_FPS}fps, "
+    actual_width, actual_height = cam_fmt.width, cam_fmt.height
+    requested = ("이 웹캠의 최대"
+                 if camera_caps.parse_size_spec(VISION_CAMERA_WIDTH) is None
+                 else f"{VISION_CAMERA_WIDTH}x{VISION_CAMERA_HEIGHT}")
+    print(f"[카메라] 실제 캡처 {cam_fmt.text} "
+          f"(요청: {requested} @ {VISION_CAMERA_FPS}fps, "
           f"index={VISION_CAMERA_INDEX}, backend={VISION_CAMERA_BACKEND})")
     low_resolution = actual_width < 640 or actual_height < 480
     if low_resolution:
         print("[경고] 카메라/드라이버가 640x480 미만만 제공합니다. "
               "인식용 영상 보정을 적용하지만 실제 화질 향상에는 HD 웹캠이 필요합니다.")
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
-    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(WINDOW_NAME, WINDOW_WIDTH, WINDOW_HEIGHT)
+    # WINDOW_KEEPRATIO: 사용자가 창을 마우스로 늘려도 영상이 찌그러지지 않게 한다.
+    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+    cv2.resizeWindow(WINDOW_NAME,
+                     *camera_caps.preview_size(actual_width, actual_height,
+                                               VISION_PREVIEW_WIDTH))
 
     filters = {n: OneEuroFilter(freq=FILTER_FREQ, min_cutoff=FILTER_MIN_CUTOFF,
                                 beta=FILTER_BETA) for n in CHANNEL_NAMES}

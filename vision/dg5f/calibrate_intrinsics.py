@@ -26,7 +26,11 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from config.rtauto_config import (
     CALIB_BOARD_COLS, CALIB_BOARD_ROWS, CALIB_SQUARE_SIZE_MM, CALIB_DIR,
+    VISION_CAMERA_WIDTH, VISION_CAMERA_HEIGHT, VISION_CAMERA_FPS,
+    VISION_CAMERA_BACKEND, VISION_CAMERA_FOURCC, VISION_CAMERA_MIN_FPS,
 )
+
+import camera_caps
 from camera_calibration import chessboard_object_points, find_board_corners, save_intrinsics
 
 CALIB_MIN_FRAMES = 12
@@ -60,10 +64,18 @@ def main():
     print(f"[calib_intrinsics] 카메라={index} 보드={cols}x{rows} 칸={square_mm}mm "
           f"(레포 루트 .env의 RTAUTO_CALIB_BOARD_*로 기본값 변경 가능)")
 
-    cap = cv2.VideoCapture(index)
-    if not cap.isOpened():
+    # ⚠️ 카메라 설정은 실제로 쓸 때와 **같아야 한다**. 렌즈 왜곡·초점거리 값은 영상 크기에
+    #    딸린 값이라, 640x480에서 재놓고 1920x1080으로 쓰면 그 값이 맞지 않는다.
+    #    그래서 여기서도 vision_node_dg5f.py와 같은 설정을 같은 함수로 적용한다.
+    cap, cam_fmt = camera_caps.open_camera(
+        index, backend_name=VISION_CAMERA_BACKEND,
+        width=VISION_CAMERA_WIDTH, height=VISION_CAMERA_HEIGHT,
+        fps=VISION_CAMERA_FPS, fourcc=VISION_CAMERA_FOURCC,
+        min_fps=VISION_CAMERA_MIN_FPS)
+    if cap is None:
         print(f"[오류] 카메라 {index}를 열 수 없습니다.")
         return
+    print(f"[카메라] 실제 캡처 {cam_fmt.text} (index={index}, backend={VISION_CAMERA_BACKEND})")
 
     objp = chessboard_object_points(cols, rows, square_mm)
     object_points, image_points = [], []

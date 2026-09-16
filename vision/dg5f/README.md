@@ -10,6 +10,7 @@
 |---|---|
 | `dg5f_angles.py` | MediaPipe 21 landmark → 20채널 사람 프록시(rad) → DG5F 관절각[deg] 매핑 (채널 테이블·보정 로드·엄지 리타게팅) |
 | `vision_node_dg5f.py` | 웹캠 캡처 → 각도 → One Euro 필터 → UDP 송신 메인 루프 |
+| `camera_caps.py` | 웹캠 열기 + **화면 크기 결정 공용 부품**. 설정이 `max`(기본)면 큰 크기부터 실제로 열어 **크기와 속도를 같이 재서** 가장 좋은 것을 고르고 그 값을 저장해 둔다. 단독 실행으로 확인 가능: `python camera_caps.py 0 [--refresh] [--backend=dshow] [--fourcc=MJPG]` |
 | `calibrate_dg5f.py` | 채널별 human_min/max + 엄지 직진도 보정 → `dg5f_calibration.json` 저장 |
 | `probe_sender.py` | 웹캠 없이 fist/open/cycle 패킷 송신 (배선 결정적 검증용) |
 | `probe_landmarks.py` / `analyze_lmprobe.py` | 랜드마크 21×3 원본 덤프 + 프록시 후보 SNR·부호 분석 (프록시 설계 검증용) |
@@ -17,6 +18,7 @@
 | `joint_ranges.py` | 사람/로봇 관절 가동범위 대조표 (매핑 검증·참고용, `python joint_ranges.py`) |
 | `one_euro_filter.py` | 저역통과 필터 |
 | `dg5f_calibration.json` | (없으면 기본값) 채널별 human_min/max + thumb_straight_ratio — 재보정 시 생성 |
+| `camera_caps_cache.json` | (자동 생성, git 비추적) 웹캠·백엔드·압축 조합별로 찾아낸 화면 크기와 실측 속도. 지워도 다음 실행이 다시 찾는다 |
 | `CALIBRATION_GUIDE.md` | 보정 시 해야 할 동작 체크리스트 |
 
 Unity 쪽(`unity/Assets/Scripts/`): `Dg5fReceiver.cs`(UDP 수신) + `Dg5fHandDriver.cs`(관절 주입·관절 격리 디버그) + `Dg5fFingerIK.cs`/`Dg5fFingerIKMode.cs`(손가락 IK·구동모드 일괄스위치) + `Dg5fIKVectorDebug.cs`(IK 목표 시각화) + `Dg5fJointLogger.cs`(로깅). 4개 DG5F 프리팹 루트에 부착.

@@ -33,13 +33,20 @@ from dg5f_angles import compute_raw, landmarks_to_xyz, CHANNEL_NAMES, WRIST, THU
 from dg5f_paths import CALIB_PATH, unique_log_path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from config.rtauto_config import VISION_CAMERA_INDEX
+from config.rtauto_config import (
+    VISION_CAMERA_INDEX, VISION_CAMERA_WIDTH, VISION_CAMERA_HEIGHT,
+    VISION_CAMERA_FPS, VISION_CAMERA_BACKEND, VISION_CAMERA_FOURCC,
+    VISION_CAMERA_MIN_FPS,
+)
+
+import camera_caps
 
 # vision_node_dg5f.py와 동일 출처(config/rtauto_config.py + .env) — 카메라가 여러 대라
 # 엉뚱한 게 잡히면 여기가 아니라 .env의 RTAUTO_VISION_CAMERA_INDEX를 바꿀 것.
 CAM_INDEX = VISION_CAMERA_INDEX
-# FRAME_W/FRAME_H는 2026-07-28에 삭제 — cap.set()을 안 쓰므로 미사용.
-# 실제 크기는 frame.shape에서 읽어 landmarks_to_xyz의 등방 보정에 쓴다.
+# 화면 크기는 여기에 상수로 두지 않는다 — 설정(config/rtauto_config.py + .env)에서 읽어
+# camera_caps가 적용한다(기본 max = 이 웹캠의 최대치). 실제 크기는 frame.shape에서 읽어
+# landmarks_to_xyz의 등방 보정에 쓴다 — 어떤 크기로 열리든 그 값을 그대로 따른다.
 LOG_EVERY_SEC = 0.5
 # 경로 규칙은 dg5f_paths가 소유 — 초 단위 + 중복 시 접미사라 덮어쓰기 불가
 CSV_PATH = unique_log_path("calib_log")
@@ -75,18 +82,25 @@ def main():
     hands = mp_hands.Hands(model_complexity=1, max_num_hands=1,
                            min_detection_confidence=0.6,
                            min_tracking_confidence=0.6)
-    # ⚠️ cap.set() 을 추가하지 말 것 (2026-07-28 제거). 이 웹캠 + Windows MSMF 실측:
-    #    W/H/FPS set 하나당 3.7~3.9초가 붙어 '열기+첫프레임'이 5.11초 → 16.73초가 됐다.
-    #    그런데 결과는 넣든 안 넣든 640x480 @30fps / read 33ms로 **완전히 동일**했다
-    #    (FOURCC는 MSMF가 아예 무시하고 False를 반환한다 — 0초, 효과도 0).
-    #    카메라 기본값이 이미 640x480@30이라 순수 손해였다. vision_node_dg5f.py·
-    #    dg5f_teleop_gui.py는 07-27에 같은 이유로 이미 제거된 상태다.
-    #    실제 해상도는 frame.shape에서 읽어 쓴다(종횡비 보정도 그 값을 쓴다).
-    cap = cv2.VideoCapture(CAM_INDEX)
-    if not cap.isOpened():
+    # ⚠️ cap.set() 을 직접 부르지 말 것 — 화면 크기 결정은 camera_caps가 단독으로 맡는다.
+    #    (2026-07-28 실측: 이 웹캠 + Windows MSMF는 set 하나당 3.7~3.9초가 붙는데 결과는
+    #     넣든 안 넣든 640x480 @30fps로 동일했다. camera_caps는 **이미 원하는 값이면 아예
+    #     호출하지 않고**, 알아낸 최대 크기를 파일에 적어 둬 다음 실행에서 건너뛴다.)
+    # ⚠️ 여기서 쓰는 카메라 설정은 vision_node_dg5f.py와 **반드시 같아야 한다** — 보정을
+    #    640x480(4:3)에서 해 놓고 실행은 1920x1080(16:9)으로 하면 카메라가 담는 범위가
+    #    달라져 사람 관절 범위 보정값이 어긋난다. 그래서 같은 설정(config/rtauto_config.py)을
+    #    같은 함수로 적용한다.
+    cap, cam_fmt = camera_caps.open_camera(
+        CAM_INDEX, backend_name=VISION_CAMERA_BACKEND,
+        width=VISION_CAMERA_WIDTH, height=VISION_CAMERA_HEIGHT,
+        fps=VISION_CAMERA_FPS, fourcc=VISION_CAMERA_FOURCC,
+        min_fps=VISION_CAMERA_MIN_FPS)
+    if cap is None:
         print(f"[오류] 카메라 {CAM_INDEX} 열기 실패 — 레포 루트 .env의 "
               "RTAUTO_VISION_CAMERA_INDEX를 0, 1, 2 순으로 바꿔보세요.")
         return
+    print(f"[카메라] 실제 캡처 {cam_fmt.text} (index={CAM_INDEX}, "
+          f"backend={VISION_CAMERA_BACKEND})")
 
     obs_min = {n: float("inf") for n in CHANNEL_NAMES}
     obs_max = {n: float("-inf") for n in CHANNEL_NAMES}

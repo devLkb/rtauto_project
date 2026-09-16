@@ -206,11 +206,40 @@ python vision/dg5f/vision_node_dg5f.py [right|left] [--bridge] [--map=direct|rat
 | `--bridge` | **UDP 5008로도 같은 패킷을 보낸다.** 브리지 프로세스를 실행하지는 않는다 |
 | `--map=direct` (기본) / `--map=ratio` | 매핑 방식. `ratio`는 사람 가동범위 보정에 의존 |
 
-주요 상수: `SEND_HZ_CAP = 120`, 창 `1280×720`,
+주요 상수: `SEND_HZ_CAP = 120`, 미리보기 창 폭 `VISION_PREVIEW_WIDTH`(기본 1280,
+세로는 **실제 영상 비율로 자동** — 예전의 1280×720 고정은 4:3 웹캠을 가로로 늘려 보여 줬다),
 MediaPipe `model_complexity=1, max_num_hands=1, min_detection/tracking_confidence=0.6`,
 One Euro 각도 채널 `freq=30, min_cutoff=0.6, beta=0.0005` / 손끝 위치 채널 `min_cutoff=0.15, beta=0.5`.
 `USE_WORLD_LANDMARKS = False`가 현재 값이다 — world 랜드마크는 평평한 손가락을 z노이즈로
 15~27° 굽은 것처럼 잡았고, 보정 파일도 이미지 랜드마크 기준이라 False가 보정과 일치한다(2026-07-22).
+
+### 6-2-1. 카메라 화면 크기 (2026-09-16 변경)
+
+기본값이 `1280×720` 고정에서 **`max`(이 웹캠에서 쓸 수 있는 가장 좋은 크기)**로 바뀌었다.
+⚠️ 예전 고정값은 **실제로 적용되지도 않았다** — 실측에서 요청은 1280×720이었지만 열린 건
+640×480이었다(요청이 조용히 무시됨). 지금은 실제로 나온 영상으로만 판정한다.
+크기를 정하고 카메라에 적용하는 일은 [`camera_caps.py`](../../vision/dg5f/camera_caps.py)
+한 곳이 맡는다 — `vision_node_dg5f.py` · `dg5f_teleop_gui.py` · `calibrate_dg5f.py` ·
+`probe_landmarks.py` · `calibrate_intrinsics.py` · `multi_camera_capture.py`가 모두 이걸 쓴다.
+
+| 항목 | 내용 |
+|---|---|
+| 고르는 법 | 표준 조회 방법이 없어서 **큰 크기부터 실제로 열어 요청하고, 나온 영상과 실측 초당 장수로 판정**한다. 기준(`MIN_FPS`, 기본 15)을 통과한 **가장 큰 크기**가 답 |
+| 왜 속도까지 보나 | 큰 화면이 항상 좋지 않다. 실측(2026-09-16, 같은 웹캠·msmf): 2592×1944 → 초당 1장 / 2560×1440 → 1장 / **1920×1080 → 30장** / 1280×720 → 7.5장 / 640×480 → 30장 |
+| 실패한 요청의 후유증 | 지원하지 않는 크기를 요청하면 msmf가 `Failed to select stream 0`을 내고 **그 뒤 요청까지 계속 실패**한다. 그래서 후보마다 카메라를 새로 연다. `cap.read()`가 False가 아니라 `cv2.error`를 던지는 경우도 있어 예외까지 실패로 처리한다 |
+| 비용 | 후보 하나당 (카메라 다시 열기 + 1.5초 측정). 그래서 결과를 `camera_caps_cache.json`(git 비추적)에 저장해 다음 실행에서는 건너뛴다 |
+| 이미 맞는 값이면 | `cap.set()`을 아예 호출하지 않는다(msmf는 같은 값이어도 스트림을 다시 열어 3.5초를 문다) |
+| 고정하고 싶으면 | `.env`에 `RTAUTO_VISION_CAMERA_WIDTH=1280` / `_HEIGHT=720` 처럼 숫자를 넣는다(탐색 안 함) |
+| 확인 명령 | `python vision/dg5f/camera_caps.py 0` (`--refresh` 재탐색, `--backend=dshow`, `--fourcc=MJPG` 조합 비교) |
+
+⚠️ **보정과 실행은 같은 크기·같은 비율이어야 한다.** 카메라가 담는 범위(화각)가 4:3과
+16:9에서 달라지므로, 캡처 크기를 바꾼 뒤에는 `calibrate_dg5f.py`를 다시 돌리는 편이 안전하다.
+세 스크립트가 같은 설정을 같은 함수로 적용하는 이유가 이것이다.
+
+⚠️ **백엔드·압축 조합으로 결과가 뒤집힌다.** 같은 웹캠 실측(2026-09-16):
+`dshow`는 2592×1944까지 열리지만 압축 없이는 초당 2장이고, `MJPG`를 켜면 같은 크기가
+초당 30장이 됐다. 반대로 `dshow`+`MJPG`의 1920×1080은 초당 4.3장이었다(`msmf`는 30장).
+**이런 값은 추측할 수 없다 — `camera_caps.py`로 재 보고 `.env`에 적는다.**
 
 ### 6-3. 파일 경로·보정 파일
 

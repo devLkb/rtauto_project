@@ -52,6 +52,14 @@ class MultiCameraCaptureTest(unittest.TestCase):
     def setUp(self):
         FakeCapture.openable_indices = set()
         FakeCapture.read_delay_indices = set()
+        # 카메라 형식 탐색은 camera_caps 쪽 테스트(test_camera_caps.py)가 맡는다.
+        # 여기서는 "여러 대를 동시에 굴리는" 부분만 보므로, 실제로 초당 장수를 재느라
+        # 후보마다 1.5초씩 기다리지 않도록 측정을 가짜로 바꾼다.
+        self._real_measure = mcc.camera_caps.measure_fps
+        mcc.camera_caps.measure_fps = lambda cap, **kw: 30.0
+
+    def tearDown(self):
+        mcc.camera_caps.measure_fps = self._real_measure
 
     def test_open_all_reports_per_camera_success(self):
         FakeCapture.openable_indices = {0, 2}

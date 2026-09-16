@@ -12,13 +12,13 @@
   느려도 나머지는 자기 프레임레이트를 유지한다 — dg5f_teleop_gui.py가 이미 쓰는
   단일 카메라 캡처 스레드 패턴을 N대로 확장한 것뿐이다.
 
-⚠️ cap.set()의 실제 효과는 백엔드·카메라 조합마다 다르다는 게 이미 실측돼 있다
-  (calibrate_dg5f.py/probe_landmarks.py 주석 참고: 이 웹캠+Windows MSMF는 W/H/FPS
-  set 하나당 3.7~3.9초가 붙는데 결과는 무변화, FOURCC는 아예 무시하고 False를
-  반환). 그래서 여기서도 "요청은 하되 실제로 뭘 받았는지 그대로 노출"하는 정책을
-  따른다 — 요청이 반영됐다고 가정하지 않는다. 웹캠 3대를 한 USB 버스에 물릴 때
-  압축(MJPEG) 여부가 대역폭에 크게 좌우하므로, 열었을 때 실제 FOURCC/해상도를
-  반드시 로그로 확인할 것(open_all() 반환값 또는 CameraStream.actual_*).
+⚠️ 카메라 형식(화면 크기·초당 장수) 적용은 camera_caps.py가 단독으로 맡는다. cap.set()의
+  실제 효과는 백엔드·카메라 조합마다 다르다는 게 이미 실측돼 있어서다(이 웹캠+Windows
+  MSMF는 W/H/FPS set 하나당 3.7~3.9초가 붙는데 결과는 무변화, FOURCC는 아예 무시하고
+  False를 반환). 그래서 "요청은 하되 **실제로 나온 영상**으로 확인"하는 정책을 따른다 —
+  요청이 반영됐다고 가정하지 않는다. 웹캠 여러 대를 한 USB 버스에 물리면 대역폭이
+  모자라 크기·초당 장수가 깎이므로, 열었을 때 실제 값을 반드시 확인할 것
+  (open_all() 반환값 또는 CameraStream.actual_*).
 """
 import sys
 import threading
@@ -30,19 +30,15 @@ import cv2
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from config.rtauto_config import (
     VISION_CAMERA_INDICES, VISION_CAMERA_WIDTH, VISION_CAMERA_HEIGHT,
-    VISION_CAMERA_FPS, VISION_CAMERA_BACKEND,
+    VISION_CAMERA_FPS, VISION_CAMERA_BACKEND, VISION_CAMERA_FOURCC,
+    VISION_CAMERA_MIN_FPS,
 )
 
-# vision_node_dg5f.py와 같은 백엔드 상수 테이블 — 어느 OS 빌드에나 정의돼 있어
-# 나열해도 import 에러가 나지 않는다. 실제로 열리는지는 OS/드라이버가 결정한다.
-BACKEND_NAMES = {
-    "auto": cv2.CAP_ANY,
-    "msmf": cv2.CAP_MSMF,
-    "dshow": cv2.CAP_DSHOW,
-    "v4l2": cv2.CAP_V4L2,
-    "avfoundation": cv2.CAP_AVFOUNDATION,
-    "gstreamer": cv2.CAP_GSTREAMER,
-}
+import camera_caps
+
+# 백엔드 이름표와 "실제로 나온 크기를 확인하는" 규칙은 camera_caps가 단독으로 소유한다 —
+# 예전엔 이 파일과 vision_node_dg5f.py가 같은 표를 각자 들고 있었다(같은 값 두 번 타이핑).
+BACKEND_NAMES = camera_caps.backend_names()
 
 
 class CameraStream:
@@ -54,11 +50,16 @@ class CameraStream:
 
     def __init__(self, index, width=VISION_CAMERA_WIDTH, height=VISION_CAMERA_HEIGHT,
                  fps=VISION_CAMERA_FPS, backend_name=VISION_CAMERA_BACKEND,
-                 capture_factory=cv2.VideoCapture):
+                 fourcc=VISION_CAMERA_FOURCC, min_fps=VISION_CAMERA_MIN_FPS,
+                 capture_factory=cv2.VideoCapture, log=print):
         self.index = index
+        # width/height는 숫자여도 되고 설정 문자열("max")이어도 된다 — camera_caps가 해석한다.
         self._width, self._height, self._fps = width, height, fps
         self._backend_name = backend_name
+        self._fourcc = fourcc
+        self._min_fps = min_fps
         self._capture_factory = capture_factory
+        self._log = log
         self._cap = None
         self._thread = None
         self._stop = threading.Event()
@@ -81,27 +82,40 @@ class CameraStream:
             self.error = f"카메라 {self.index}를 열 수 없습니다"
             self.opened = False
             return False
-        # ⚠️ 실측(2026-09-02, 실물 웹캠): 이 카메라+MSMF는 cap.set() 1회당 ~3.5초가 걸리는데,
-        # **값이 이미 요청과 같아도 그대로 재협상하며 3.5초를 문다**(calibrate_dg5f.py 주석의
-        # "set 하나당 3.7~3.9초" 실측과 같은 현상 — MSMF가 값 비교 없이 스트림을 통째로
-        # 다시 연다). 그래서 이미 원하는 값이면 .set()을 아예 호출하지 않는다 — 카메라가
-        # 기본값으로 이미 원하는 해상도/fps를 주는 흔한 경우(예: 640x480@30 기본)엔 이
-        # 3.5초×N을 완전히 건너뛴다. 실제로 값을 바꿔야 하는 경우(기본과 다른 해상도 요청)엔
-        # 여전히 그 카메라 몫의 협상 비용은 피할 수 없다 — MultiCameraCapture.open_all()의
-        # 병렬 open으로 "카메라 수 × 비용"이 아니라 "가장 느린 카메라 1대" 비용으로 줄인다.
-        if int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) != self._width:
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._width)
-        if int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) != self._height:
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._height)
-        if abs(cap.get(cv2.CAP_PROP_FPS) - self._fps) > 0.5:
-            cap.set(cv2.CAP_PROP_FPS, self._fps)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # 이 프로퍼티는 비용이 0으로 실측됨(항상 호출)
-        self.actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        self.actual_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        self.actual_fps = float(cap.get(cv2.CAP_PROP_FPS))
+        # 화면 크기·초당 장수 적용은 camera_caps가 소유한다. 거기서 두 가지를 같이 해결한다:
+        #   ① 설정이 "max"면 이 카메라가 낼 수 있는 가장 큰 크기를 찾아 쓴다(찾은 값은 저장).
+        #   ② 이미 원하는 값이면 cap.set()을 아예 호출하지 않는다 — 실측(2026-09-02, 실물
+        #      웹캠 + MSMF)으로 set 한 번이 ~3.5초인데, 값이 같아도 스트림을 통째로 다시
+        #      열며 그 3.5초를 그대로 문다.
+        # 카메라 수 × 비용이 되지 않도록 MultiCameraCapture.open_all()이 병렬로 연다.
+        # 돌려받은 cap을 그대로 쓴다 — 크기 탐색 중 드라이버가 망가지면 camera_caps가
+        # 카메라를 다시 열고 **새 객체**를 돌려주기 때문이다(옛 객체는 이미 닫혀 있다).
+        cap, fmt = camera_caps.apply_best_format(
+            cap, index=self.index, backend_name=self._backend_name,
+            width=self._width, height=self._height, fps=self._fps,
+            fourcc=self._fourcc, min_fps=self._min_fps, log=self._log,
+            reopen=self._reopen)
+        self.actual_width = fmt.width
+        self.actual_height = fmt.height
+        self.actual_fps = fmt.fps
+        if fmt.width <= 0:          # 영상이 한 장도 안 나온다 — 열렸다고 말하면 안 된다
+            self.error = f"카메라 {self.index}에서 영상이 오지 않습니다"
+            cap.release()
+            self.opened = False
+            return False
         self._cap = cap
         self.opened = True
         return True
+
+    def _reopen(self, old_cap):
+        """크기 탐색 중 드라이버가 망가졌을 때 같은 카메라를 새로 여는 통로."""
+        try:
+            old_cap.release()
+        except Exception:
+            pass
+        backend = BACKEND_NAMES.get(self._backend_name, cv2.CAP_ANY)
+        fresh = self._capture_factory(self.index, backend)
+        return fresh if fresh.isOpened() else None
 
     def start(self):
         if not self.opened:

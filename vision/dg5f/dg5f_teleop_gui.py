@@ -29,7 +29,8 @@ PhotoImage 생성(5~13ms)을 다 하고 그 위에 after(20)을 더 얹었다. �
      워커는 _sync_settings()가 만들어 원자적으로 갈아끼우는 불변 _Settings 스냅샷만 읽는다.
   2. cv2 / mediapipe 임포트는 워커 스레드에서 한다(합쳐 ~4.5초. 최상단에서 하면
      그만큼 창이 안 뜬다). 준비되면 모듈 전역 cv2 / mp 에 채워진다.
-  3. cap.set() 은 **쓰지 않는다** — 실측 근거는 _capture_loop 주석 참조.
+  3. cap.set() 을 **직접 쓰지 않는다** — 카메라 형식 적용은 camera_caps.py 한 곳이 맡는다
+     (이미 그 값이면 호출 자체를 건너뛴다). 실측 근거는 _capture_loop 주석 참조.
   4. 송신 경로(sendto)에는 **점4자리 IP만** 넘긴다. 검증은 _sync_settings에서 inet_pton으로
      끝내둔다 — 그러지 않으면 IP를 타이핑하는 중간 문자열('1','19','192','192.')이 전부
      DNS 조회로 들어가 한 번 입력에 10.8초를 멈춘다(실측 근거는 _sync_settings 주석).
@@ -83,6 +84,8 @@ from tkinter import ttk, filedialog, font as tkfont, messagebox
 from one_euro_filter import OneEuroFilter
 from dg5f_paths import unique_log_path
 import dg5f_angles as A
+# camera_caps는 cv2를 **쓸 때** 가져오므로(지연 임포트) 여기서 임포트해도 창이 늦게 뜨지 않는다.
+import camera_caps
 
 # cv2(0.6s) + mediapipe(3.9s) = 창이 뜨기까지의 대기시간. 워커 스레드가 임포트해서
 # 여기에 채운다 → 창은 ~1.2초에 뜨고, 그 뒤 백그라운드로 모델이 준비된다.
@@ -92,9 +95,20 @@ mp = None
 
 # ------------------------- 기본 설정 (vision_node와 동일 값) -------------------------
 CAM_INDEX = 0
-CAM_BACKEND = None          # None=OpenCV 기본(Windows=MSMF, 실측 640x480@30 그대로 나옴).
-                            # ⚠️ cv2.CAP_DSHOW는 open이 1.2초로 빠르지만 이 웹캠에서
-                            #    read()가 504ms(2fps)로 붕괴한다 — 바꾸려면 반드시 재측정.
+# 카메라 백엔드: "auto"=OpenCV 기본(Windows=MSMF).
+# ⚠️ "dshow"는 여는 속도가 1.2초로 빠르지만 이 웹캠에서 read()가 504ms(초당 2장)로
+#    붕괴한 적이 있다 — 바꾸려면 반드시 다시 재 볼 것.
+CAM_BACKEND = os.environ.get("RTAUTO_VISION_CAMERA_BACKEND", "auto")
+
+# 화면 크기: "max"면 이 웹캠이 낼 수 있는 가장 큰 크기를 찾아 쓴다(camera_caps가 담당).
+# 숫자로 적으면 그 크기로 고정. 헤드리스 버전(vision_node_dg5f.py)과 **같은 이름의 설정**을
+# 읽으므로 둘이 항상 같은 크기로 돈다 — 한쪽만 바뀌어 손 보정값이 어긋나는 일을 막는다.
+CAM_WIDTH = os.environ.get("RTAUTO_VISION_CAMERA_WIDTH", "max")
+CAM_HEIGHT = os.environ.get("RTAUTO_VISION_CAMERA_HEIGHT", "max")
+CAM_FPS = int(os.environ.get("RTAUTO_VISION_CAMERA_FPS", "30"))
+CAM_FOURCC = os.environ.get("RTAUTO_VISION_CAMERA_FOURCC", "")
+# 크기를 자동으로 고를 때 "이보다 느리면 그 크기는 버린다"는 기준(초당 장수).
+CAM_MIN_FPS = float(os.environ.get("RTAUTO_VISION_CAMERA_MIN_FPS", "15"))
 # exe로 패키징돼 배포되는 독립 실행형 도구라 config/rtauto_config.py(레포 상대 import)에는
 # 일부러 의존하지 않는다 — 대신 같은 환경변수 이름을 직접 읽어 값 하나로 통일한다.
 # (env var 없으면 아래 기본값. 시작 시 값일 뿐이며 GUI에서 언제든 바꿀 수 있다.)
@@ -757,6 +771,12 @@ class TeleopGUI:
             self.lbl_log.configure(
                 text=f"중지 — {self.logger.count}행 저장됨: {self.logger.path}")
 
+    def _cam_log(self, message):
+        """camera_caps가 진행 상황을 알릴 때 쓰는 통로 — 상태바에 그대로 보여 준다.
+        (최대 크기를 처음 찾을 때 수 초가 걸리는데, 아무 표시가 없으면 멈춘 줄 안다.)"""
+        self.cam_status = message.replace("[카메라] ", "")
+        print(message)
+
     def _request_camera(self):
         """카메라 (재)연결 요청만 걸고 즉시 리턴 — 오픈은 캡처 스레드가 한다.
         (예전엔 이 버튼이 UI 스레드에서 VideoCapture를 열어 6~25초 프리즈였다.)"""
@@ -784,21 +804,30 @@ class TeleopGUI:
                 idx = self._cam_req_index
                 self.cam_status = f"cam{idx} 여는 중…"
                 t0 = time.perf_counter()
-                # ⚠️ cap.set() 절대 추가하지 말 것. 2026-07-27 실측(4회 반복):
-                #    FOURCC/W/H/FPS 4개를 넣으면 6.3~18.9초를 먹는데(set 하나당 2~4.3초)
-                #    read 지연·해상도·fps는 넣든 안 넣든 33ms / 640x480 / 30fps로 동일했다.
-                #    MSMF는 set(FOURCC, MJPG)에 False를 반환(무시)한다. 즉 순수 손해.
-                #    프레임 지연도 전용 캡처 스레드가 계속 비워주므로 버퍼가 쌓이지 않는다.
-                cap = (cv2.VideoCapture(idx) if CAM_BACKEND is None
-                       else cv2.VideoCapture(idx, CAM_BACKEND))
-                if not cap.isOpened():
+                # 화면 크기 결정은 camera_caps가 단독으로 맡는다 — "max"면 이 웹캠의
+                # 최대치를 찾아 쓰고, 찾은 값은 파일에 적어 둬 다음 실행부터 건너뛴다.
+                # ⚠️ 여기서 cap.set()을 직접 부르지 말 것. 2026-07-27 실측(4회 반복):
+                #    FOURCC/W/H/FPS 4개를 그냥 넣으면 6.3~18.9초를 먹는데(set 하나당
+                #    2~4.3초) 결과는 넣든 안 넣든 동일했다. camera_caps는 **이미 그 값이면
+                #    아예 호출하지 않아** 그 손해를 만들지 않는다.
+                # 이 작업은 UI 스레드가 아니라 이 캡처 스레드에서 도므로 화면은 안 멈춘다.
+                try:
+                    cap, cam_fmt = camera_caps.open_camera(
+                        idx, backend_name=CAM_BACKEND, width=CAM_WIDTH,
+                        height=CAM_HEIGHT, fps=CAM_FPS, fourcc=CAM_FOURCC,
+                        min_fps=CAM_MIN_FPS, log=self._cam_log)
+                except ValueError as e:      # 설정값 오타 — 조용히 넘기지 않는다
+                    self.cam_status = f"카메라 설정값 오류: {e.args[0].splitlines()[0]}"
+                    self.cam_fps = 0.0
+                    self._stop.wait(2.0)
+                    continue
+                if cap is None:
                     self.cam_status = f"cam{idx} 열기 실패 — cam# 확인"
                     self.cam_fps = 0.0           # 실패 중에 옛 fps를 계속 보여주면 안 된다
-                    cap.release()
-                    cap = None
                     self._stop.wait(1.5)         # 실패 폭주 방지
                     continue
-                self.cam_status = f"cam{idx} 연결 ({time.perf_counter() - t0:.1f}s)"
+                self.cam_status = (f"cam{idx} 연결 {cam_fmt.width}x{cam_fmt.height} "
+                                   f"({time.perf_counter() - t0:.1f}s)")
                 fail = 0
 
             ok, frame = cap.read()

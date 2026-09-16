@@ -39,6 +39,8 @@ __pycache__/
 
 # 런타임 로그·산출물 (스크립트가 실행마다 생성)
 vision/**/*.csv
+# 웹캠 최대 화면 크기 탐색 결과 (PC마다 꽂힌 카메라가 달라 공유 불가 — 지워도 다시 찾는다)
+vision/dg5f/camera_caps_cache.json
 vision/**/vision_dg5f_*.csv
 vision/**/calib_log_*.csv
 *.log
