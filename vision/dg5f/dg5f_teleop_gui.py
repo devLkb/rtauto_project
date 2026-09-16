@@ -94,9 +94,12 @@ cv2 = None
 mp = None
 
 # ------------------------- 기본 설정 (vision_node와 동일 값) -------------------------
-# 카메라 번호. 숫자면 그 번호, "auto"면 꽂힌 것 중 가장 좋은 걸 알아서 고른다(None으로 표시).
-# 헤드리스 버전(vision_node_dg5f.py)과 **같은 이름의 설정**을 읽는다.
-CAM_INDEX_SPEC = os.environ.get("RTAUTO_VISION_CAMERA_INDEX", "0").strip()
+# 카메라 번호. 숫자면 그 번호, 그 외("auto"/"ask")면 꽂힌 것 중 가장 좋은 걸 알아서
+# 고른다(None으로 표시). 헤드리스 버전(vision_node_dg5f.py)과 **같은 이름의 설정**을 읽는다.
+# ⚠️ "ask"(선택 창 띄우기)는 이 GUI에서는 "알아서 고르기"와 같게 동작한다 — 이 창에는
+#    이미 카메라 번호칸과 "카메라 재연결" 버튼이 있어서, 고른 뒤에도 언제든 바꿀 수 있다.
+#    (창을 하나 더 띄워 먼저 물어보는 것은 군더더기다.)
+CAM_INDEX_SPEC = os.environ.get("RTAUTO_VISION_CAMERA_INDEX", "ask").strip()
 CAM_INDEX = int(CAM_INDEX_SPEC) if CAM_INDEX_SPEC.isdigit() else None
 # 카메라 백엔드: "auto"=OpenCV 기본(Windows=MSMF).
 # ⚠️ "dshow"는 여는 속도가 1.2초로 빠르지만 이 웹캠에서 read()가 504ms(초당 2장)로

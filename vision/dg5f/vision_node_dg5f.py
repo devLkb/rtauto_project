@@ -148,9 +148,9 @@ def main():
                  if camera_caps.parse_size_spec(VISION_CAMERA_WIDTH) is None
                  else f"{VISION_CAMERA_WIDTH}x{VISION_CAMERA_HEIGHT}")
     # 설정이 "auto"였으면 실제로 고른 번호를 보여 준다 — 어느 카메라로 도는지 늘 보이게.
-    how_picked = ("직접 고름" if camera_index == camera_caps.ASK
-                  else "" if str(camera_index).strip().isdigit() else "auto로 고름")
-    index_text = f"{cam_fmt.index}번" + (f"({how_picked})" if how_picked else "")
+    # 설정이 숫자가 아니면(ask/auto) 어느 번호로 정해졌는지가 중요하므로 설정값도 함께 적는다.
+    index_text = (f"{cam_fmt.index}번" if str(camera_index).strip().isdigit()
+                  else f"{cam_fmt.index}번(설정: {camera_index})")
     print(f"[카메라] 실제 캡처 {cam_fmt.text} "
           f"(요청: {requested} @ {VISION_CAMERA_FPS}fps, "
           f"카메라 {index_text}, backend={VISION_CAMERA_BACKEND})")

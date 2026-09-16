@@ -117,7 +117,7 @@ failure/legacy는 results에서 **파생**시킨다 — 경로를 두 번 타이
 
 ### 3-5. 카메라·캘리브레이션
 
-`VISION_CAMERA_INDEX`(0, 또는 `auto`/`ask`) · `WIDTH`(`max`) · `HEIGHT`(`max`) · `FPS`(30) · `BACKEND`(`auto`) ·
+`VISION_CAMERA_INDEX`(`ask` 기본, 숫자 또는 `auto`) · `WIDTH`(`max`) · `HEIGHT`(`max`) · `FPS`(30) · `BACKEND`(`auto`) ·
 `MIN_FPS`(15) · `FOURCC`(빈 값) · `VISION_PREVIEW_WIDTH`(1280) ·
 `VISION_CAMERA_INDICES`(다중 카메라용, 쉼표 구분) ·
 `CALIB_BOARD_COLS`(9) · `CALIB_BOARD_ROWS`(6) · `CALIB_SQUARE_SIZE_MM`(25.0) ·

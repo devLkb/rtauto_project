@@ -185,7 +185,13 @@ DG5F_GRASP_POSE_FILE = _env("RTAUTO_DG5F_GRASP_POSE", "config/dg5f_grasp_pose.js
 # OS가 정하고 재부팅·USB 포트 변경으로 뒤바뀐다. 번호를 박아 두면 모르는 사이에 화질 나쁜
 # 내장 카메라로 돌 수 있다. 어느 번호가 어느 카메라인지 보려면:
 #     python vision/dg5f/camera_caps.py --list
-VISION_CAMERA_INDEX = _env("RTAUTO_VISION_CAMERA_INDEX", "0").strip()
+#
+# 기본값이 "ask"인 이유(2026-09-16): 카메라가 두 대 이상이면 **묻는 게 맞다.** 번호를
+# 기본값으로 박아 두면 노트북에서 내장 카메라로 조용히 도는 일이 생긴다. 대신 카메라가
+# 한 대뿐이면 **묻지 않고 바로 시작**하므로 평소에는 달라지는 게 없다.
+#   비용: 시작할 때 카메라를 찾느라 1~2초가 더 걸린다(실측, 카메라 1대 기준).
+#         그게 싫으면 숫자를 적어 고정한다 — 그러면 찾는 과정 자체를 건너뛴다.
+VISION_CAMERA_INDEX = _env("RTAUTO_VISION_CAMERA_INDEX", "ask").strip()
 
 # 화면 크기는 **숫자가 아니라 문자열 그대로** 둔다 — 기본값 "max"가 "이 웹캠이 낼 수 있는
 # 가장 큰 크기"라는 뜻이기 때문이다. 실제 해석과 카메라 적용은 vision/dg5f/camera_caps.py

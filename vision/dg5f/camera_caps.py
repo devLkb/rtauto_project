@@ -313,7 +313,8 @@ def _cache_load(path):
     return data if isinstance(data, dict) else {}
 
 
-def _cache_read(path, key):
+def _cache_entry(path, key):
+    """저장해 둔 {가로, 세로, 실측 초당 장수}. 없거나 깨졌으면 None."""
     entry = _cache_load(path).get(key)
     if not isinstance(entry, dict):
         return None
@@ -321,7 +322,18 @@ def _cache_read(path, key):
         width, height = int(entry["width"]), int(entry["height"])
     except (KeyError, TypeError, ValueError):
         return None
-    return (width, height) if width > 0 and height > 0 else None
+    if width <= 0 or height <= 0:
+        return None
+    try:
+        fps = float(entry.get("measured_fps") or 0.0)
+    except (TypeError, ValueError):
+        fps = 0.0
+    return {"width": width, "height": height, "measured_fps": fps}
+
+
+def _cache_read(path, key):
+    entry = _cache_entry(path, key)
+    return (entry["width"], entry["height"]) if entry else None
 
 
 def _cache_write(path, key, size, fps):
@@ -369,6 +381,9 @@ def apply_best_format(cap, index=0, backend_name="auto", width=None, height=None
             size = _try_size(cap, *cached)
             if size == cached:
                 how = "cache"
+                # 속도는 그때 재서 저장해 둔 값을 쓴다 — 여기서 다시 재면 1초를 더 쓴다.
+                saved = _cache_entry(cache_path, key)
+                measured = saved["measured_fps"] if saved else 0.0
             else:
                 # 저장값과 실제가 다르다 — 카메라가 바뀌었거나 다른 앱이 점유 중이다.
                 log(f"[카메라] 저장된 값({cached[0]}x{cached[1]})이 맞지 않아 다시 찾습니다.")
@@ -437,10 +452,26 @@ SCAN_MAX_INDEX = 5
 ASK = "ask"
 
 
+def _open_raw(factory, index, backend, cv2):
+    """카메라를 **열기만** 한다(크기·속도 설정은 안 건드림). 못 열면 None.
+
+    설정을 적용하면 이 웹캠에서 2.6초가 걸리는데 그냥 열면 1.4초다(실측 2026-09-16).
+    "어떤 카메라가 꽂혀 있나"만 알고 싶을 때는 그냥 여는 쪽이 훨씬 싸다.
+    """
+    cap = factory(index, backend)
+    if not cap.isOpened() and backend != cv2.CAP_ANY:
+        cap.release()
+        cap = factory(index)
+    if not cap.isOpened():
+        cap.release()
+        return None
+    return cap
+
+
 def list_cameras(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS,
                  cache_path=CAMERA_CAPS_PATH, use_cache=True, log=print,
                  max_index=SCAN_MAX_INDEX, stop_after_miss=None, capture_factory=None,
-                 with_preview=False):
+                 with_preview=False, quick=False):
     """0번부터 차례로 열어 보고 **쓸 수 있는 카메라 목록**을 돌려준다.
 
     각 항목: {"index", "width", "height", "measured_fps", "preview"}. 못 여는 번호는 목록에
@@ -448,32 +479,56 @@ def list_cameras(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS,
     "어느 쪽이 외장 웹캠인지" 눈으로 보려고 쓴다.
     stop_after_miss를 주면 그 횟수만큼 연속으로 실패했을 때 멈춘다(자동 고르기에서 시간을
     아끼려고 쓴다 — 카메라 번호는 보통 0부터 빈틈없이 붙는다).
+
+    quick=True면 **열기만 하고 크기·속도는 설정하지 않는다**(이 웹캠 실측 2.6초 → 1.4초).
+    크기·속도는 예전에 알아내 저장해 둔 값을 보여 주고, 저장된 값이 없으면 지금 나온 사진
+    크기를 쓴다. "어느 카메라가 꽂혀 있나"를 물어보는 화면용이다 — 고른 뒤 실제로 쓸 때
+    제대로 다시 연다.
     """
+    cv2 = _cv2()
+    factory = capture_factory or cv2.VideoCapture
+    backend = backend_id(backend_name)
     found = []
     misses = 0
     for index in range(max_index + 1):
-        cap, fmt = open_camera(index, backend_name=backend_name, fourcc=fourcc,
-                               min_fps=min_fps, cache_path=cache_path, use_cache=use_cache,
-                               log=lambda *_a, **_k: None, capture_factory=capture_factory)
+        # quick이라도 **처음 보는 카메라는 제대로 재야 한다** — 안 그러면 "둘 다 640x480"으로
+        # 보여서 어느 쪽이 좋은 카메라인지 알 수 없고, 추천도 틀린 쪽을 가리킨다.
+        saved = (_cache_entry(cache_path, _cache_key(index, backend_name, fourcc))
+                 if (quick and use_cache) else None)
+        if quick and saved is not None:
+            cap = _open_raw(factory, index, backend, cv2)
+            fmt = None
+        else:
+            if quick:
+                log(f"[카메라] {index}번은 처음 보는 카메라라 성능을 재 봅니다 "
+                    "— 다음부터는 저장된 값을 써서 빨라집니다.")
+            cap, fmt = open_camera(index, backend_name=backend_name, fourcc=fourcc,
+                                   min_fps=min_fps, cache_path=cache_path,
+                                   use_cache=use_cache, log=lambda *_a, **_k: None,
+                                   capture_factory=capture_factory)
         if cap is None:
             misses += 1
             if stop_after_miss and misses >= stop_after_miss:
                 break
             continue
         misses = 0
-        measured = fmt.measured_fps or measure_fps(cap, seconds=1.0, warmup=5)
-        preview = None
-        if with_preview:
-            # 선택 창에 보여 줄 사진 한 장. 실패해도 목록에서 빼지 않는다 — 글자만으로도 고른다.
-            try:
-                ok, frame = cap.read()
-                preview = frame if ok else None
-            except Exception:
-                preview = None
+        # 선택 창에 보여 줄 사진 한 장. 실패해도 글자 목록만으로 고를 수 있다.
+        try:
+            ok, frame = cap.read()
+        except Exception:
+            ok, frame = False, None
+        preview = frame if (ok and with_preview) else None
+        if fmt is None:
+            width, height, measured = saved["width"], saved["height"], saved["measured_fps"]
+        else:
+            width, height = fmt.width, fmt.height
+            measured = fmt.measured_fps or measure_fps(cap, seconds=1.0, warmup=5)
+        # ⚠️ 여기서 반드시 닫는다. 하나라도 연 채로 두면 다음 번호를 확인하는 데 0.1초 대신
+        # 3초가 걸린다(2026-09-16 실측 — 전체 2.7초 → 19초).
         cap.release()
-        found.append({"index": index, "width": fmt.width, "height": fmt.height,
+        found.append({"index": index, "width": width, "height": height,
                       "measured_fps": measured, "preview": preview})
-        log(f"[카메라] {index}번: {fmt.width}x{fmt.height}, 초당 {measured:.1f}장")
+        log(f"[카메라] {index}번: {width}x{height}, 초당 {measured:.1f}장")
     return found
 
 
@@ -487,7 +542,7 @@ def pick_best_index(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS,
     """
     cams = list_cameras(backend_name=backend_name, fourcc=fourcc, min_fps=min_fps,
                         cache_path=cache_path, use_cache=use_cache, log=log,
-                        stop_after_miss=2, capture_factory=capture_factory)
+                        stop_after_miss=2, capture_factory=capture_factory, quick=True)
     if not cams:
         return None
     fast = [c for c in cams if c["measured_fps"] >= min_fps] or cams
@@ -504,13 +559,18 @@ def ask_user_to_choose(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS,
     """꽂혀 있는 카메라를 찾아 **사람에게 창으로 물어본다**. 고른 번호(취소하면 None).
 
     창을 그리는 일은 camera_picker.py가 한다 — 여기서는 카메라를 찾아 넘겨줄 뿐이다.
-    카메라가 한 대뿐이면 묻지 않고 바로 그 번호를 쓴다(쓸데없이 클릭하게 만들지 않는다).
+    카메라가 한 대뿐이면 묻지 않고 그 번호를 쓴다(쓸데없이 클릭하게 만들지 않는다).
+
+    ⚠️ 카메라를 **붙들고 있지 않는다.** "찾을 때 연 카메라를 그대로 쓰면 한 번 덜 열 텐데"
+    싶지만, 실측해 보니 반대였다(2026-09-16): 카메라 하나를 연 채로 다음 번호를 확인하면
+    없는 번호 하나를 판정하는 데 0.1초 → 3초로 느려져, 전체가 2.7초에서 19초가 됐다.
+    그래서 **찾을 때는 다 닫고**, 고른 뒤에 다시 연다.
     """
     log("[카메라] 꽂혀 있는 카메라를 찾는 중입니다 — 잠시 걸립니다…")
     cams = list_cameras(backend_name=backend_name, fourcc=fourcc, min_fps=min_fps,
                         cache_path=cache_path, use_cache=use_cache,
-                        log=lambda *_a, **_k: None, capture_factory=capture_factory,
-                        with_preview=True)
+                        log=log, capture_factory=capture_factory,
+                        with_preview=True, quick=True, stop_after_miss=2)
     if not cams:
         log("[카메라] 쓸 수 있는 카메라를 찾지 못했습니다.")
         return None
@@ -535,9 +595,10 @@ def open_camera(index, backend_name="auto", width=None, height=None, fps=None,
     backend = backend_id(backend_name)
     index = parse_index_spec(index)
     if index == ASK:                       # 설정이 "ask" — 창을 띄워 사람에게 물어본다
-        index = ask_user_to_choose(backend_name=backend_name, fourcc=fourcc, min_fps=min_fps,
-                                   cache_path=cache_path, use_cache=use_cache, log=log,
-                                   capture_factory=capture_factory)
+        index = ask_user_to_choose(
+            backend_name=backend_name, fourcc=fourcc, min_fps=min_fps,
+            cache_path=cache_path, use_cache=use_cache, log=log,
+            capture_factory=capture_factory)
         if index is None:
             log("[카메라] 카메라 선택이 취소됐습니다.")
             return None, None
