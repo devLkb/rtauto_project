@@ -205,10 +205,10 @@ VISION_CAMERA_HEIGHT = _env("RTAUTO_VISION_CAMERA_HEIGHT", "max").strip()
 VISION_CAMERA_FPS = int(_env("RTAUTO_VISION_CAMERA_FPS", "30"))
 VISION_CAMERA_BACKEND = _env("RTAUTO_VISION_CAMERA_BACKEND", "auto").strip().lower()
 
-# 영상 압축 형식(네 글자, 예: MJPG). 비워 두면 건드리지 않는다(기본).
-# 큰 화면에서 초당 장수가 뚝 떨어질 때의 탈출구다 — 압축 없이 보내면 USB 대역폭이 모자라
-# 1920x1080에서 초당 5장까지 떨어지는 웹캠이 흔하다. 단, Windows 기본 백엔드(msmf)는 이
-# 요청을 무시하므로 함께 RTAUTO_VISION_CAMERA_BACKEND=dshow 가 필요할 수 있다.
+# 영상 압축 형식(네 글자, 예: MJPG). 비워 두면 카메라 기본 포맷과 MJPG를 모두 실측해
+# 최소 FPS를 만족하는 가장 큰 화면을 자동 선택한다. 압축 없이 보내면 USB 대역폭이 모자라
+# 큰 화면이 느려지는 웹캠이 흔하지만, 포맷별 지원 상태가 달라 무조건 MJPG를 강제하지 않는다.
+# 값을 명시하면 자동 비교 없이 그 포맷만 사용한다.
 VISION_CAMERA_FOURCC = _env("RTAUTO_VISION_CAMERA_FOURCC", "").strip()
 
 # "쓸 만하다"의 기준선 — 화면 크기를 자동으로 고를 때 **이보다 느린 크기는 버린다**.

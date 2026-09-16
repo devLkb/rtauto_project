@@ -19,13 +19,18 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import camera_caps as cc
 
 # OpenCV 속성 번호(cv2 없이 돌리기 위해 여기서만 쓰는 값). 실제 코드는 cv2 상수를 쓴다.
-PROP_WIDTH, PROP_HEIGHT, PROP_FPS = 3, 4, 5
+PROP_WIDTH, PROP_HEIGHT, PROP_FPS, PROP_FOURCC = 3, 4, 5, 6
+
+
+class FakeFrame:
+    def __init__(self, width, height):
+        self.shape = (height, width, 3)
+        self.size = width * height * 3
 
 
 class FakeCamera:
@@ -36,6 +41,7 @@ class FakeCamera:
         self.mode = mode
         self.size = start or self.supported[0]
         self.fps = fps
+        self.fourcc = ""
         self.set_calls = []
         self.released = False
         self.broken = False
@@ -54,6 +60,11 @@ class FakeCamera:
             return True
         if prop == PROP_FPS:
             self.fps = float(value)
+            return True
+        if prop == PROP_FOURCC:
+            code = int(value)
+            chars = [chr((code >> (8 * i)) & 0xFF) for i in range(4)]
+            self.fourcc = "".join(chars).rstrip("\x00")
             return True
         return True
 
@@ -79,12 +90,14 @@ class FakeCamera:
             return float(self.size[1])
         if prop == PROP_FPS:
             return float(self.fps)
+        if prop == PROP_FOURCC:
+            return FakeCv2.VideoWriter_fourcc(*self.fourcc) if self.fourcc else 0.0
         return 0.0
 
     def read(self):
         if self.broken:
             raise RuntimeError("cv2.error 흉내 — 깨진 스트림에서 읽기")
-        return True, np.zeros((self.size[1], self.size[0], 3), dtype="uint8")
+        return True, FakeFrame(*self.size)
 
     def release(self):
         self.released = True
@@ -96,7 +109,7 @@ class FakeCv2:
     CAP_PROP_FRAME_HEIGHT = PROP_HEIGHT
     CAP_PROP_FPS = PROP_FPS
     CAP_PROP_BUFFERSIZE = 38
-    CAP_PROP_FOURCC = 6
+    CAP_PROP_FOURCC = PROP_FOURCC
     # 백엔드 상수 — open_camera가 backend_names()로 이 표를 읽는다.
     CAP_ANY, CAP_MSMF, CAP_DSHOW = 0, 1400, 700
     CAP_V4L2, CAP_AVFOUNDATION, CAP_GSTREAMER = 200, 1200, 1800
@@ -124,7 +137,16 @@ class CameraCapsTest(unittest.TestCase):
         # (speeds에 없는 크기는 충분히 빠른 것으로 본다.)
         self._real_measure = cc.measure_fps
         self.speeds = {}
-        cc.measure_fps = lambda cap, **kw: self.speeds.get(getattr(cap, "size", None), 30.0)
+
+        def fake_measure(cap, **kw):
+            size = getattr(cap, "size", None)
+            fourcc = getattr(cap, "fourcc", "")
+            requested = getattr(cap, "fps", None)
+            return self.speeds.get((fourcc, size, requested),
+                   self.speeds.get((fourcc, size),
+                   self.speeds.get(size, 30.0)))
+
+        cc.measure_fps = fake_measure
 
     def _write_cache(self, data):
         with io.open(self.cache, "w", encoding="utf-8") as f:
@@ -179,6 +201,23 @@ class CameraCapsTest(unittest.TestCase):
         # 고정 크기로 열 때는 최대치 탐색을 하지 않는다 — 탐색 결과 파일도 만들지 않는다.
         self.assertFalse(os.path.exists(self.cache))
 
+    def test_fixed_size_with_empty_fourcc_still_picks_the_fast_format(self):
+        cam = FakeCamera([(640, 480), (1280, 720)], mode="snap")
+        self.speeds = {("", (1280, 720)): 12.0, ("MJPG", (1280, 720)): 30.0}
+        _, fmt = cc.apply_best_format(cam, width="1280", height="720", min_fps=15.0,
+                                      cache_path=self.cache, log=_quiet)
+        self.assertEqual((fmt.width, fmt.height), (1280, 720))
+        self.assertEqual(fmt.how, "fixed")
+        self.assertEqual(fmt.fourcc, "MJPG")
+        self.assertFalse(os.path.exists(self.cache))
+
+    def test_apply_best_format_does_not_force_capture_buffer_size(self):
+        """일부 백엔드는 BUFFERSIZE=1 설정만으로 FPS가 반감되므로 범용 코드에서 건드리지 않는다."""
+        cam = FakeCamera([(640, 480), (1280, 720)], mode="snap")
+        cc.apply_best_format(cam, width="1280", height="720", fps=30,
+                             cache_path=self.cache, log=_quiet)
+        self.assertEqual([c for c in cam.set_calls if c[0] == FakeCv2.CAP_PROP_BUFFERSIZE], [])
+
     # ---------------- 크기만 보지 않고 속도까지 본다 ----------------
     def test_big_but_too_slow_mode_is_rejected(self):
         """실물 증상 그대로: 2592x1944는 초당 1장이라 못 쓴다 → 1920x1080을 고른다."""
@@ -206,6 +245,65 @@ class CameraCapsTest(unittest.TestCase):
         _, fmt = cc.apply_best_format(cam, width="max", height="max", min_fps=30.0,
                                       cache_path=self.cache, log=_quiet)
         self.assertEqual((fmt.width, fmt.height), (640, 480))
+
+    def test_auto_fourcc_picks_mjpg_when_raw_usb_mode_is_slow(self):
+        """FOURCC를 비워 두면 기본 포맷과 MJPG를 실측해, 더 큰 빠른 MJPG 모드를 고른다."""
+        cam = FakeCamera([(640, 480), (1280, 720), (1920, 1080)], mode="snap")
+        self.speeds = {
+            ("", (1920, 1080)): 10.0,
+            ("", (1280, 720)): 15.0,
+            ("MJPG", (1920, 1080)): 30.0,
+        }
+        _, fmt = cc.apply_best_format(cam, width="max", height="max",
+                                      cache_path=self.cache, log=_quiet)
+        self.assertEqual((fmt.width, fmt.height), (1920, 1080))
+        self.assertEqual(fmt.fourcc, "MJPG")
+        with io.open(self.cache, encoding="utf-8") as f:
+            saved = json.load(f)
+        entry = list(saved.values())[0]
+        self.assertEqual(entry["fourcc"], "MJPG")
+        self.assertEqual(entry["schema"], cc.CACHE_SCHEMA)
+
+    def test_explicit_fourcc_keeps_single_format_path(self):
+        """FOURCC를 명시하면 자동 후보 비교 없이 그 포맷만 시험한다."""
+        cam = FakeCamera([(640, 480), (1920, 1080)], mode="snap")
+        _, fmt = cc.apply_best_format(cam, width="max", height="max", fourcc="MJPG",
+                                      cache_path=self.cache, log=_quiet)
+        self.assertEqual(fmt.fourcc, "MJPG")
+        self.assertTrue(all(c[0] != PROP_FOURCC or c[1] == FakeCv2.VideoWriter_fourcc(*"MJPG")
+                            for c in cam.set_calls))
+
+    def test_probe_applies_requested_fps_before_measurement(self):
+        """후보를 잴 때 요청 FPS가 먼저 들어가야 30fps 모드를 찾을 수 있다."""
+        cam = FakeCamera([(640, 480), (1920, 1080)], mode="snap")
+        self.speeds = {
+            ("", (1920, 1080), 30.0): 30.0,
+            ("", (1920, 1080)): 10.0,
+            ("MJPG", (1920, 1080), 30.0): 30.0,
+        }
+        _, fmt = cc.apply_best_format(cam, width="max", height="max", fps=30,
+                                      cache_path=self.cache, log=_quiet)
+        self.assertEqual((fmt.width, fmt.height), (1920, 1080))
+        self.assertEqual(fmt.measured_fps, 30.0)
+
+    def test_probe_forces_fps_set_when_driver_get_already_claims_30(self):
+        """드라이버가 FPS=30이라고 말해도 set(FPS)를 생략하면 실제 협상이 15fps일 수 있다."""
+        cam = FakeCamera([(640, 480), (1920, 1080)], mode="snap", fps=30.0)
+
+        def measure_only_after_forced_set(cap, **_kw):
+            fps_sets = [c for c in cap.set_calls if c[0] == PROP_FPS and c[1] == 30]
+            return 30.0 if fps_sets else 15.0
+
+        cc.measure_fps = measure_only_after_forced_set
+        _, fmt = cc.apply_best_format(cam, width="max", height="max", fps=30,
+                                      min_fps=30.0, cache_path=self.cache, log=_quiet)
+        self.assertEqual((fmt.width, fmt.height), (1920, 1080))
+        self.assertEqual(fmt.measured_fps, 30.0)
+        self.assertTrue(any(c[0] == PROP_FPS and c[1] == 30 for c in cam.set_calls))
+
+    def test_capture_format_text_includes_selected_fourcc(self):
+        fmt = cc.CaptureFormat(1920, 1080, 30, "probe", measured_fps=30, fourcc="MJPG")
+        self.assertIn("포맷 MJPG", fmt.text)
 
     # ---------------- 드라이버가 망가지는 경우(2026-09-16 실물에서 겪음) ----------------
     def test_driver_that_breaks_is_revived_and_still_finds_max(self):
@@ -253,6 +351,29 @@ class CameraCapsTest(unittest.TestCase):
         # 저장값을 썼다면 후보 목록을 훑지 않는다 — 크기 요청은 가로·세로 한 번씩뿐이다.
         self.assertEqual(len([c for c in second.set_calls if c[0] == PROP_WIDTH]), 1)
 
+    def test_fps_auto_cache_reuses_saved_selected_fourcc(self):
+        supported = [(640, 480), (1280, 720), (1920, 1080)]
+        first = FakeCamera(supported, mode="snap")
+        self.speeds = {("", (1920, 1080), 30.0): 15.0, ("MJPG", (1920, 1080), 30.0): 30.0}
+        cc.apply_best_format(first, width="max", height="max", fps=30,
+                             cache_path=self.cache, log=_quiet)
+
+        second = FakeCamera(supported, mode="snap")
+        _, fmt = cc.apply_best_format(second, width="max", height="max", fps=30,
+                                      cache_path=self.cache, log=_quiet)
+        self.assertEqual(fmt.how, "cache")
+        self.assertEqual(fmt.fourcc, "MJPG")
+        self.assertEqual([c for c in second.set_calls if c[0] == PROP_WIDTH], [(PROP_WIDTH, 1920)])
+        self.assertTrue(any(c[0] == PROP_FOURCC and c[1] == FakeCv2.VideoWriter_fourcc(*"MJPG")
+                            for c in second.set_calls))
+
+    def test_explicit_fourcc_fps_cache_key_reads_fourcc_from_third_field(self):
+        key = cc._cache_key(0, "auto", "MJPG", fps=30)
+        self._write_cache({key: {"schema": cc.CACHE_SCHEMA, "width": 1920, "height": 1080,
+                                "fourcc": "MJPG", "measured_fps": 30.0}})
+        entry = cc._cache_entry(self.cache, key)
+        self.assertEqual(entry["fourcc"], "MJPG")
+
     def test_saved_value_that_no_longer_fits_is_reprobed(self):
         """카메라를 다른 것으로 바꿔 꽂으면 저장값이 안 맞는다 → 스스로 다시 찾아야 한다."""
         self._write_cache({cc._cache_key(0, "auto", ""): {"width": 1920, "height": 1080}})
@@ -265,7 +386,8 @@ class CameraCapsTest(unittest.TestCase):
     def test_already_correct_size_skips_the_slow_set_call(self):
         """이미 최대 크기로 열려 있으면 cap.set()을 부르지 않는다(웹캠에 따라 1회 3.5초)."""
         cam = FakeCamera([(640, 480), (1920, 1080)], mode="snap", start=(1920, 1080))
-        self._write_cache({cc._cache_key(0, "auto", ""): {"width": 1920, "height": 1080}})
+        self._write_cache({cc._cache_key(0, "auto", "", fps=30): {
+            "schema": cc.CACHE_SCHEMA, "width": 1920, "height": 1080, "fourcc": ""}})
         cc.apply_best_format(cam, width="max", height="max", fps=30,
                              cache_path=self.cache, log=_quiet)
         self.assertEqual([c for c in cam.set_calls if c[0] in (PROP_WIDTH, PROP_HEIGHT)], [])
@@ -335,6 +457,27 @@ class CameraCapsTest(unittest.TestCase):
         self.assertIsNotNone(cap)
         self.assertEqual(fmt.index, 1)
         self.assertEqual((fmt.width, fmt.height), (1920, 1080))
+
+    def test_auto_selection_passes_requested_fps_into_probe_and_cache(self):
+        """auto 선택 목록을 처음 잴 때도 요청 FPS가 먼저 적용되고 FPS별 캐시에 저장된다."""
+        factory, made = self._multi_factory({0: [(640, 480)], 1: [(640, 480), (1920, 1080)]})
+
+        def measure_only_after_fps_set(cap, **_kw):
+            return 30.0 if any(c[0] == PROP_FPS and c[1] == 30 for c in cap.set_calls) else 10.0
+
+        cc.measure_fps = measure_only_after_fps_set
+        cap, fmt = cc.open_camera("auto", fps=30, min_fps=30.0,
+                                  cache_path=self.cache, log=_quiet,
+                                  capture_factory=factory)
+        self.assertIsNotNone(cap)
+        self.assertEqual(fmt.index, 1)
+        self.assertEqual(fmt.measured_fps, 30.0)
+        self.assertTrue(any(c[0] == PROP_FPS and c[1] == 30
+                            for cams in made.values() for cam in cams for c in cam.set_calls))
+        with io.open(self.cache, encoding="utf-8") as f:
+            saved = json.load(f)
+        self.assertTrue(saved)
+        self.assertTrue(all(key.endswith("|fps30") for key in saved), saved)
 
     # ---------------- 사람에게 물어서 고르기(ask) ----------------
     def test_ask_spec_is_recognised(self):

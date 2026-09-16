@@ -32,7 +32,7 @@
   RTAUTO_VISION_CAMERA_WIDTH / _HEIGHT = max  → 이 파일이 가장 좋은 크기를 찾아 쓴다(기본)
   숫자(예: 1280 / 720)로 적으면 그 크기를 그대로 요청한다(탐색 안 함)
   RTAUTO_VISION_CAMERA_MIN_FPS               → "쓸 만하다"의 기준선(기본 초당 15장)
-  RTAUTO_VISION_CAMERA_FOURCC                → 영상 압축 형식(예: MJPG). 비우면 안 건드림
+  RTAUTO_VISION_CAMERA_FOURCC                → 비우면 기본 포맷/MJPG 실측 비교, 값은 강제 포맷
   RTAUTO_VISION_CAMERA_INDEX = auto          → 꽂힌 카메라 중 가장 좋은 것을 알아서 고른다
                                                (숫자면 그 번호 고정. 기본값은 0)
 
@@ -84,6 +84,12 @@ _VERIFY_SLEEP = 0.05
 _PROBE_SECONDS = 1.5
 _PROBE_WARMUP = 5
 
+# 설정에서 FOURCC를 비워 두면 카메라 기본값과 MJPG를 둘 다 실제로 재 본다. 많은 USB 웹캠은
+# raw(YUYV 등)로 큰 화면을 보내면 USB 대역폭에 막혀 FPS가 떨어지고, MJPG에서는 같은 해상도가
+# 정상 속도로 나온다.
+AUTO_FOURCC_CANDIDATES = ("", "MJPG")
+CACHE_SCHEMA = 2
+
 
 class CaptureFormat:
     """실제로 적용된 캡처 형식. `how`는 이 값이 어떻게 정해졌는지를 뜻한다.
@@ -91,16 +97,18 @@ class CaptureFormat:
     fixed=설정에 적힌 숫자 그대로 / cache=저장해 둔 값 재사용 / probe=이번에 찾아냄
     """
 
-    def __init__(self, width, height, fps, how, measured_fps=0.0, index=None):
+    def __init__(self, width, height, fps, how, measured_fps=0.0, index=None, fourcc=""):
         self.index = index        # 실제로 열린 카메라 번호(설정이 "auto"였을 때 특히 중요)
         self.width = int(width)
         self.height = int(height)
         self.fps = float(fps)                    # 드라이버가 알려준 값(0을 주는 백엔드도 있다)
         self.measured_fps = float(measured_fps)  # 실제로 재 본 값(0이면 안 재 봤다는 뜻)
         self.how = how
+        self.fourcc = _normalize_fourcc(fourcc)
 
     def __repr__(self):
-        return f"CaptureFormat({self.width}x{self.height}@{self.fps:.1f}, how={self.how})"
+        fourcc = self.fourcc or "기본"
+        return f"CaptureFormat({self.width}x{self.height}@{self.fps:.1f}, fourcc={fourcc}, how={self.how})"
 
     @property
     def text(self):
@@ -108,7 +116,8 @@ class CaptureFormat:
                   "probe": "이번에 찾아냄", "unknown": "확인 실패"}
         speed = (f"실측 초당 {self.measured_fps:.1f}장" if self.measured_fps
                  else f"드라이버 표기 {self.fps:.1f}fps")
-        return f"{self.width}x{self.height}, {speed} ({how_ko.get(self.how, self.how)})"
+        fourcc = self.fourcc or "기본"
+        return f"{self.width}x{self.height}, {speed}, 포맷 {fourcc} ({how_ko.get(self.how, self.how)})"
 
 
 def parse_size_spec(value):
@@ -187,36 +196,51 @@ def measure_fps(cap, seconds=4.0, warmup=10):
     return frames / elapsed if elapsed > 0 else 0.0
 
 
-def _set_if_needed(cap, prop, value, tolerance=0.5):
-    """이미 그 값이면 호출하지 않는다 — msmf는 값이 같아도 스트림을 다시 열어 ~3.5초를 문다."""
-    try:
-        current = float(cap.get(prop))
-    except Exception:
-        current = float("nan")
-    if abs(current - float(value)) <= tolerance:
-        return False
+def _set_if_needed(cap, prop, value, tolerance=0.5, force=False):
+    """이미 그 값이면 호출하지 않는다 — 필요할 때만 드라이버 보고값을 무시하고 강제 적용한다."""
+    if not force:
+        try:
+            current = float(cap.get(prop))
+        except Exception:
+            current = float("nan")
+        if abs(current - float(value)) <= tolerance:
+            return False
     cap.set(prop, value)
     return True
 
 
-def _apply_fourcc(cap, fourcc):
+def _normalize_fourcc(fourcc):
+    return str(fourcc or "").strip().upper()[:4]
+
+
+def _fourcc_candidates(fourcc):
+    explicit = _normalize_fourcc(fourcc)
+    if explicit:
+        return (explicit,)
+    return AUTO_FOURCC_CANDIDATES
+
+
+def _apply_fourcc(cap, fourcc, force=False):
     """영상 압축 형식 요청(예: MJPG). 효과는 백엔드·카메라마다 다르므로 결과를 믿지 않는다."""
+    fourcc = _normalize_fourcc(fourcc)
     if not fourcc:
         return
     cv2 = _cv2()
     try:
-        code = cv2.VideoWriter_fourcc(*str(fourcc).upper()[:4])
-        _set_if_needed(cap, cv2.CAP_PROP_FOURCC, code, tolerance=0.0)
+        code = cv2.VideoWriter_fourcc(*fourcc)
+        _set_if_needed(cap, cv2.CAP_PROP_FOURCC, code, tolerance=0.0, force=force)
     except Exception:
         pass
 
 
-def _try_size(cap, width, height):
-    """크기를 요청하고, **실제로 나온** 영상 크기를 돌려준다. 실패하면 (0, 0)."""
+def _try_size(cap, width, height, fps=None, force_fps=False):
+    """크기와 요청 FPS를 적용하고, **실제로 나온** 영상 크기를 돌려준다. 실패하면 (0, 0)."""
     cv2 = _cv2()
     try:
-        _set_if_needed(cap, cv2.CAP_PROP_FRAME_WIDTH, width)
-        _set_if_needed(cap, cv2.CAP_PROP_FRAME_HEIGHT, height)
+        changed = _set_if_needed(cap, cv2.CAP_PROP_FRAME_WIDTH, width)
+        changed = _set_if_needed(cap, cv2.CAP_PROP_FRAME_HEIGHT, height) or changed
+        if fps is not None:
+            _set_if_needed(cap, cv2.CAP_PROP_FPS, fps, force=force_fps or changed)
     except Exception:
         return 0, 0
     return frame_size(cap)
@@ -228,7 +252,7 @@ def _area(size):
 
 # ----------------------------- 가장 좋은 크기 찾기 -----------------------------
 
-def probe_best_size(cap, log=print, reopen=None, fourcc="", min_fps=DEFAULT_MIN_FPS):
+def probe_best_size(cap, log=print, reopen=None, fourcc="", min_fps=DEFAULT_MIN_FPS, requested_fps=None):
     """큰 크기부터 실제로 시험해, **속도 기준을 통과한 가장 큰 크기**를 고른다.
 
     돌려주는 값은 (카메라, (가로, 세로), 실측 초당 장수)다 — 도중에 카메라를 다시 열기
@@ -254,10 +278,10 @@ def probe_best_size(cap, log=print, reopen=None, fourcc="", min_fps=DEFAULT_MIN_
             if fresh is None:
                 break                       # 카메라를 다시 열 수 없다 — 여기서 멈춘다
             cap = fresh
-            _apply_fourcc(cap, fourcc)
+            _apply_fourcc(cap, fourcc, force=True)
         first = False
 
-        got = _try_size(cap, *size)
+        got = _try_size(cap, *size, fps=requested_fps)
         if not _area(got) or got in tested:
             continue
         if got != size and _area(got) <= _area(base):
@@ -289,19 +313,117 @@ def probe_best_size(cap, log=print, reopen=None, fourcc="", min_fps=DEFAULT_MIN_
             fresh = reopen(cap)
             if fresh is not None:
                 cap = fresh
-                _apply_fourcc(cap, fourcc)
-        _try_size(cap, *size)
+                _apply_fourcc(cap, fourcc, force=True)
+        _try_size(cap, *size, fps=requested_fps, force_fps=True)
     if not fps:
         fps = measure_fps(cap, seconds=_PROBE_SECONDS, warmup=_PROBE_WARMUP)
     return cap, size, fps
+
+
+def _format_rank(item, min_fps):
+    fourcc, size, measured = item
+    order = AUTO_FOURCC_CANDIDATES.index(fourcc) if fourcc in AUTO_FOURCC_CANDIDATES else 0
+    return (measured >= min_fps, _area(size), measured, -order)
+
+
+def _fixed_format_rank(item, requested, min_fps):
+    fourcc, size, measured = item
+    order = AUTO_FOURCC_CANDIDATES.index(fourcc) if fourcc in AUTO_FOURCC_CANDIDATES else 0
+    return (size == requested, measured >= min_fps, _area(size), measured, -order)
+
+
+def _finalize_format(cap, size, fourcc, fps, reopen=None):
+    if reopen is not None:
+        fresh = reopen(cap)
+        if fresh is not None:
+            cap = fresh
+    _apply_fourcc(cap, fourcc, force=True)
+    got = _try_size(cap, *size, fps=fps, force_fps=True)
+    return cap, got
+
+
+def probe_best_format(cap, log=print, reopen=None, fourcc="", min_fps=DEFAULT_MIN_FPS, fps=None):
+    """FOURCC 후보별로 가장 좋은 크기를 재고, 그중 최선의 형식을 고른다."""
+    candidates = _fourcc_candidates(fourcc)
+    results = []
+    first = True
+    for candidate in candidates:
+        if not first and reopen is not None:
+            fresh = reopen(cap)
+            if fresh is None:
+                break
+            cap = fresh
+        first = False
+        label = candidate or "기본"
+        if len(candidates) > 1:
+            log(f"[카메라] {label} 포맷을 시험합니다.")
+        _apply_fourcc(cap, candidate, force=True)
+        cap, size, measured = probe_best_size(cap, log=log, reopen=reopen,
+                                             fourcc=candidate, min_fps=min_fps, requested_fps=fps)
+        if _area(size):
+            results.append((candidate, size, measured))
+
+    if not results:
+        return cap, (0, 0), 0.0, _normalize_fourcc(fourcc)
+
+    selected_fourcc, size, measured = max(results, key=lambda item: _format_rank(item, min_fps))
+    cap, confirmed = _finalize_format(cap, size, selected_fourcc, fps, reopen=reopen)
+    if _area(confirmed):
+        size = confirmed
+    if len(candidates) > 1:
+        log(f"[카메라] 선택한 포맷: {selected_fourcc or '기본'} "
+            f"({size[0]}x{size[1]}, 초당 {measured:.1f}장)")
+    return cap, size, measured, selected_fourcc
+
+
+def probe_fixed_format(cap, width, height, log=print, reopen=None, fourcc="",
+                       min_fps=DEFAULT_MIN_FPS, fps=None):
+    """고정 해상도는 유지하되, FOURCC가 비어 있으면 포맷 후보만 실측해 고른다."""
+    requested = (int(width), int(height))
+    candidates = _fourcc_candidates(fourcc)
+    results = []
+    first = True
+    for candidate in candidates:
+        if not first and reopen is not None:
+            fresh = reopen(cap)
+            if fresh is None:
+                break
+            cap = fresh
+        first = False
+        _apply_fourcc(cap, candidate, force=True)
+        got = _try_size(cap, *requested, fps=fps, force_fps=True)
+        if not _area(got):
+            continue
+        measured = measure_fps(cap, seconds=_PROBE_SECONDS, warmup=_PROBE_WARMUP)
+        if len(candidates) > 1:
+            log(f"[카메라] {candidate or '기본'} 포맷 {requested[0]}x{requested[1]} "
+                f"요청 → {got[0]}x{got[1]}, 초당 {measured:.1f}장")
+        results.append((candidate, got, measured))
+
+    if not results:
+        return cap, (0, 0), 0.0, _normalize_fourcc(fourcc)
+
+    selected_fourcc, size, measured = max(
+        results, key=lambda item: _fixed_format_rank(item, requested, min_fps))
+    cap, confirmed = _finalize_format(cap, size, selected_fourcc, fps, reopen=reopen)
+    if _area(confirmed):
+        size = confirmed
+    return cap, size, measured, selected_fourcc
 
 
 # ----------------------- 찾아낸 값 저장/재사용 -----------------------
 # 카메라마다 값이 다르고 PC마다 꽂힌 카메라가 다르므로 이 파일은 git에 넣지 않는다
 # (.gitignore). 저장된 값이 실제와 다르면 apply_best_format이 스스로 다시 찾는다.
 
-def _cache_key(index, backend_name, fourcc):
-    return f"{index}|{(backend_name or 'auto').lower()}|{(fourcc or '').upper()}"
+def _cache_key(index, backend_name, fourcc, fps=None):
+    key_fourcc = _normalize_fourcc(fourcc) or "AUTO"
+    key = f"{index}|{(backend_name or 'auto').lower()}|{key_fourcc}"
+    if fps is not None:
+        try:
+            key += f"|fps{float(fps):g}"
+        except (TypeError, ValueError):
+            key += f"|fps{fps}"
+    return key
 
 
 def _cache_load(path):
@@ -314,7 +436,7 @@ def _cache_load(path):
 
 
 def _cache_entry(path, key):
-    """저장해 둔 {가로, 세로, 실측 초당 장수}. 없거나 깨졌으면 None."""
+    """저장해 둔 {가로, 세로, FOURCC, 실측 초당 장수}. 없거나 깨졌으면 None."""
     entry = _cache_load(path).get(key)
     if not isinstance(entry, dict):
         return None
@@ -328,7 +450,19 @@ def _cache_entry(path, key):
         fps = float(entry.get("measured_fps") or 0.0)
     except (TypeError, ValueError):
         fps = 0.0
-    return {"width": width, "height": height, "measured_fps": fps}
+
+    parts = key.split("|")
+    key_fourcc = parts[2] if len(parts) >= 3 else ""
+    if key_fourcc == "AUTO":
+        if int(entry.get("schema", 0) or 0) < CACHE_SCHEMA:
+            return None
+        cached_fourcc = _normalize_fourcc(entry.get("fourcc", ""))
+        if cached_fourcc not in AUTO_FOURCC_CANDIDATES:
+            return None
+    else:
+        cached_fourcc = _normalize_fourcc(entry.get("fourcc", key_fourcc))
+
+    return {"width": width, "height": height, "measured_fps": fps, "fourcc": cached_fourcc}
 
 
 def _cache_read(path, key):
@@ -336,9 +470,11 @@ def _cache_read(path, key):
     return (entry["width"], entry["height"]) if entry else None
 
 
-def _cache_write(path, key, size, fps):
+def _cache_write(path, key, size, fps, fourcc=""):
     data = _cache_load(path)
-    data[key] = {"width": int(size[0]), "height": int(size[1]),
+    data[key] = {"schema": CACHE_SCHEMA,
+                 "width": int(size[0]), "height": int(size[1]),
+                 "fourcc": _normalize_fourcc(fourcc),
                  "measured_fps": round(float(fps), 1),
                  "probed_at": time.strftime("%Y-%m-%d %H:%M:%S")}
     tmp = f"{path}.tmp"
@@ -367,7 +503,9 @@ def apply_best_format(cap, index=0, backend_name="auto", width=None, height=None
     cv2 = _cv2()
     width = parse_size_spec(width)
     height = parse_size_spec(height)
-    _apply_fourcc(cap, fourcc)
+    requested_fourcc = _normalize_fourcc(fourcc)
+    selected_fourcc = requested_fourcc
+    _apply_fourcc(cap, requested_fourcc, force=True)
 
     want_best = width is None or height is None
     how = "fixed"
@@ -375,15 +513,17 @@ def apply_best_format(cap, index=0, backend_name="auto", width=None, height=None
     measured = 0.0
 
     if want_best:
-        key = _cache_key(index, backend_name, fourcc)
-        cached = _cache_read(cache_path, key) if use_cache else None
-        if cached:
-            size = _try_size(cap, *cached)
+        key = _cache_key(index, backend_name, requested_fourcc, fps=fps)
+        saved = _cache_entry(cache_path, key) if use_cache else None
+        if saved:
+            selected_fourcc = saved["fourcc"]
+            _apply_fourcc(cap, selected_fourcc, force=True)
+            cached = (saved["width"], saved["height"])
+            size = _try_size(cap, *cached, fps=fps, force_fps=True)
             if size == cached:
                 how = "cache"
                 # 속도는 그때 재서 저장해 둔 값을 쓴다 — 여기서 다시 재면 1초를 더 쓴다.
-                saved = _cache_entry(cache_path, key)
-                measured = saved["measured_fps"] if saved else 0.0
+                measured = saved["measured_fps"]
             else:
                 # 저장값과 실제가 다르다 — 카메라가 바뀌었거나 다른 앱이 점유 중이다.
                 log(f"[카메라] 저장된 값({cached[0]}x{cached[1]})이 맞지 않아 다시 찾습니다.")
@@ -391,24 +531,22 @@ def apply_best_format(cap, index=0, backend_name="auto", width=None, height=None
         if not _area(size):
             log("[카메라] 이 웹캠에서 가장 좋은 화면을 찾는 중입니다 — 크기와 속도를 직접 "
                 "재느라 수십 초 걸릴 수 있고, 찾은 값은 저장해 다음 실행부터는 건너뜁니다.")
-            cap, size, measured = probe_best_size(cap, log=log, reopen=reopen,
-                                                  fourcc=fourcc, min_fps=min_fps)
+            cap, size, measured, selected_fourcc = probe_best_format(
+                cap, log=log, reopen=reopen, fourcc=requested_fourcc,
+                min_fps=min_fps, fps=fps)
             how = "probe"
             if size[0] >= MIN_SANE_WIDTH and size[1] >= MIN_SANE_HEIGHT:
-                _cache_write(cache_path, key, size, measured)
+                _cache_write(cache_path, key, size, measured, selected_fourcc)
     else:
-        size = _try_size(cap, width, height)
+        cap, size, measured, selected_fourcc = probe_fixed_format(
+            cap, width, height, log=log, reopen=reopen, fourcc=requested_fourcc,
+            min_fps=min_fps, fps=fps)
         if size != (width, height):
             log(f"[카메라] 요청한 {width}x{height}를 이 카메라가 지원하지 않아 "
                 f"{size[0]}x{size[1]}로 열렸습니다.")
 
     if fps is not None:
-        _set_if_needed(cap, cv2.CAP_PROP_FPS, fps)
-    try:
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)   # 이 항목은 비용 0으로 실측됨(항상 호출)
-    except Exception:
-        pass
-
+        _set_if_needed(cap, cv2.CAP_PROP_FPS, fps, force=True)
     if not _area(size):
         size = frame_size(cap)
         how = "unknown"
@@ -416,7 +554,7 @@ def apply_best_format(cap, index=0, backend_name="auto", width=None, height=None
         driver_fps = float(cap.get(cv2.CAP_PROP_FPS))
     except Exception:
         driver_fps = 0.0
-    return cap, CaptureFormat(size[0], size[1], driver_fps, how, measured, index)
+    return cap, CaptureFormat(size[0], size[1], driver_fps, how, measured, index, selected_fourcc)
 
 
 def parse_index_spec(value):
@@ -468,7 +606,7 @@ def _open_raw(factory, index, backend, cv2):
     return cap
 
 
-def list_cameras(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS,
+def list_cameras(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS, fps=None,
                  cache_path=CAMERA_CAPS_PATH, use_cache=True, log=print,
                  max_index=SCAN_MAX_INDEX, stop_after_miss=None, capture_factory=None,
                  with_preview=False, quick=False):
@@ -493,7 +631,7 @@ def list_cameras(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS,
     for index in range(max_index + 1):
         # quick이라도 **처음 보는 카메라는 제대로 재야 한다** — 안 그러면 "둘 다 640x480"으로
         # 보여서 어느 쪽이 좋은 카메라인지 알 수 없고, 추천도 틀린 쪽을 가리킨다.
-        saved = (_cache_entry(cache_path, _cache_key(index, backend_name, fourcc))
+        saved = (_cache_entry(cache_path, _cache_key(index, backend_name, fourcc, fps=fps))
                  if (quick and use_cache) else None)
         if quick and saved is not None:
             cap = _open_raw(factory, index, backend, cv2)
@@ -503,7 +641,7 @@ def list_cameras(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS,
                 log(f"[카메라] {index}번은 처음 보는 카메라라 성능을 재 봅니다 "
                     "— 다음부터는 저장된 값을 써서 빨라집니다.")
             cap, fmt = open_camera(index, backend_name=backend_name, fourcc=fourcc,
-                                   min_fps=min_fps, cache_path=cache_path,
+                                   fps=fps, min_fps=min_fps, cache_path=cache_path,
                                    use_cache=use_cache, log=lambda *_a, **_k: None,
                                    capture_factory=capture_factory)
         if cap is None:
@@ -532,7 +670,7 @@ def list_cameras(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS,
     return found
 
 
-def pick_best_index(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS,
+def pick_best_index(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS, fps=None,
                     cache_path=CAMERA_CAPS_PATH, use_cache=True, log=print,
                     capture_factory=None):
     """꽂혀 있는 카메라 중 **가장 좋은 것**의 번호. 하나도 못 찾으면 None.
@@ -540,7 +678,7 @@ def pick_best_index(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS,
     고르는 기준: ① 속도 기준(min_fps)을 넘는 것 중 화면이 가장 큰 것 ② 전부 기준 미달이면
     그중 화면이 가장 큰 것 ③ 같으면 번호가 작은 쪽(보통 내장 카메라).
     """
-    cams = list_cameras(backend_name=backend_name, fourcc=fourcc, min_fps=min_fps,
+    cams = list_cameras(backend_name=backend_name, fourcc=fourcc, min_fps=min_fps, fps=fps,
                         cache_path=cache_path, use_cache=use_cache, log=log,
                         stop_after_miss=2, capture_factory=capture_factory, quick=True)
     if not cams:
@@ -553,7 +691,7 @@ def pick_best_index(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS,
     return best["index"]
 
 
-def ask_user_to_choose(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS,
+def ask_user_to_choose(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS, fps=None,
                        cache_path=CAMERA_CAPS_PATH, use_cache=True, log=print,
                        capture_factory=None):
     """꽂혀 있는 카메라를 찾아 **사람에게 창으로 물어본다**. 고른 번호(취소하면 None).
@@ -567,7 +705,7 @@ def ask_user_to_choose(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS,
     그래서 **찾을 때는 다 닫고**, 고른 뒤에 다시 연다.
     """
     log("[카메라] 꽂혀 있는 카메라를 찾는 중입니다 — 잠시 걸립니다…")
-    cams = list_cameras(backend_name=backend_name, fourcc=fourcc, min_fps=min_fps,
+    cams = list_cameras(backend_name=backend_name, fourcc=fourcc, min_fps=min_fps, fps=fps,
                         cache_path=cache_path, use_cache=use_cache,
                         log=log, capture_factory=capture_factory,
                         with_preview=True, quick=True, stop_after_miss=2)
@@ -596,14 +734,14 @@ def open_camera(index, backend_name="auto", width=None, height=None, fps=None,
     index = parse_index_spec(index)
     if index == ASK:                       # 설정이 "ask" — 창을 띄워 사람에게 물어본다
         index = ask_user_to_choose(
-            backend_name=backend_name, fourcc=fourcc, min_fps=min_fps,
+            backend_name=backend_name, fourcc=fourcc, min_fps=min_fps, fps=fps,
             cache_path=cache_path, use_cache=use_cache, log=log,
             capture_factory=capture_factory)
         if index is None:
             log("[카메라] 카메라 선택이 취소됐습니다.")
             return None, None
     elif index is None:                    # 설정이 "auto" — 꽂힌 것 중 가장 좋은 걸 고른다
-        index = pick_best_index(backend_name=backend_name, fourcc=fourcc, min_fps=min_fps,
+        index = pick_best_index(backend_name=backend_name, fourcc=fourcc, min_fps=min_fps, fps=fps,
                                 cache_path=cache_path, use_cache=use_cache, log=log,
                                 capture_factory=capture_factory)
         if index is None:
@@ -688,13 +826,13 @@ def _main(argv):
     `--list`: 꽂혀 있는 카메라를 모두 열어 보고 번호·크기·속도를 표로 보여 준다. 노트북에
     외장 웹캠을 꽂았을 때 **어느 번호가 어느 카메라인지** 알아내는 용도다.
 
-
-    같은 웹캠도 **백엔드와 압축 형식 조합에 따라 쓸 수 있는 크기와 속도가 완전히 달라진다**
-    (2026-09-16 실측). 그래서 이 명령으로 조합을 직접 비교해 보고 `.env`에 적는다.
+    같은 웹캠도 **백엔드와 전송 포맷 조합에 따라 쓸 수 있는 크기와 속도가 완전히 달라진다**.
+    FOURCC를 생략하면 기본 포맷과 MJPG를 실측해 더 나은 쪽을 자동으로 고른다.
     """
     index = 0
     backend = "auto"
     fourcc = ""
+    fps = 30
     refresh = False
     show_list = False
     for arg in argv:
@@ -706,16 +844,18 @@ def _main(argv):
             backend = arg.split("=", 1)[1]
         elif arg.startswith("--fourcc="):
             fourcc = arg.split("=", 1)[1]
+        elif arg.startswith("--fps="):
+            fps = float(arg.split("=", 1)[1])
         else:
             index = int(arg)
 
     if show_list:
         print(f"[camera_caps] 0~{SCAN_MAX_INDEX}번 카메라를 차례로 열어 봅니다 "
-              f"(backend={backend}, 압축={fourcc or '없음'}). 잠시 걸립니다…")
+              f"(backend={backend}, 포맷={fourcc or '자동'}). 잠시 걸립니다…")
         print("   (없는 번호에서 OpenCV가 빨간 에러 줄을 찍는 건 정상입니다 — "
               "그 번호에 카메라가 없다는 뜻입니다.)")
         print()
-        cams = list_cameras(backend_name=backend, fourcc=fourcc, use_cache=not refresh,
+        cams = list_cameras(backend_name=backend, fourcc=fourcc, fps=fps, use_cache=not refresh,
                             log=lambda *_a, **_k: None)
         if not cams:
             print("쓸 수 있는 카메라를 찾지 못했습니다.")
@@ -734,23 +874,20 @@ def _main(argv):
         print("매번 알아서 고르게 하려면 숫자 대신 auto 를 적습니다:")
         print("    RTAUTO_VISION_CAMERA_INDEX=auto")
         return 0
-    print(f"[camera_caps] 카메라 {index}(backend={backend}, 압축={fourcc or '없음'})에서 "
+    print(f"[camera_caps] 카메라 {index}(backend={backend}, 포맷={fourcc or '자동'})에서 "
           f"쓸 수 있는 가장 좋은 화면을 찾습니다. 저장 파일: {CAMERA_CAPS_PATH}")
-    cap, fmt = open_camera(index, backend_name=backend, fourcc=fourcc,
+    cap, fmt = open_camera(index, backend_name=backend, fourcc=fourcc, fps=fps,
                            use_cache=not refresh)
     if cap is None:
         print(f"[오류] 카메라 {index}를 열 수 없습니다. 번호를 0, 1, 2 순으로 바꿔 보세요.")
         return 1
     measured = measure_fps(cap)
     cap.release()
-    print(f"[결과] {fmt.width}x{fmt.height} — 실측 초당 {measured:.1f}장")
+    print(f"[결과] {fmt.width}x{fmt.height} {fmt.fourcc or '기본 포맷'} — 실측 초당 {measured:.1f}장")
     if measured < DEFAULT_MIN_FPS:
         print(f"[경고] 초당 {measured:.1f}장은 손 동작을 따라가기에 느립니다.")
-        print("       ① 압축을 켜서 비교: --fourcc=MJPG")
-        print("       ② 백엔드를 바꿔 비교: --backend=msmf / --backend=dshow")
-        print("       ③ 그래도 느리면 .env의 RTAUTO_VISION_CAMERA_WIDTH/HEIGHT를 "
-              "숫자로 고정하세요(예: 1280 / 720).")
-    return 0
+        print("       자동 탐색에서 기본 포맷과 MJPG가 모두 기준에 못 미쳤습니다.")
+        print("       다른 백엔드를 시험하거나 캡처 해상도를 낮춰야 합니다.")
 
 
 if __name__ == "__main__":
