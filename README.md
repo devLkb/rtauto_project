@@ -172,9 +172,15 @@ Lift / Elbow / Wrist 1~3)로 움직인다.
 > 내 웹캠이 어떤지 확인하려면(카메라만 잠깐 열었다 닫는다):
 >
 > ```bash
-> python vision/dg5f/camera_caps.py 0                                 # 0번 카메라
+> python vision/dg5f/camera_caps.py --list                            # 꽂혀 있는 카메라 전부
+> python vision/dg5f/camera_caps.py 0                                 # 0번 카메라만
 > python vision/dg5f/camera_caps.py 0 --backend=dshow --fourcc=MJPG   # 다른 조합과 비교
 > ```
+>
+> **카메라가 두 대 이상이면**(노트북 내장 + 외장 웹캠) `--list`로 번호를 확인해 `.env`의
+> `RTAUTO_VISION_CAMERA_INDEX`에 적습니다. 번호 대신 **`auto`**를 적으면 실행할 때마다
+> 꽂혀 있는 것 중 가장 좋은 카메라를 알아서 고릅니다 — Windows는 번호 순서가 바뀔 수
+> 있어 노트북으로 옮겨 다닐 때 안전합니다.
 >
 > Windows는 **백엔드(`msmf`/`dshow`)와 압축(`MJPG`) 조합에 따라 결과가 크게 다르다.**
 > 더 좋은 조합이 나오면 `.env`의 `RTAUTO_VISION_CAMERA_BACKEND` / `_FOURCC`에 적는다.

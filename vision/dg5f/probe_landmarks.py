@@ -94,7 +94,7 @@ def main():
         print(f"[오류] 카메라 {CAM_INDEX} 열기 실패 — 레포 루트 .env의 "
               "RTAUTO_VISION_CAMERA_INDEX를 0, 1, 2 순으로 바꿔보세요.")
         return
-    print(f"[카메라] 실제 캡처 {cam_fmt.text} (index={CAM_INDEX}, "
+    print(f"[카메라] 실제 캡처 {cam_fmt.text} (카메라 {cam_fmt.index}번, "
           f"backend={VISION_CAMERA_BACKEND})")
 
     log_path = unique_log_path(f"lmprobe_{label}")

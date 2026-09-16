@@ -154,8 +154,34 @@ python vision/dg5f/camera_caps.py 0 --backend=dshow --fourcc=MJPG   # 다른 조
 Windows에서는 **백엔드(`msmf`/`dshow`)와 압축 형식(`MJPG`) 조합에 따라 결과가 크게
 달라진다.** 위 명령으로 조합을 비교해 가장 좋은 쪽을 `.env`에 적는다.
 
-카메라 인덱스는 `0`, `1`, `2` 순으로 시험한다. Linux에서는 `ls /dev/video*` 또는
-`v4l2-ctl --list-devices`의 번호가 곧 인덱스다.
+### 카메라가 두 대 이상일 때 (노트북 내장 + 외장 웹캠)
+
+어느 번호가 어느 카메라인지 한 번에 보려면:
+
+```bash
+python vision/dg5f/camera_caps.py --list
+```
+
+```text
+  번호      화면 크기     초당 장수   비고
+     0    640x480         30.0장
+     1   1920x1080        30.0장   ← 가장 좋음(auto가 고르는 것)
+```
+
+원하는 번호를 `.env`의 `RTAUTO_VISION_CAMERA_INDEX`에 적으면 고정된다. **번호 대신
+`auto`를 적으면** 실행할 때마다 꽂혀 있는 것 중 가장 좋은 카메라를 알아서 고른다 —
+Windows에서는 재부팅이나 USB 포트 변경으로 번호가 뒤바뀔 수 있어서, 노트북으로 옮겨
+다닐 때는 `auto`가 안전하다.
+
+```dotenv
+RTAUTO_VISION_CAMERA_INDEX=auto
+```
+
+⚠️ `auto`는 첫 실행에서 카메라를 모두 열어 보느라 시간이 조금 더 걸린다(찾은 값은 저장돼
+다음부터는 빠르다). 그리고 "가장 좋다"의 기준은 **속도 기준을 넘는 것 중 화면이 가장 큰
+것**이라, 내장 카메라가 더 좋으면 내장을 고른다.
+
+Linux에서는 `ls /dev/video*` 또는 `v4l2-ctl --list-devices`의 번호가 곧 인덱스다.
 
 `RTAUTO_VISION_CAMERA_BACKEND`는 `auto`로 열리지 않을 때만 OS에 맞게 바꾼다 —
 Windows는 `msmf`/`dshow`, Linux는 `v4l2`/`gstreamer`, macOS는 `avfoundation`.

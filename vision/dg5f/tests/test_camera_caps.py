@@ -97,7 +97,9 @@ class FakeCv2:
     CAP_PROP_FPS = PROP_FPS
     CAP_PROP_BUFFERSIZE = 38
     CAP_PROP_FOURCC = 6
-    CAP_ANY = 0
+    # 백엔드 상수 — open_camera가 backend_names()로 이 표를 읽는다.
+    CAP_ANY, CAP_MSMF, CAP_DSHOW = 0, 1400, 700
+    CAP_V4L2, CAP_AVFOUNDATION, CAP_GSTREAMER = 200, 1200, 1800
 
     @staticmethod
     def VideoWriter_fourcc(*chars):
@@ -267,6 +269,72 @@ class CameraCapsTest(unittest.TestCase):
         cc.apply_best_format(cam, width="max", height="max", fps=30,
                              cache_path=self.cache, log=_quiet)
         self.assertEqual([c for c in cam.set_calls if c[0] in (PROP_WIDTH, PROP_HEIGHT)], [])
+
+    # ---------------- 카메라가 여러 대일 때 고르기 ----------------
+    def _multi_factory(self, table):
+        """번호별로 다른 가짜 카메라를 주는 공장. 표에 없는 번호는 '안 열림'."""
+        made = {}
+
+        class Missing:
+            def isOpened(self):
+                return False
+
+            def release(self):
+                pass
+
+        def factory(index, backend=None):
+            if index not in table:
+                return Missing()
+            cam = FakeCamera(table[index], mode="snap")
+            made.setdefault(index, []).append(cam)
+            return cam
+
+        return factory, made
+
+    def test_index_spec_parsing(self):
+        self.assertIsNone(cc.parse_index_spec("auto"))
+        self.assertIsNone(cc.parse_index_spec(" AUTO "))
+        self.assertEqual(cc.parse_index_spec("1"), 1)
+        self.assertEqual(cc.parse_index_spec(0), 0)
+        with self.assertRaises(ValueError):
+            cc.parse_index_spec("첫번째")
+        with self.assertRaises(ValueError):
+            cc.parse_index_spec("-1")
+
+    def test_list_cameras_skips_empty_slots(self):
+        """0번과 2번만 꽂혀 있어도 둘 다 찾아낸다(중간 번호가 비어 있어도 멈추지 않는다)."""
+        factory, _ = self._multi_factory({0: [(640, 480)], 2: [(1920, 1080)]})
+        cams = cc.list_cameras(cache_path=self.cache, log=_quiet, capture_factory=factory)
+        self.assertEqual([c["index"] for c in cams], [0, 2])
+
+    def test_auto_picks_the_better_camera(self):
+        """노트북 상황: 0번=내장(640x480), 1번=외장 웹캠(1920x1080) → 1번을 고른다."""
+        factory, _ = self._multi_factory({0: [(640, 480)], 1: [(640, 480), (1920, 1080)]})
+        picked = cc.pick_best_index(cache_path=self.cache, log=_quiet,
+                                    capture_factory=factory)
+        self.assertEqual(picked, 1)
+
+    def test_auto_prefers_speed_over_size(self):
+        """더 커도 너무 느리면 안 고른다 — 1번이 크지만 초당 2장이면 0번을 고른다."""
+        factory, _ = self._multi_factory({0: [(1280, 720)], 1: [(640, 480), (2592, 1944)]})
+        self.speeds = {(2592, 1944): 2.0}
+        picked = cc.pick_best_index(cache_path=self.cache, log=_quiet,
+                                    capture_factory=factory)
+        self.assertEqual(picked, 0)
+
+    def test_auto_returns_none_when_no_camera(self):
+        factory, _ = self._multi_factory({})
+        self.assertIsNone(cc.pick_best_index(cache_path=self.cache, log=_quiet,
+                                             capture_factory=factory))
+
+    def test_open_camera_accepts_auto_and_reports_the_number(self):
+        """open_camera에 "auto"를 주면 스스로 고르고, 고른 번호를 결과에 담아 돌려준다."""
+        factory, _ = self._multi_factory({0: [(640, 480)], 1: [(640, 480), (1920, 1080)]})
+        cap, fmt = cc.open_camera("auto", cache_path=self.cache, log=_quiet,
+                                  capture_factory=factory)
+        self.assertIsNotNone(cap)
+        self.assertEqual(fmt.index, 1)
+        self.assertEqual((fmt.width, fmt.height), (1920, 1080))
 
     # ---------------- 미리보기 창 크기 ----------------
     def test_preview_keeps_aspect_ratio(self):

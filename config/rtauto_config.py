@@ -177,7 +177,14 @@ DG5F_GRASP_POSE_FILE = _env("RTAUTO_DG5F_GRASP_POSE", "config/dg5f_grasp_pose.js
 
 # ---------------- MediaPipe 카메라 ----------------
 # 카메라 열거 순서와 지원 모드는 PC/드라이버마다 다르므로 vision 스크립트에 고정하지 않는다.
-VISION_CAMERA_INDEX = int(_env("RTAUTO_VISION_CAMERA_INDEX", "0"))
+# 카메라 번호. 숫자면 그 번호로 고정, "auto"면 꽂혀 있는 것 중 가장 좋은 것을 알아서 고른다.
+# 화면 크기와 마찬가지로 **문자열 그대로** 두고 해석은 vision/dg5f/camera_caps.py가 한다.
+#
+# 왜 auto가 필요한가: 노트북에 외장 웹캠을 꽂으면 카메라가 두 대가 되는데, 어느 쪽이 0번인지
+# OS가 정하고 재부팅·USB 포트 변경으로 뒤바뀐다. 번호를 박아 두면 모르는 사이에 화질 나쁜
+# 내장 카메라로 돌 수 있다. 어느 번호가 어느 카메라인지 보려면:
+#     python vision/dg5f/camera_caps.py --list
+VISION_CAMERA_INDEX = _env("RTAUTO_VISION_CAMERA_INDEX", "0").strip()
 
 # 화면 크기는 **숫자가 아니라 문자열 그대로** 둔다 — 기본값 "max"가 "이 웹캠이 낼 수 있는
 # 가장 큰 크기"라는 뜻이기 때문이다. 실제 해석과 카메라 적용은 vision/dg5f/camera_caps.py
@@ -214,7 +221,10 @@ VISION_PREVIEW_WIDTH = int(_env("RTAUTO_VISION_PREVIEW_WIDTH", "1280"))
 _VISION_CAMERA_INDICES_RAW = _env("RTAUTO_VISION_CAMERA_INDICES", "").strip()
 VISION_CAMERA_INDICES = (
     [int(v) for v in _VISION_CAMERA_INDICES_RAW.split(",") if v.strip()]
-    if _VISION_CAMERA_INDICES_RAW else [VISION_CAMERA_INDEX]
+    if _VISION_CAMERA_INDICES_RAW
+    # 다중 카메라는 "여러 대를 동시에" 쓰는 용도라 auto(한 대 고르기)가 의미 없다.
+    # 위 설정이 auto면 여기서는 0번 하나로 본다 — 여러 대를 쓸 거면 INDICES를 직접 적는다.
+    else [int(VISION_CAMERA_INDEX) if VISION_CAMERA_INDEX.isdigit() else 0]
 )
 
 # ---------------- 경로 (머신마다 다름 — 기본값 없음, 없으면 각 스크립트가 명확히 에러) ----------------

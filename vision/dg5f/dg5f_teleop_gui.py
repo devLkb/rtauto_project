@@ -94,7 +94,10 @@ cv2 = None
 mp = None
 
 # ------------------------- 기본 설정 (vision_node와 동일 값) -------------------------
-CAM_INDEX = 0
+# 카메라 번호. 숫자면 그 번호, "auto"면 꽂힌 것 중 가장 좋은 걸 알아서 고른다(None으로 표시).
+# 헤드리스 버전(vision_node_dg5f.py)과 **같은 이름의 설정**을 읽는다.
+CAM_INDEX_SPEC = os.environ.get("RTAUTO_VISION_CAMERA_INDEX", "0").strip()
+CAM_INDEX = int(CAM_INDEX_SPEC) if CAM_INDEX_SPEC.isdigit() else None
 # 카메라 백엔드: "auto"=OpenCV 기본(Windows=MSMF).
 # ⚠️ "dshow"는 여는 속도가 1.2초로 빠르지만 이 웹캠에서 read()가 504ms(초당 2장)로
 #    붕괴한 적이 있다 — 바꾸려면 반드시 다시 재 볼 것.
@@ -404,7 +407,9 @@ class TeleopGUI:
         # ---- 상태 ----
         self.hand = tk.StringVar(value="right")
         self.mapmode = tk.StringVar(value="ratio")
-        self.cam_index = tk.IntVar(value=CAM_INDEX)
+        self.cam_index = tk.IntVar(value=CAM_INDEX if CAM_INDEX is not None else 0)
+        self._auto_pick = CAM_INDEX is None    # auto로 고를 차례인가
+        self._picked_index = None              # 캡처 스레드가 실제로 고른 번호(메인 스레드가 읽는다)
         self.sel_ch = tk.StringVar(value=CH[0])
         self.overrides = {}          # {ch_idx: deg}  수동 오버라이드 활성 채널
         self.ov_enabled = tk.BooleanVar(value=False)
@@ -451,7 +456,7 @@ class TeleopGUI:
         self._settings_key = None
         self._bad_targets = []               # 입력 중/무효인 송신 대상(상태바 경고용)
         self._cam_req = 1                    # 재연결 요청 카운터(메인 스레드가 증가)
-        self._cam_req_index = CAM_INDEX
+        self._cam_req_index = CAM_INDEX        # None이면 "auto로 고르기"
         self._shown_seq = 0
         self._photo = None
         self._last_result = None
@@ -802,7 +807,8 @@ class TeleopGUI:
                     cap.release()
                     cap = None
                 idx = self._cam_req_index
-                self.cam_status = f"cam{idx} 여는 중…"
+                self.cam_status = ("가장 좋은 카메라를 고르는 중…" if idx is None
+                                   else f"cam{idx} 여는 중…")
                 t0 = time.perf_counter()
                 # 화면 크기 결정은 camera_caps가 단독으로 맡는다 — "max"면 이 웹캠의
                 # 최대치를 찾아 쓰고, 찾은 값은 파일에 적어 둬 다음 실행부터 건너뛴다.
@@ -813,7 +819,8 @@ class TeleopGUI:
                 # 이 작업은 UI 스레드가 아니라 이 캡처 스레드에서 도므로 화면은 안 멈춘다.
                 try:
                     cap, cam_fmt = camera_caps.open_camera(
-                        idx, backend_name=CAM_BACKEND, width=CAM_WIDTH,
+                        "auto" if idx is None else idx,
+                        backend_name=CAM_BACKEND, width=CAM_WIDTH,
                         height=CAM_HEIGHT, fps=CAM_FPS, fourcc=CAM_FOURCC,
                         min_fps=CAM_MIN_FPS, log=self._cam_log)
                 except ValueError as e:      # 설정값 오타 — 조용히 넘기지 않는다
@@ -822,10 +829,14 @@ class TeleopGUI:
                     self._stop.wait(2.0)
                     continue
                 if cap is None:
-                    self.cam_status = f"cam{idx} 열기 실패 — cam# 확인"
+                    self.cam_status = ("쓸 수 있는 카메라를 못 찾음" if idx is None
+                                       else f"cam{idx} 열기 실패 — cam# 확인")
                     self.cam_fps = 0.0           # 실패 중에 옛 fps를 계속 보여주면 안 된다
                     self._stop.wait(1.5)         # 실패 폭주 방지
                     continue
+                idx = cam_fmt.index if cam_fmt.index is not None else idx
+                self._cam_req_index = idx        # auto로 고른 번호를 그대로 유지
+                self._picked_index = idx         # 화면의 숫자칸을 맞추라고 메인 스레드에 알린다
                 self.cam_status = (f"cam{idx} 연결 {cam_fmt.width}x{cam_fmt.height} "
                                    f"({time.perf_counter() - t0:.1f}s)")
                 fail = 0
@@ -1020,6 +1031,13 @@ class TeleopGUI:
     def _ui_tick(self):
         t0 = time.perf_counter()
         self._sync_settings()
+
+        # auto로 고른 카메라 번호를 화면 숫자칸에 반영한다. tk 변수는 메인 스레드만
+        # 만질 수 있어(스레드 규칙 1) 캡처 스레드가 남긴 값을 여기서 옮긴다.
+        if self._picked_index is not None:
+            if self.cam_index.get() != self._picked_index:
+                self.cam_index.set(self._picked_index)
+            self._picked_index = None
 
         seq, r = self.result_slot.peek()          # 절대 블로킹 없음
         if r is not None and seq != self._shown_seq:

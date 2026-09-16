@@ -142,9 +142,12 @@ def main():
     requested = ("이 웹캠의 최대"
                  if camera_caps.parse_size_spec(VISION_CAMERA_WIDTH) is None
                  else f"{VISION_CAMERA_WIDTH}x{VISION_CAMERA_HEIGHT}")
+    # 설정이 "auto"였으면 실제로 고른 번호를 보여 준다 — 어느 카메라로 도는지 늘 보이게.
+    index_text = (f"{cam_fmt.index}번" if str(VISION_CAMERA_INDEX).strip().isdigit()
+                  else f"{cam_fmt.index}번(auto로 고름)")
     print(f"[카메라] 실제 캡처 {cam_fmt.text} "
           f"(요청: {requested} @ {VISION_CAMERA_FPS}fps, "
-          f"index={VISION_CAMERA_INDEX}, backend={VISION_CAMERA_BACKEND})")
+          f"카메라 {index_text}, backend={VISION_CAMERA_BACKEND})")
     low_resolution = actual_width < 640 or actual_height < 480
     if low_resolution:
         print("[경고] 카메라/드라이버가 640x480 미만만 제공합니다. "

@@ -33,12 +33,15 @@
   숫자(예: 1280 / 720)로 적으면 그 크기를 그대로 요청한다(탐색 안 함)
   RTAUTO_VISION_CAMERA_MIN_FPS               → "쓸 만하다"의 기준선(기본 초당 15장)
   RTAUTO_VISION_CAMERA_FOURCC                → 영상 압축 형식(예: MJPG). 비우면 안 건드림
+  RTAUTO_VISION_CAMERA_INDEX = auto          → 꽂힌 카메라 중 가장 좋은 것을 알아서 고른다
+                                               (숫자면 그 번호 고정. 기본값은 0)
 
 직접 확인해 보려면 (터미널, 리포 루트, venv 활성화 상태):
     python vision/dg5f/camera_caps.py                 # 0번 카메라
     python vision/dg5f/camera_caps.py 1               # 1번 카메라
     python vision/dg5f/camera_caps.py 0 --refresh     # 저장해 둔 값 무시하고 다시 탐색
     python vision/dg5f/camera_caps.py 0 --backend=dshow --fourcc=MJPG   # 조합 비교
+    python vision/dg5f/camera_caps.py --list          # 꽂혀 있는 카메라 전부 보기
 """
 import json
 import os
@@ -88,7 +91,8 @@ class CaptureFormat:
     fixed=설정에 적힌 숫자 그대로 / cache=저장해 둔 값 재사용 / probe=이번에 찾아냄
     """
 
-    def __init__(self, width, height, fps, how, measured_fps=0.0):
+    def __init__(self, width, height, fps, how, measured_fps=0.0, index=None):
+        self.index = index        # 실제로 열린 카메라 번호(설정이 "auto"였을 때 특히 중요)
         self.width = int(width)
         self.height = int(height)
         self.fps = float(fps)                    # 드라이버가 알려준 값(0을 주는 백엔드도 있다)
@@ -397,7 +401,85 @@ def apply_best_format(cap, index=0, backend_name="auto", width=None, height=None
         driver_fps = float(cap.get(cv2.CAP_PROP_FPS))
     except Exception:
         driver_fps = 0.0
-    return cap, CaptureFormat(size[0], size[1], driver_fps, how, measured)
+    return cap, CaptureFormat(size[0], size[1], driver_fps, how, measured, index)
+
+
+def parse_index_spec(value):
+    """카메라 번호 설정을 해석한다. 숫자면 int, "auto"면 None(= 알아서 고르라는 뜻).
+
+    노트북에 외장 웹캠을 꽂으면 카메라가 두 대가 되는데, 어느 쪽이 0번인지는 OS가 정하고
+    재부팅·USB 포트 변경으로 뒤바뀔 수 있다. 그래서 "번호 고정" 말고 "알아서 고르기"가 필요하다.
+    """
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    text = str(value).strip().lower()
+    if text in ("auto", "best", ""):
+        return None
+    try:
+        number = int(text)
+    except ValueError:
+        raise ValueError(
+            f"카메라 번호 설정값을 이해할 수 없습니다: {value!r}\n"
+            "       0, 1, 2 같은 숫자 또는 auto 여야 합니다.")
+    if number < 0:
+        raise ValueError(f"카메라 번호는 0 이상이어야 합니다: {value!r}")
+    return number
+
+
+# 자동으로 고를 때 몇 번까지 열어 볼지. 웹캠을 5대씩 꽂는 구성은 이 파이프라인에 없다.
+SCAN_MAX_INDEX = 5
+
+
+def list_cameras(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS,
+                 cache_path=CAMERA_CAPS_PATH, use_cache=True, log=print,
+                 max_index=SCAN_MAX_INDEX, stop_after_miss=None, capture_factory=None):
+    """0번부터 차례로 열어 보고 **쓸 수 있는 카메라 목록**을 돌려준다.
+
+    각 항목: {"index", "width", "height", "measured_fps"}. 못 여는 번호는 목록에 안 들어간다.
+    stop_after_miss를 주면 그 횟수만큼 연속으로 실패했을 때 멈춘다(자동 고르기에서 시간을
+    아끼려고 쓴다 — 카메라 번호는 보통 0부터 빈틈없이 붙는다).
+    """
+    found = []
+    misses = 0
+    for index in range(max_index + 1):
+        cap, fmt = open_camera(index, backend_name=backend_name, fourcc=fourcc,
+                               min_fps=min_fps, cache_path=cache_path, use_cache=use_cache,
+                               log=lambda *_a, **_k: None, capture_factory=capture_factory)
+        if cap is None:
+            misses += 1
+            if stop_after_miss and misses >= stop_after_miss:
+                break
+            continue
+        misses = 0
+        measured = fmt.measured_fps or measure_fps(cap, seconds=1.0, warmup=5)
+        cap.release()
+        found.append({"index": index, "width": fmt.width, "height": fmt.height,
+                      "measured_fps": measured})
+        log(f"[카메라] {index}번: {fmt.width}x{fmt.height}, 초당 {measured:.1f}장")
+    return found
+
+
+def pick_best_index(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS,
+                    cache_path=CAMERA_CAPS_PATH, use_cache=True, log=print,
+                    capture_factory=None):
+    """꽂혀 있는 카메라 중 **가장 좋은 것**의 번호. 하나도 못 찾으면 None.
+
+    고르는 기준: ① 속도 기준(min_fps)을 넘는 것 중 화면이 가장 큰 것 ② 전부 기준 미달이면
+    그중 화면이 가장 큰 것 ③ 같으면 번호가 작은 쪽(보통 내장 카메라).
+    """
+    cams = list_cameras(backend_name=backend_name, fourcc=fourcc, min_fps=min_fps,
+                        cache_path=cache_path, use_cache=use_cache, log=log,
+                        stop_after_miss=2, capture_factory=capture_factory)
+    if not cams:
+        return None
+    fast = [c for c in cams if c["measured_fps"] >= min_fps] or cams
+    best = max(fast, key=lambda c: (c["width"] * c["height"], -c["index"]))
+    if len(cams) > 1:
+        log(f"[카메라] {len(cams)}대 중 {best['index']}번을 골랐습니다 "
+            f"({best['width']}x{best['height']}, 초당 {best['measured_fps']:.1f}장).")
+    return best["index"]
 
 
 def open_camera(index, backend_name="auto", width=None, height=None, fps=None,
@@ -410,6 +492,14 @@ def open_camera(index, backend_name="auto", width=None, height=None, fps=None,
     cv2 = _cv2()
     factory = capture_factory or cv2.VideoCapture
     backend = backend_id(backend_name)
+    index = parse_index_spec(index)
+    if index is None:                      # 설정이 "auto" — 꽂힌 것 중 가장 좋은 걸 고른다
+        index = pick_best_index(backend_name=backend_name, fourcc=fourcc, min_fps=min_fps,
+                                cache_path=cache_path, use_cache=use_cache, log=log,
+                                capture_factory=capture_factory)
+        if index is None:
+            log("[카메라] 쓸 수 있는 카메라를 찾지 못했습니다.")
+            return None, None
 
     def _fresh():
         cap = factory(index, backend)
@@ -484,7 +574,11 @@ def backend_id(name):
 
 
 def _main(argv):
-    """`python vision/dg5f/camera_caps.py [카메라번호] [--refresh] [--backend=auto] [--fourcc=MJPG]`
+    """`python vision/dg5f/camera_caps.py [카메라번호|--list] [--refresh] [--backend=auto] [--fourcc=MJPG]`
+
+    `--list`: 꽂혀 있는 카메라를 모두 열어 보고 번호·크기·속도를 표로 보여 준다. 노트북에
+    외장 웹캠을 꽂았을 때 **어느 번호가 어느 카메라인지** 알아내는 용도다.
+
 
     같은 웹캠도 **백엔드와 압축 형식 조합에 따라 쓸 수 있는 크기와 속도가 완전히 달라진다**
     (2026-09-16 실측). 그래서 이 명령으로 조합을 직접 비교해 보고 `.env`에 적는다.
@@ -493,15 +587,44 @@ def _main(argv):
     backend = "auto"
     fourcc = ""
     refresh = False
+    show_list = False
     for arg in argv:
         if arg == "--refresh":
             refresh = True
+        elif arg == "--list":
+            show_list = True
         elif arg.startswith("--backend="):
             backend = arg.split("=", 1)[1]
         elif arg.startswith("--fourcc="):
             fourcc = arg.split("=", 1)[1]
         else:
             index = int(arg)
+
+    if show_list:
+        print(f"[camera_caps] 0~{SCAN_MAX_INDEX}번 카메라를 차례로 열어 봅니다 "
+              f"(backend={backend}, 압축={fourcc or '없음'}). 잠시 걸립니다…")
+        print("   (없는 번호에서 OpenCV가 빨간 에러 줄을 찍는 건 정상입니다 — "
+              "그 번호에 카메라가 없다는 뜻입니다.)")
+        print()
+        cams = list_cameras(backend_name=backend, fourcc=fourcc, use_cache=not refresh,
+                            log=lambda *_a, **_k: None)
+        if not cams:
+            print("쓸 수 있는 카메라를 찾지 못했습니다.")
+            print("다른 앱이 카메라를 쓰고 있지 않은지, Windows 설정 > 개인 정보 > "
+                  "카메라에서 접근이 켜져 있는지 확인하세요.")
+            return 1
+        best = max(cams, key=lambda c: (c["width"] * c["height"], -c["index"]))
+        print(f"{'번호':>4s}  {'화면 크기':>13s}  {'초당 장수':>10s}   비고")
+        for c in cams:
+            note = "← 가장 좋음(auto가 고르는 것)" if c is best else ""
+            print(f"{c['index']:>4d}  {c['width']:>5d}x{c['height']:<6d}  "
+                  f"{c['measured_fps']:>8.1f}장   {note}")
+        print()
+        print("원하는 번호를 레포 루트 .env에 적으면 고정됩니다:")
+        print(f"    RTAUTO_VISION_CAMERA_INDEX={best['index']}")
+        print("매번 알아서 고르게 하려면 숫자 대신 auto 를 적습니다:")
+        print("    RTAUTO_VISION_CAMERA_INDEX=auto")
+        return 0
     print(f"[camera_caps] 카메라 {index}(backend={backend}, 압축={fourcc or '없음'})에서 "
           f"쓸 수 있는 가장 좋은 화면을 찾습니다. 저장 파일: {CAMERA_CAPS_PATH}")
     cap, fmt = open_camera(index, backend_name=backend, fourcc=fourcc,
