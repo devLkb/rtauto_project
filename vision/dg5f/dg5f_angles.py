@@ -149,8 +149,79 @@ def _bend_mcp(lm, finger):
     return math.pi - float(np.arccos(np.clip(np.dot(a, b) / (n1 * n2), -1.0, 1.0)))
 
 
-# _abduction(): 중지의 근위지골(9→10) 방향을 기준으로 손가락이 얼마나 좌우로 벌어졌는지 계산하는 함수
+# ─────────────────────── 벌림(옆으로 벌어짐) 계산 방식 ───────────────────────
+# "lateral"(기본, 2026-09-16 신설): 손가락 첫 마디 **단위벡터의 옆 방향 성분**을 arcsin으로
+#   각도로 바꾼다. 굽힘은 '앞↔손바닥' 평면에서 일어나 옆 성분을 거의 바꾸지 않으므로,
+#   굽힘이 벌림에 섞이는 문제가 구조적으로 사라진다.
+# "planar"(옛 방식): 손가락 방향을 손바닥 평면에 눌러 붙인 뒤 중지와의 각도를 잰다.
+#   기하학적으로는 이쪽이 '관절 각도' 정의에 더 가깝지만, 손가락을 굽히면 눌러 붙인 그림자가
+#   짧아져 각도가 노이즈에 폭주한다(수학적으로 나쁜 조건). 실측 근거(2026-09-16):
+#     · 사람 새끼 좌우값 폭 102°(p2 −51.4°~p98 +50.7°) — 로봇 허용 폭 24°의 4배
+#     · 새끼 좌우값 vs 새끼 굽힘 상관 −0.77 (중지는 0.00) = 굽히기만 해도 좌우값이 움직인다
+#     · 보정 기록의 78.5%가 로봇 허용 범위 밖 → 클램프에 눌려 "벌려도 안 움직임"
+#   근거 파일: logs/calib_log_20260911_165841.csv, analyze_abduction.py로 재현 가능.
+#
+# ⚠️ "lateral"의 알려진 성질: 손가락을 굽힐수록 읽히는 벌림각이 cos(굽힘각)만큼 줄어든다
+#   (쭉 편 상태에서는 정확히 일치). 다 굽히면 0으로 수렴한다 — 옛 방식처럼 폭주하는 대신
+#   **예측 가능하게 작아지는** 쪽을 택한 것이다. 굽힌 채로 벌림을 유지해야 한다는 요구가
+#   생기면 그때 굽힘각으로 보정(나눗셈)을 넣되, 상한을 걸어야 한다(1/cos가 발산하므로).
+ABDUCTION_METHOD = "lateral"
+
+
+def _hand_lateral_axis(lm):
+    """손의 '옆 방향'(엄지→새끼 쪽) 단위벡터. 못 구하면 None.
+
+    부호는 옛 _abduction_planar와 **같게** 맞춰져 있다: 옛 방식은
+    dot(cross(중지방향, 손가락방향), 손바닥법선) > 0 일 때 +였는데, 손가락이
+    cross(손바닥법선, 앞방향) 쪽으로 기울 때가 바로 그 경우다(계산으로 확인).
+    """
+    palm_n = np.cross(lm[INDEX[0]] - lm[WRIST], lm[PINKY[0]] - lm[WRIST])
+    n = np.linalg.norm(palm_n)
+    if n < 1e-9:
+        return None
+    palm_n /= n
+    fwd = lm[MIDDLE[0]] - lm[WRIST]                 # 손목→중지 MCP = 손의 '앞' 방향
+    fwd = fwd - palm_n * np.dot(fwd, palm_n)        # 손바닥 평면 성분만
+    nf = np.linalg.norm(fwd)
+    if nf < 1e-9:
+        return None
+    lat = np.cross(palm_n, fwd / nf)
+    nl = np.linalg.norm(lat)
+    if nl < 1e-9:
+        return None
+    return lat / nl
+
+
+def _lateral_tilt(lm, finger, lat):
+    """손가락 첫 마디(MCP→PIP)가 옆으로 얼마나 기울었는지(rad). 굽힘과 무관."""
+    v = lm[finger[1]] - lm[finger[0]]
+    n = np.linalg.norm(v)
+    if n < 1e-9:
+        return 0.0
+    return math.asin(float(np.clip(np.dot(v / n, lat), -1.0, 1.0)))
+
+
+def _abduction_lateral(lm, finger):
+    """벌림각(rad) — 중지 대비. 굽힘이 섞이지 않는다(위 ABDUCTION_METHOD 설명 참고)."""
+    lm = np.asarray(lm)
+    lat = _hand_lateral_axis(lm)
+    if lat is None:
+        return 0.0
+    # 중지 값을 빼서 '중지 기준 상대 벌림'이라는 옛 규약을 유지한다
+    # (middle_abd는 자기 자신을 빼므로 정확히 0 — 옛 방식과 동일).
+    return _lateral_tilt(lm, finger, lat) - _lateral_tilt(lm, MIDDLE, lat)
+
+
 def _abduction(lm, finger):
+    """벌림각(rad). 실제 계산은 ABDUCTION_METHOD가 고른 방식이 한다."""
+    if ABDUCTION_METHOD == "lateral":
+        return _abduction_lateral(lm, finger)
+    return _abduction_planar(lm, finger)
+
+
+# _abduction_planar(): 옛 방식 — 중지의 근위지골(9→10) 방향을 기준으로 손가락이 얼마나 좌우로
+# 벌어졌는지 계산한다. 비교·재현용으로 남겨 둔다(analyze_abduction.py가 두 방식을 대조한다).
+def _abduction_planar(lm, finger):
     lm = np.asarray(lm)           # 랜드마크 리스트를 NumPy 배열로 변환처리
 
     # 손바닥 평면의 법선 벡터 구하는 처리

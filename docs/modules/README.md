@@ -5,7 +5,7 @@
 
 **입구는 [`MODULE_GUIDE.md`](MODULE_GUIDE.md)다.** 전체 데이터 흐름과 현재 범위를 거기서 먼저 읽는다.
 
-## 문서 5개 + 입구 1개
+## 문서 6개 + 입구 1개
 
 | 문서 | 다루는 범위 | 코드 위치 | 짝이 되는 디렉터리 README |
 |---|---|---|---|
@@ -15,6 +15,7 @@
 | [`VISION_TELEOP.md`](VISION_TELEOP.md) | 웹캠 → 손 관절각 → UDP 송신, 카메라 캘리브레이션 | `vision/**` | [`vision/`](../../vision/README.md) |
 | [`REAL_BRIDGES.md`](REAL_BRIDGES.md) | 실물·시뮬레이터 하드웨어와 붙는 브리지 | `arm/**`, `vision/dg5f/*bridge*.py` | [`arm/`](../../arm/README.md) |
 | [`BUILD_TOOLING.md`](BUILD_TOOLING.md) | 설정 정본, URDF 빌드·임포트, 패키징·방화벽 | `config/`, `urdf/`, `tools/`, `build-support/` | [`config/`](../../config/README.md) · [`urdf/`](../../urdf/README.md) · [`tools/`](../../tools/README.md) |
+| [`DG5F_JOINT_RANGES.md`](DG5F_JOINT_RANGES.md) | **실물 그리퍼 관절 20개의 각도 한계·부호 규약**(제조사 설명서 정리) | `vision/dg5f/dg5f_sdk_bridge.py`, `urdf/dg5f/**` | [`urdf/`](../../urdf/README.md) |
 
 ## 모듈 문서와 디렉터리 README의 역할 분담
 
