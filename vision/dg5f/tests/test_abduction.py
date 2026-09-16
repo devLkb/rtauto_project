@@ -202,6 +202,39 @@ class AbductionTest(unittest.TestCase):
             self.assertAlmostEqual(deg_new(lm, finger), 20.0, delta=2.5,
                                    msg=f"손가락 {finger[0]}")
 
+    def test_bent_finger_stops_commanding_spread(self):
+        """**주먹 검증** — 손가락을 굽힐수록 벌림 명령이 0으로 줄어야 한다.
+
+        굽힌 상태에서 벌림 명령이 남아 있으면 로봇 손가락이 **옆으로 벌어진 채 접힌다**.
+        2026-09-16에 실제로 그렇게 됐다(주먹 구간 평균 +15.6°) — 벌림 범위를 넓힌 직후의
+        부작용이었고, 이 처리로 +5.2°까지 줄였다.
+        """
+        def command(spread_deg, bend_deg):
+            raw = [0.0] * len(A.CHANNEL_NAMES)
+            raw[A.CHANNEL_NAMES.index("pinky_lat")] = math.radians(spread_deg)
+            raw[A.CHANNEL_NAMES.index("pinky_mcp")] = math.radians(bend_deg)
+            return A.map_to_dg5f(raw, hand="right", mode="direct")[
+                A.CHANNEL_NAMES.index("pinky_lat")]
+
+        self.assertAlmostEqual(command(30.0, 0.0), 30.0, delta=0.5)      # 편 손: 그대로
+        self.assertAlmostEqual(command(30.0, 45.0), 15.0, delta=0.5)     # 반쯤 굽힘: 절반
+        self.assertAlmostEqual(command(30.0, 90.0), 0.0, delta=0.5)      # 다 굽힘: 0
+        self.assertAlmostEqual(command(30.0, 120.0), 0.0, delta=0.5)     # 더 굽혀도 0 아래로 안 감
+
+        original = A.ABD_BEND_FADE_DEG
+        try:
+            A.ABD_BEND_FADE_DEG = 0.0                                    # 0 이하 = 이 처리 끄기
+            self.assertAlmostEqual(command(30.0, 90.0), 30.0, delta=0.5)
+        finally:
+            A.ABD_BEND_FADE_DEG = original
+
+    def test_fade_uses_each_fingers_own_bend(self):
+        """벌림 채널마다 **자기 손가락의** 굽힘을 본다 — 남의 손가락을 보면 안 된다."""
+        for abd, mcp in A.ABD_FADE_SOURCE.items():
+            self.assertEqual(abd.split("_")[0], mcp.split("_")[0], f"{abd} ↔ {mcp}")
+            self.assertIn(abd, A.CHANNEL_NAMES)
+            self.assertIn(mcp, A.CHANNEL_NAMES)
+
     def test_method_switch_selects_the_formula(self):
         """ABDUCTION_METHOD로 옛 방식을 다시 켤 수 있다(비교·재현용)."""
         lm = make_hand(abduction_deg=20.0, flexion_deg=60.0, finger=PLAIN)

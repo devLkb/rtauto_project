@@ -538,6 +538,34 @@ RIGHT_MIRROR_CHANNELS = {"thumb_cmc"}
 #   ABD_GAIN을 키우면 더 과장, 줄이면 더 절제 — 라이브 체감으로 미세조정.
 # thumb_cmc는 0을 사이에 두지 않는 벌림(hmin/hmax 둘 다 음수)이라 여기서 제외 — 기존 선형 유지.
 ABDUCTION_CHANNELS = {"index_abd", "middle_abd", "ring_abd", "pinky_lat"}
+
+# 손가락을 깊이 굽힐수록 벌림 명령을 0으로 줄인다(0 = 손가락이 손과 나란한 자세).
+#   왜: 주먹을 쥘 때는 벌림이 의미가 없는데, 굽힘이 벌림 계산에 남기는 오차가 그대로
+#   로봇에 나가면 **새끼가 옆으로 벌어진 채 접힌다**. 2026-09-16 실측(굽힘 녹화에서 가장
+#   깊게 굽힌 구간의 새끼 벌림 명령): 줄이기 없으면 평균 +15.6°(최대 +22.5°)로 벌어진 채였다.
+#   이 값(90°)은 "MCP를 90° 굽히면 벌림 명령이 0"이라는 뜻이고, 그 사이는 비례해서 줄어든다.
+#   0 이하로 두면 이 처리를 끈다.
+#   ⚠️ 공짜가 아니다 — 손을 편 채 벌리는 동작에서도 굽힘만큼 조금 깎인다. 주먹 모양과
+#   맞바꾸는 값이라 실측해서 고른다(2026-09-16, 녹화 2개. analyze_abduction.py로 재현):
+#
+#     이 값     벌림 녹화에서 움직인 폭    주먹 구간 새끼 벌림(평균/최대)
+#     없음(0)         43.4°                  +15.6° / +22.5°   ← 새끼가 벌어진 채 접힘
+#     120°            39.9°                   +7.8° / +11.3°
+#     90°  ← 채택     38.8°                   +5.2° /  +9.2°
+#     70°             37.4°                   +2.6° /  +7.1°   (벌림을 더 깎는다)
+#
+#   90°를 고른 이유: "MCP를 다 굽힌 각도(90°)에서 벌림이 0"이라는 기준이 설명 가능하고,
+#   남는 +5°는 눈으로 주먹 모양을 해치지 않는 크기다. 더 확실히 붙이려면 70°로 낮춘다.
+ABD_BEND_FADE_DEG = 90.0
+
+# 각 벌림 채널이 참고할 '그 손가락의 굽힘' 채널. 이름으로 묶는다 — 표 순서에 기대면
+# 채널을 하나 끼워 넣는 순간 조용히 엉뚱한 채널을 보게 된다.
+ABD_FADE_SOURCE = {
+    "index_abd": "index_mcp",
+    "middle_abd": "middle_mcp",
+    "ring_abd": "ring_mcp",
+    "pinky_lat": "pinky_mcp",
+}
 ABD_GAIN = 1.0  # 로봇도 = 사람 벌림각(deg) × 이 값. 1.0 = 1:1(증폭 없음).
 
 # ── 엄지 대향(thumb_opp, 1_2) 거리 프록시 상수 ────────────────────────────────
@@ -787,6 +815,18 @@ def _map_ratio(raw, hand):
     return out
 
 
+def _abduction_fade(raw, name):
+    """굽힐수록 벌림 명령을 줄이는 배율(1=그대로, 0=벌림 없음). 근거는 ABD_BEND_FADE_DEG 주석."""
+    src = ABD_FADE_SOURCE.get(name)
+    if not src or ABD_BEND_FADE_DEG <= 0:
+        return 1.0
+    try:
+        bend_deg = math.degrees(raw[CHANNEL_NAMES.index(src)])
+    except (IndexError, ValueError):
+        return 1.0
+    return max(0.0, min(1.0, 1.0 - bend_deg / ABD_BEND_FADE_DEG))
+
+
 def map_to_dg5f(raw, hand="right", mode="direct"):
     """사람 관절 프록시(rad) → DG5F 로봇 관절각(deg).
     mode="direct"(기본): **전 채널 1:1 직접매핑**(2026-07-21). 사람 관절각을 그대로 로봇각으로
@@ -803,8 +843,7 @@ def map_to_dg5f(raw, hand="right", mode="direct"):
             continue
         if name in ABDUCTION_CHANNELS:
             # 벌림 1:1: 사람 벌림각(rad)→deg × ABD_GAIN, [dmin,dmax] clamp. raw=0→0°(중립) 자동 성립.
-            # middle_abd는 기준(중지 자기 자신)이라 v≈0 → deg≈0 (0나누기 없음 — 1:1은 나눗셈 안 함).
-            deg = math.degrees(v) * ABD_GAIN
+            deg = math.degrees(v) * ABD_GAIN * _abduction_fade(raw, name)
             deg = min(dmax, max(dmin, deg))
         elif name == "thumb_opp":
             # 대향량(0~1, 거리 프록시) × 최대각 → 로봇 깊이각. dmin=0/dmax=-155 부호 맞춰 음수.
