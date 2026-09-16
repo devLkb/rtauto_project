@@ -1,7 +1,7 @@
 # DG5F Grasp + Lift (behavior `DG5FGraspLift`)
 
 `Grasp` 브랜치의 파지·들어올리기 학습 구현. 요구사항은
-[`docs/archives/GraspClaude.md`](archives/GraspClaude.md), 참고 설계는 Isaac Lab
+[`docs/archives/GraspClaude.md`](GraspClaude.md), 참고 설계는 Isaac Lab
 [`VAlikV/IsaacLab_delto_envs`](https://github.com/VAlikV/IsaacLab_delto_envs)
 (`envs/tesolo_delto_UR_env/delto_env.py`).
 
@@ -95,7 +95,7 @@ prefab의 열린 자세로 고정되며(`enablePolicyClosure = false`), 7번째 
 
 다만 관측/행동 shape은 **의도적으로 기존과 동일한 57/7**로 맞췄다. 이미
 학습된 pre-grasp 정책(25.3° / 69%,
-[`DG5F_PREGRASP_ANGLE_RESULT.md`](archives/DG5F_PREGRASP_ANGLE_RESULT.md))을
+[`DG5F_PREGRASP_ANGLE_RESULT.md`](DG5F_PREGRASP_ANGLE_RESULT.md))을
 `--initialize-from`으로 그대로 물려받기 위해서다. CPU 학습 환경에서 접근
 단계를 처음부터 다시 배우는 것은 비용이 너무 크다.
 
@@ -363,7 +363,7 @@ override해 학습 당시 정책의 행동을 그대로 측정한다.
 | Unity asset | `DG5F_GraspLiftTraining.unity`, `GraspLiftTrainingArea.prefab`, block/panel physics material, `Models/DG5FGraspLift.onnx` |
 | 검증 | `Tests/EditMode/Dg5fGraspLiftSpecTests.cs`, `Tests/PlayMode/GraspLiftSceneTests.cs`, `Tests/PlayMode/GraspLiftHandGeometryProbe.cs` |
 | 학습 | `training/config/dg5f_grasp_lift*.yaml`, `training/scripts/train_dg5f_grasp_lift.sh`, `training/scripts/evaluate_dg5f_grasp_lift_topdown.sh`, `training/scripts/prepare_dg5f_grasp_lift_transfer.py` |
-| 문서 | `docs/DG5F_GRASP_LIFT.md` |
+| 문서 | `docs/archives/DG5F_GRASP_LIFT.md` |
 
 표의 Unity 상대 경로는 모두
 `unity/Assets/MLAgents/GraspLift/`를 기준으로 한다.
@@ -538,7 +538,7 @@ inference한 기준선이다.
    (`m_DeterministicInference = 0`). scene builder는 이제
    `DeterministicInference = true`를 강제해 scene 재생성으로 이 문제가
    돌아오지 않게 한다. 다른 후보였던 physics-level oscillation은
-   [`DEBUG_OSCILLATION_20260708.md`](archives/DEBUG_OSCILLATION_20260708.md)에
+   [`DEBUG_OSCILLATION_20260708.md`](DEBUG_OSCILLATION_20260708.md)에
    기록된 대로 이미 해결됐다.
 
 ### 0.12 m top-down potential fine-tune
@@ -636,7 +636,7 @@ Success도 −0.479%p(`p ≈ 0.0086`)/−1.029%p(`p ≈ 0.0014`) 내려갔다.
 > `train_dg5f_grasp_lift.sh`/`evaluate_dg5f_grasp_lift_topdown.sh`를 포함한
 > bash 자동화가 그대로 돌지 않는다(`training/archives/scripts/README.md`
 > 참고). Windows에서 지금 실제로 되는 절차는
-> [`training/README.md`](../training/README.md)의 "DG5F Grasp + Lift" 절
+> [`training/README.md`](../../training/README.md)의 "DG5F Grasp + Lift" 절
 > (Unity Editor에 붙여 `mlagents-learn` 직접 실행)이다.
 
 ```bash

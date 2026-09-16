@@ -7,7 +7,7 @@ namespace KDT.GraspLiftTraining
     /// <summary>
     /// Policy shape and task contract for the DG5F grasp + lift stage.
     ///
-    /// Design notes (see docs/DG5F_GRASP_LIFT.md):
+    /// Design notes (see docs/archives/DG5F_GRASP_LIFT.md):
     /// * The Isaac Lab reference (VAlikV/IsaacLab_delto_envs) proves the shape of the
     ///   task — approach, close on the object, confirm several opposed contacts, then
     ///   lift and require the object to actually rise. Only that logic is reused; the

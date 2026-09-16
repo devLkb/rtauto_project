@@ -172,5 +172,5 @@
 
 ## 12. 관련 자료
 
-- 상세 기술 문서: `docs/DG5F_GRASP_LIFT.md`
+- 상세 기술 문서: `docs/archives/DG5F_GRASP_LIFT.md`
 - 원래 과제 문서: `docs/GraspClaude.md`

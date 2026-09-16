@@ -11,7 +11,7 @@ from pathlib import Path
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
 # V2 hand-first 판정 기준: 100k step까지 curriculum이 첫 lesson(stage 1)에
-# 머물러 있으면 즉시 중단한다 (docs/V2_TRAINING_FAILURE_ANALYSIS_20260717.md §5).
+# 머물러 있으면 즉시 중단한다 (docs/archives/V2_TRAINING_FAILURE_ANALYSIS_20260717.md §5).
 STAGE_ONE_GATE_STEPS = 100_000
 CURRICULUM_PARAMETER = "joint26_stage"
 

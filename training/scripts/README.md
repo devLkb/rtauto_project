@@ -247,7 +247,7 @@ python training/scripts/validate_unity_environment.py --env <플레이어> --con
 참고로 남은 판정 기준: `dg5f_status.py`의 `STAGE_ONE_GATE_STEPS = 100_000` /
 `CURRICULUM_PARAMETER = "joint26_stage"` — 100k 스텝까지 커리큘럼이 첫 lesson에 머물면
 즉시 중단한다는 V2 hand-first 판정이다
-([`docs/V2_TRAINING_FAILURE_ANALYSIS_20260717.md`](../../docs/V2_TRAINING_FAILURE_ANALYSIS_20260717.md) §5).
+([`docs/archives/V2_TRAINING_FAILURE_ANALYSIS_20260717.md`](../../docs/archives/V2_TRAINING_FAILURE_ANALYSIS_20260717.md) §5).
 
 ## 9. 관련 문서
 

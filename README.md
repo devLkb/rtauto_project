@@ -25,7 +25,8 @@ Unity 수동 팔 IK (UR16e)
 | `tools/urdf_hand_import/` | URDF→Unity 임포트/물리검증/구동준비/프로브 범용 스크립트 |
 | `urdf/dg5f/` | Tesollo DG5F URDF+메시 원본 4변형 (검증 스크립트의 대조 기준) |
 | `urdf/build_arm_hand.py` | UR 팔+DG5F 손 결합 URDF 빌더 (기종·좌우 파라미터화) |
-| `docs/` | Agent 계약, ML-Agents 설계·학습 가이드, 전체 작업 이력 |
+| `docs/` | 로드맵·계약·모듈 설명 — 무엇부터 읽을지는 [`docs/README.md`](docs/README.md) |
+| `claudeDocs/` | **세션끼리의 인수인계** — `BACKLOG.md`(구현할 것) + `daily/`(날짜별 기록) |
 | `training/` | DG5FGraspPointReach PPO 설정, 학습·평가 도구 |
 
 ### 디렉터리별 README 지도
@@ -54,7 +55,8 @@ Unity 수동 팔 IK (UR16e)
 | `training/config/` | [README](training/config/README.md) | PPO 설정·커리큘럼·실험 파일 이름 규칙 |
 | `training/tests/` | [README](training/tests/README.md) | 파이썬 회귀 테스트와 현재 통과 상태 |
 | `docs/` | [README](docs/README.md) | 문서 인덱스 |
-| `docs/modules/` | [README](docs/modules/README.md) | 기능 단위 모듈 설명 5종 |
+| `docs/modules/` | [README](docs/modules/README.md) | 기능 단위 모듈 설명 |
+| `claudeDocs/` | [README](claudeDocs/README.md) | 세션끼리 인수인계하는 방법(최상위 `CLAUDE.md` 원칙 5) |
 
 용어 표기는 [`docs/GLOSSARY.md`](docs/GLOSSARY.md)를 정본으로 쓴다 — 같은 것을 같은 말로
 부르기 위한 표준 용어표이며, 새 용어를 도입하면 거기에 먼저 추가한다.
@@ -390,7 +392,7 @@ python probe_test.py <이름> --urdf <hand.urdf>         # 전 관절 사각파 
 - ✅ DG5F 4변형 임포트·물리검증·구동검증 완료, 굽힘 텔레옵 전 채널 PASS(상관 1.00)
 - ✅ 엄지 손끝 위치 리타게팅 v2 + 핀치 스냅 (OK 사인 접촉 프로브 검증 완료)
 - ⚠️ **엄지 라이브 움직임이 부드럽지 않음** — 진행 중. 후보: 데드밴드 동결/재가동 경계,
-  CCD 스텝 제한, 비전 깊이 노이즈. `docs/WORKLOG.md` §20-3 미해결 항목 참고.
+  CCD 스텝 제한, 비전 깊이 노이즈. `docs/archives/WORKLOG.md` §20-3 미해결 항목 참고.
 - ✅ UR5e+DG5F 결합 및 GraspPoint 기준점 검증
 - ✅ 단일 GraspPoint 팔 도달 환경 전환 및 512 max-step 통신 smoke
 - ⏳ 5M 본학습과 미학습 고정 seed 500회 승인 평가

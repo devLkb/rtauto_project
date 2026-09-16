@@ -1,5 +1,10 @@
 # 학습 런 원장 (DG5FPicknPlace / 과거 behavior)
 
+> 🔶 **Unity 파지 학습 시절의 원장이다 (2026-09-16 표시).** 현행 파지 학습은
+> SuperDex 이고 그쪽 판정 근거는 [`SUPERDEX_POC_PLAN.md`](SUPERDEX_POC_PLAN.md) 에 있다.
+> 이 문서를 남겨 둔 이유는 `training/scripts/` 의 **합격 기준(게이트) 숫자가 여기서
+> 나왔기 때문**이다 — 그 숫자를 손대려면 이 문서부터 읽는다.
+
 학습 런 하나하나의 **판정**과 **격리 위치**의 정본. 산출물(체크포인트·ONNX·
 tfevents)은 용량 때문에 git에 넣지 않는다(`.gitignore`의 `training/results/`) —
 그래서 "무엇이 있었고 왜 버렸는가"는 이 문서에만 남는다. 런을 옮길 때마다

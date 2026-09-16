@@ -72,7 +72,7 @@ Behavior와 호환되는 checkpoint가 아니다.
 ## DG5F Grasp + Lift (`DG5FGraspLift`)
 
 파지 후 들어올리기까지 학습하는 새 behavior. 설계·보상·판정 근거는
-[`docs/DG5F_GRASP_LIFT.md`](../docs/DG5F_GRASP_LIFT.md).
+[`docs/archives/DG5F_GRASP_LIFT.md`](../docs/archives/DG5F_GRASP_LIFT.md).
 
 - Behavior/spec: `DG5FGraspLift` / `1.0.0`
 - observations/actions: `57/7` (팔 6축 + 손 closure 1축)

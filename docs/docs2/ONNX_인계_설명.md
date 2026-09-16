@@ -1,7 +1,7 @@
 # 우리가 만든 신경망을 기업이 쓸 수 있나? — 쉬운 설명
 
-작성일 2026-07-29. 기술적 근거와 코드 위치는 `docs/TESOLLO_SDK_기술부채_조사.md` 4.5절,
-Tesollo SDK 자체에 대한 설명은 `docs/TESOLLO_SDK_설명.md` 참조.
+작성일 2026-07-29. 기술적 근거와 코드 위치는 `docs/docs2/TESOLLO_SDK_기술부채_조사.md` 4.5절,
+Tesollo SDK 자체에 대한 설명은 `docs/docs2/TESOLLO_SDK_설명.md` 참조.
 
 ---
 

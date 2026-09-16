@@ -29,7 +29,7 @@ training/archives/
 > 그대로라면 기존 빌드로 학습 중인지부터 의심한다.** 학습 씬·에이전트 코드는 플레이어에
 > 구워지므로 재빌드 없이는 반영되지 않는다.
 
-전체 분석은 [`docs/V2_TRAINING_FAILURE_ANALYSIS_20260717.md`](../../docs/V2_TRAINING_FAILURE_ANALYSIS_20260717.md)에 있다.
+전체 분석은 [`docs/archives/V2_TRAINING_FAILURE_ANALYSIS_20260717.md`](../../docs/archives/V2_TRAINING_FAILURE_ANALYSIS_20260717.md)에 있다.
 
 ## `scripts/` — 왜 실행되지 않나
 
@@ -60,7 +60,7 @@ training/archives/
 
 - [`training/README.md`](../README.md) — 현재 실행 지침(정본)
 - [`docs/TRAINING_RUN_LEDGER.md`](../../docs/TRAINING_RUN_LEDGER.md) — 런 판정 이력
-- [`docs/V2_TRAINING_FAILURE_ANALYSIS_20260717.md`](../../docs/V2_TRAINING_FAILURE_ANALYSIS_20260717.md) — V2 실패 분석
+- [`docs/archives/V2_TRAINING_FAILURE_ANALYSIS_20260717.md`](../../docs/archives/V2_TRAINING_FAILURE_ANALYSIS_20260717.md) — V2 실패 분석
 - [`docs/archives/`](../../docs/archives/) — 폐기된 behavior의 설계 문서
 
 ---

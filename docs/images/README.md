@@ -43,7 +43,7 @@ python tools/plot_grasp_lift_slides.py
 ## 관련 문서
 
 - [`tools/README.md`](../../tools/README.md) §3·§4 — 렌더링 스크립트 상세
-- [`docs/docs2/`](../docs2/README.md) — 이 그림을 쓰는 발표 자료
+- [`docs/archives/GRASP_LIFT_발표자료.md`](../archives/GRASP_LIFT_발표자료.md) — 이 그림을 쓰는 발표 자료(2026-09-16 archives 로 이동)
 - [`docs/TRAINING_RUN_LEDGER.md`](../TRAINING_RUN_LEDGER.md) — 각 런의 판정 이력
 
 ---

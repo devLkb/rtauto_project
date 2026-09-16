@@ -26,5 +26,5 @@ Windows/Git Bash에서 이 스크립트들이 실패하는 구체적 이유:
 
 이 스크립트들이 참조하던 `training/config/dg5f_grasp_lift_t1_topdown150.yaml` 등
 config 파일 자체는 `training/config/`에 그대로 남아 있다 — 실험 기록으로서
-`docs/DG5F_GRASP_LIFT.md`의 config 표가 여전히 유효하기 때문이다. 죽은 건
+`docs/archives/DG5F_GRASP_LIFT.md`의 config 표가 여전히 유효하기 때문이다. 죽은 건
 그 config를 자동으로 돌리던 bash 레이어뿐이다.

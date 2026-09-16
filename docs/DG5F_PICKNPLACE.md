@@ -1,7 +1,12 @@
 # DG5F Pick + Place → Grasp + Lift (`DG5FPicknPlace`)
 
+> 🔶 **이전 세대 문서다 (2026-09-16 표시).** 파지 학습은 2026-09-09 에 Unity 에서
+> **SuperDex** 로 옮겨갔다 → [`SUPERDEX_POC_PLAN.md`](SUPERDEX_POC_PLAN.md).
+> 그런데도 archives 로 보내지 않은 이유는, **지금 돌아가는 `training/scripts/` 의
+> 상수가 이 문서를 근거로 인용**하기 때문이다. 새로 학습하려고 이 문서를 따라가지는 않는다.
+
 `Assets/MLAgents/picknplace`의 설계 근거. 아키텍처·보상 셰이핑의 원조는
-[`docs/DG5F_GRASP_LIFT.md`](DG5F_GRASP_LIFT.md) — 이 문서는 GraspLift 대비
+[`docs/archives/DG5F_GRASP_LIFT.md`](archives/DG5F_GRASP_LIFT.md) — 이 문서는 GraspLift 대비
 **무엇이, 왜 달라졌는지**만 다룬다.
 
 > **2026-08-27 갱신: place 단계를 되돌렸다.** 이 문서는 2026-08-26에 두 번

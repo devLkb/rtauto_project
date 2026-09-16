@@ -3,7 +3,7 @@
 수치 출처: `unity/Assets/MLAgents/GraspLift/Runtime/Dg5fGraspLiftSpec.cs`,
 `training/config/dg5f_grasp_lift_h012_topdown.yaml`, 배포 런
 `training/results/dg5f_grasp_lift_h012_topdown`.
-쉬운 서술 버전은 `docs/GRASP_LIFT_설명.md`, 전체 기술 문서는 `docs/DG5F_GRASP_LIFT.md`.
+쉬운 서술 버전은 `docs/archives/GRASP_LIFT_설명.md`, 전체 기술 문서는 `docs/archives/DG5F_GRASP_LIFT.md`.
 
 ---
 
