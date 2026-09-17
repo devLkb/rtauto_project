@@ -295,6 +295,8 @@ def main() -> int:
     ap.add_argument("--seed0", type=int, default=9000)
     ap.add_argument("--episode-seconds", type=float, default=1.0)
     ap.add_argument("--out", default=None, help="결과 파일 경로(기본: results 폴더에 시각으로)")
+    ap.add_argument("--resume", action="store_true",
+                    help="--out 파일에 이미 끝난 물체가 있으면 건너뛰고 이어서 한다")
     ap.add_argument("--report", default=None,
                     help="훑지 않고, 이미 만든 채점표 파일을 읽어 요약만 낸다")
     args = ap.parse_args()
@@ -327,11 +329,44 @@ def main() -> int:
     from dg5f_grasp_env import Dg5fGraspEnv
     from gate2_oracle_search import run_trajectory
 
+    # --resume: 이미 끝난 물체는 건너뛰고 이어서 한다
+    already = {}
+    if args.resume and out_path.exists():
+        prev = json.loads(out_path.read_text(encoding="utf-8"))
+        for r in prev.get("rows", []):
+            already.setdefault(r["object"], []).append(r)
+        finished = [n for n in wanted if len(already.get(n, [])) >= len(poses)]
+        if finished:
+            print("이어서 한다 — 이미 끝난 물체 {}종은 건너뛴다: {}".format(
+                len(finished), ", ".join(finished)))
+            print()
+
     rows = []
     t0 = time.perf_counter()
     done = 0
+
+    def save():
+        """지금까지 채운 것을 파일에 쓴다.
+
+        ⚠️ **물체 하나가 끝날 때마다 부른다.** 전에는 끝에서 한 번만 썼는데, 세션이
+        비정상 종료되면(Ctrl+C 가 아니라 프로세스가 통째로 죽는 경우) 파일이 아예
+        안 생겨 몇십 분짜리 작업이 날아갔다 — 2026-09-17 에 두 번 겪었다.
+        """
+        out_path.write_text(json.dumps({
+            "made_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "note": "자세(물체를 손 기준 어디에 어떤 방향으로 두는가) 별 파지 성공 여부",
+            "seeds": args.seeds, "trajectories": [list(t) for t in TRAJECTORIES],
+            "episode_seconds": args.episode_seconds,
+            "done": done, "total": total, "complete": done >= total,
+            "rows": rows,
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+
     try:
         for obj_name in wanted:
+            if len(already.get(obj_name, [])) >= len(poses):
+                rows.extend(already[obj_name])
+                done += len(already[obj_name])
+                continue
             prefab, actor, ref = OBJECTS[obj_name]
             config = {"object_prefab": prefab, "object_ref": ref,
                       "place_jitter": 0.0, "episode_seconds": args.episode_seconds}
@@ -356,16 +391,11 @@ def main() -> int:
                     physics.destroy_scene(env.scene)  # 물체마다 씬이 쌓이지 않게
                 except Exception:
                     pass
+                save()          # 물체 하나 끝날 때마다 남긴다
     except KeyboardInterrupt:
         print("\n중간에 멈췄다 — 그때까지 한 것만 저장한다.")
     finally:
-        out_path.write_text(json.dumps({
-            "made_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "note": "자세(물체를 손 기준 어디에 어떤 방향으로 두는가) 별 파지 성공 여부",
-            "seeds": args.seeds, "trajectories": [list(t) for t in TRAJECTORIES],
-            "episode_seconds": args.episode_seconds,
-            "rows": rows,
-        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        save()
 
     seconds = time.perf_counter() - t0
     print()

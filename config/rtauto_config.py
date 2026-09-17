@@ -175,6 +175,86 @@ DG5F_MAX_DEG_PER_SEC = float(_env("RTAUTO_DG5F_MAX_DEG_PER_SEC", "100"))
 # (URDF/Unity 기준, deg) — 실물 SDK 규약과의 부호 차이는 캡처할 때 이미 변환된다.
 DG5F_GRASP_POSE_FILE = _env("RTAUTO_DG5F_GRASP_POSE", "config/dg5f_grasp_pose.json")
 
+# ---------------- DG5F 접촉 감지 (손끝 센서가 없어서 대신 쓰는 것) ----------------
+# 🛑 이 손에는 **손끝 힘·촉감 센서가 없다**(CLAUDE.md 하드웨어 표). 그래서 "물체에 닿았다"를
+# 직접 읽을 수 없고, 관절마다 들어오는 세 가지로 **추정**한다:
+#   1) 모터 전류(mA)  — 뭔가에 막히면 올라간다
+#   2) 시킨 각도와 실제 각도의 차이(deg) — 막히면 시킨 데까지 못 간다
+#   3) 관절 속도(rpm) — 막히면 멈춘다
+# 단위 근거: vendor/dgsdk-python/libs/DGDataTypes.h §ReceivedGripperData
+#   (joint=degree, current=mA, velocity=rpm, temperature=°C).
+#
+# ⚠️ **아래 숫자는 전부 실측 전 잠정값이다.** 실물에 붙여 재기 전에는 믿지 마라.
+#    전류 기준값(무부하 전류)은 관절마다·각도마다 다르므로 **숫자 하나로 못 박지 않는다** —
+#    hand/measure_baseline.py 로 재서 파일(DG5F_BASELINE_FILE)로 만들고, 여기 값들은
+#    "그 기준값에서 얼마나 벗어나야 접촉으로 볼지"의 배수·여유로만 쓴다.
+#    설계 정본: docs/GRASP_CONTACT_DETECTION.md
+
+#: 무부하 전류 기준표. hand/measure_baseline.py 가 만든다. **없으면 접촉 감지를 거부한다.**
+DG5F_BASELINE_FILE = _env("RTAUTO_DG5F_BASELINE", "config/dg5f_current_baseline.json")
+
+#: 접촉으로 보려면 전류가 기준값에서 "흔들림의 몇 배" 이상 올라야 하는가.
+#: 크게 잡으면 살짝 닿은 것을 놓치고, 작게 잡으면 마찰만으로 오판한다.
+DG5F_CONTACT_CURRENT_SIGMA = float(_env("RTAUTO_DG5F_CONTACT_CURRENT_SIGMA", "6"))
+
+#: 위 배수와 별개로 **무조건 넘어야 하는 전류 증가분(mA)**. 흔들림이 0에 가까운 관절에서
+#: 잡음만으로 기준을 넘는 것을 막는 바닥값이다.
+DG5F_CONTACT_CURRENT_FLOOR_MA = float(_env("RTAUTO_DG5F_CONTACT_CURRENT_FLOOR_MA", "80"))
+
+#: 시킨 각도와 실제 각도가 이만큼(deg) 이상 벌어져야 "못 가고 있다"로 본다.
+#: ⚠️ 이 조건은 **뺄 수 없다.** 이게 없으면 "시킨 데까지 다 가서 멈춘 관절"을
+#:    접촉으로 오판한다(멈춰 있고 오차도 없는 것은 접촉의 반대다).
+DG5F_CONTACT_POS_ERR_DEG = float(_env("RTAUTO_DG5F_CONTACT_POS_ERR_DEG", "2.0"))
+
+#: 관절 속도가 이것(rpm) 아래로 떨어져야 "멈췄다"로 본다.
+DG5F_CONTACT_VEL_RPM = float(_env("RTAUTO_DG5F_CONTACT_VEL_RPM", "3.0"))
+
+#: 위 조건이 **몇 번 연속**으로 만족해야 접촉으로 확정하는가. 순간적으로 넘은 것은 버린다.
+#: 통신 주기가 약 5 ms 이므로 8번이면 대략 40 ms 다.
+DG5F_CONTACT_HOLD_TICKS = int(_env("RTAUTO_DG5F_CONTACT_HOLD_TICKS", "8"))
+
+#: 손가락 몇 개가 닿아야 "잡았다"로 보고 더 조이기를 멈추는가.
+#: 시뮬레이터의 성공 기준(min_tips=3)과 같은 값으로 시작한다.
+DG5F_CONTACT_MIN_FINGERS = int(_env("RTAUTO_DG5F_CONTACT_MIN_FINGERS", "3"))
+
+#: 닫기를 포기할 때까지의 시간(초). 이 안에 손가락 수가 안 차면 "헛잡음"으로 끝낸다.
+DG5F_CLOSE_TIMEOUT_S = float(_env("RTAUTO_DG5F_CLOSE_TIMEOUT_S", "3.0"))
+
+#: 이 전류(mA)를 넘으면 물체·손을 지키려고 즉시 멈추고 편다. 하드웨어 보호용 상한.
+#: ⚠️ 실측 전 잠정값 — 무부하 전류를 재기 전에는 이 값이 안전한지 알 수 없다.
+DG5F_CURRENT_LIMIT_MA = float(_env("RTAUTO_DG5F_CURRENT_LIMIT_MA", "800"))
+
+#: 이 온도(°C)를 넘으면 멈춘다. 오래 쥐고 있으면 모터가 뜨거워진다.
+DG5F_TEMP_LIMIT_C = float(_env("RTAUTO_DG5F_TEMP_LIMIT_C", "65"))
+
+#: 새 상태값이 이 시간(초) 동안 안 들어오면 통신이 끊긴 것으로 보고 명령을 멈춘다.
+DG5F_FRAME_TIMEOUT_S = float(_env("RTAUTO_DG5F_FRAME_TIMEOUT_S", "0.5"))
+
+# ---------------- 잡았는지 확인하기 (들어올린 뒤) ----------------
+#: 확인하려고 팔을 들어올리는 높이(m)와 속도(m/s). 낮고 느릴수록 안전하다.
+GRASP_LIFT_HEIGHT_M = float(_env("RTAUTO_GRASP_LIFT_HEIGHT_M", "0.05"))
+GRASP_LIFT_SPEED_MPS = float(_env("RTAUTO_GRASP_LIFT_SPEED_MPS", "0.02"))
+
+#: 들어올린 뒤 **일부러 조금 더 조여 보는** 각도(deg). 이것이 "집어보기"다.
+#: ⚠️ 왜 필요한가: 닿은 관절은 목표를 그 자리에 세워 두므로, 물체가 빠져도 손가락이
+#:    거의 안 움직인다(0.5도 수준). 그래서 "손가락이 더 닫혔나" 만 보면 놓친 것을
+#:    못 잡는다 — hand/tests/test_grasp_contact.py 에서 이 구멍이 드러났다.
+#:    조금 더 조여 보면 **물체가 있으면 못 움직이고, 없으면 그만큼 들어간다.**
+#: 물체를 찌그러뜨리지 않게 작게 잡는다.
+GRASP_PROBE_DEG = float(_env("RTAUTO_GRASP_PROBE_DEG", "5.0"))
+
+#: 집어보기를 시켰을 때 손가락이 이만큼(deg) 이상 실제로 움직이면 **빈손**이다.
+#: GRASP_PROBE_DEG 보다 작아야 한다(다 들어가기 전에 알아채려는 것).
+GRASP_SLIP_CLOSE_DEG = float(_env("RTAUTO_GRASP_SLIP_CLOSE_DEG", "3.0"))
+
+#: 들어올린 뒤 전류가 잡은 직후 대비 이 비율 아래로 떨어지면 놓친 것으로 본다.
+GRASP_SLIP_CURRENT_RATIO = float(_env("RTAUTO_GRASP_SLIP_CURRENT_RATIO", "0.5"))
+
+#: UR16e 내장 힘 센서로 무게를 확인할 때, 물체가 있다고 볼 최소 힘 변화(N).
+#: ⚠️ UR 내장 힘 센서의 잡음은 수 N 수준이라 **가벼운 물체(100 g = 약 1 N)는 못 본다.**
+#:    가벼운 물체에서는 이 확인을 건너뛰고 손가락 각도·전류·카메라 쪽을 쓴다.
+GRASP_FT_MIN_DELTA_N = float(_env("RTAUTO_GRASP_FT_MIN_DELTA_N", "3.0"))
+
 # ---------------- MediaPipe 카메라 ----------------
 # 카메라 열거 순서와 지원 모드는 PC/드라이버마다 다르므로 vision 스크립트에 고정하지 않는다.
 # 카메라 번호. 숫자면 그 번호로 고정, "auto"면 가장 좋은 것을 알아서, "ask"면 실행할 때마다
