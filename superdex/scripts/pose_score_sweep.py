@@ -64,14 +64,21 @@ RESULTS_DIR = REPO_ROOT / "superdex" / "results"
 #: 조각이 있는 프리팹(shape_box)은 조각 하나만 써야 한다 — 안 그러면 나머지 13개가
 #: 같은 자리에 겹쳐 놓인다(object_oracle_sweep.py 머리말 참고).
 SHAPE_BOX = "prefabs/shape_box/shape_box.mochi_prefab"
+#: `shape_box` 도형 12종. 2026-09-14 에 **전부 잡히는 것이 확인**됐다
+#: (docs/SUPERDEX_POC_PLAN.md "shape_box 오라클 스윕").
+SHAPE_BOX_PIECES = ("cross", "triangle", "square", "trapezoid", "rectangle", "pentagon",
+                    "parallelogram", "octagon", "hexagon", "ellipse", "diamond", "star")
+
 OBJECTS = {
     "duck_lamp": ("prefabs/duck_lamp/duck_lamp_recumbent.mochi_prefab", None, "root"),
     "block_red": ("prefabs/box_and_blocks/block_red.mochi_prefab", None, "com"),
-    "square":    (SHAPE_BOX, "square", "com"),
-    "ellipse":   (SHAPE_BOX, "ellipse", "com"),
-    "star":      (SHAPE_BOX, "star", "com"),
-    "hexagon":   (SHAPE_BOX, "hexagon", "com"),
 }
+OBJECTS.update({name: (SHAPE_BOX, name, "com") for name in SHAPE_BOX_PIECES})
+
+#: ⚠️ **벽이 얇아서 지금 물리로는 판정을 믿을 수 없는 물체.** 채점표에 섞지 않는다.
+#: 2026-09-17 실측: 손가락이 파고드는 깊이 0.59 mm 인데 종이컵 벽은 0.3~0.5 mm 라
+#: **벽보다 깊이 들어간다.** docs/FESTA_PREGRASP_PLAN.md §9 참고.
+TOO_THIN = ("paper_cup",)
 
 #: 자세 하나당 써 볼 쥐는 방식. (끝까지 쥐는 정도, 쥐는 데 걸리는 스텝, 더 조이는 정도)
 #: 여러 개를 쓰는 이유는 **자세 탓과 쥐는 방식 탓을 섞지 않기 위해서**다 — 하나라도

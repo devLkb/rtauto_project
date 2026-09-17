@@ -63,13 +63,15 @@ sys.path.insert(0, str(REPO_ROOT / "superdex" / "scripts"))
 
 import rtauto_config as cfg  # noqa: E402,F401
 
-# 물체 짧은 이름 -> prefab 경로. gate4_object_sweep.py 와 같은 목록이다.
-OBJECTS = {
-    "duck_lamp": "prefabs/duck_lamp/duck_lamp_recumbent.mochi_prefab",
-    "paper_cup": "prefabs/paper_cups/paper_cup.mochi_prefab",
-    "sphere": "prefabs/sphere/sphere.mochi_prefab",
-    "block_red": "prefabs/box_and_blocks/block_red.mochi_prefab",
-}
+# 물체 목록의 정본은 pose_score_sweep.py 하나다 — 두 곳에 적으면 곧 어긋난다(원칙 1).
+# 여기서는 그쪽에 없는 것(종이컵 등)만 더한다.
+from pose_score_sweep import OBJECTS as _SCORED_OBJECTS  # noqa: E402
+
+OBJECTS = {name: prefab for name, (prefab, _actor, _ref) in _SCORED_OBJECTS.items()}
+OBJECTS["paper_cup"] = "prefabs/paper_cups/paper_cup.mochi_prefab"
+#: 조각이 있는 프리팹은 조각 하나만 써야 한다 — 안 그러면 나머지가 겹쳐 놓인다.
+OBJECT_ACTORS = {name: actor for name, (_p, actor, _r) in _SCORED_OBJECTS.items() if actor}
+OBJECT_REFS = {name: ref for name, (_p, _a, ref) in _SCORED_OBJECTS.items()}
 # 물체별로 맞는 스폰 오프셋. duck_lamp 값을 다른 물체에 그대로 쓰면 잡지 못한다
 # (게이트 4 실측: paper_cup 은 배치만 바꿔 성립률 30 % -> 100 %).
 PLACES = {"paper_cup": (0.06, 0.0, 0.06)}
@@ -123,7 +125,31 @@ def main() -> None:
                     help="파지 중심에서 카메라까지 거리 [m]. 작을수록 확대된다")
     ap.add_argument("--record", default=None,
                     help="창 대신 오프스크린 렌더링해 이 경로에 mp4 로 저장한다")
+    ap.add_argument("--place", default=None,
+                    help="물체를 놓을 자리 'x,y,z'(m). 손바닥 기준")
+    ap.add_argument("--place-rot", default=None,
+                    help="물체를 놓을 방향 쿼터니언 'x,y,z,w'")
+    ap.add_argument("--from-table", default=None,
+                    help="채점표(json)에서 이 물체의 자세를 가져온다")
+    ap.add_argument("--rank", type=int, default=0,
+                    help="--from-table 에서 몇 번째로 좋은 자세를 볼지 (0 = 가장 좋은 것)")
     args = ap.parse_args()
+
+    # --- 채점표에서 자세 가져오기 — 숫자와 눈이 맞는지 보는 용도다(원칙 6) ----
+    table_note = None
+    if args.from_table:
+        import json
+        rows = json.loads(Path(args.from_table).read_text(encoding="utf-8"))["rows"]
+        mine = sorted((r for r in rows if r["object"] == args.object),
+                      key=lambda r: (-r["rate"], -r["tips_best_median"]))
+        if not mine:
+            raise SystemExit("채점표에 '{}' 자세가 없다: {}".format(
+                args.object, args.from_table))
+        pick = mine[min(args.rank, len(mine) - 1)]
+        args.place = ",".join(str(v) for v in pick["place"])
+        args.place_rot = ",".join(str(v) for v in pick["place_rot"])
+        table_note = "채점표가 적어 둔 성공률 {:.0%} ({}, 지문 {:.0f}개)".format(
+            pick["rate"], pick["rot_name"], pick["tips_best_median"])
 
     from dg5f_grasp_env import Dg5fGraspEnv
     from superdex.physics.viewer import Viewer, ViewerCfg
@@ -135,6 +161,14 @@ def main() -> None:
     }
     if args.object in PLACES:
         env_config["place"] = list(PLACES[args.object])
+    if args.object in OBJECT_ACTORS:
+        env_config["object_actor"] = OBJECT_ACTORS[args.object]
+    if args.object in OBJECT_REFS:
+        env_config["object_ref"] = OBJECT_REFS[args.object]
+    if args.place:
+        env_config["place"] = [float(v) for v in args.place.split(",")]
+    if args.place_rot:
+        env_config["place_rot"] = [float(v) for v in args.place_rot.split(",")]
 
     env = Dg5fGraspEnv(env_config)
 
@@ -158,6 +192,11 @@ def main() -> None:
     print(f"에피소드: {args.episodes}  각 {args.episode_seconds}초 "
           f"(처음 {env.grace_steps}스텝은 무중력)")
     print(f"배속   : 실시간의 1/{args.slowdown:g}")
+    if args.place:
+        print(f"자세   : 자리 {args.place}  방향 {args.place_rot or '(안 돌림)'}")
+    if table_note:
+        print(f"         {table_note}")
+        print("         ⚠️ 눈으로 본 것과 이 숫자가 다르면 그게 중요한 발견이다(원칙 6)")
     print()
     print("⚠️ 팔은 없다 — 손목 고정 태스크라 손 20관절만 제어한다.")
     print("⚠️ 들어올리지 않는다 — 중력 하에서 떨어뜨리지 않고 버티는 것이 성공이다.")
