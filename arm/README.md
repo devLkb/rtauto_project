@@ -49,6 +49,7 @@ UrArmReceiver.cs ◀─UDP 5010──  송신(deg) ← rad_to_deg ←───�
 | 파일 | 줄 수 | 역할 |
 |---|---|---|
 | `ur_rtde_bridge.py` | 351 | **본체.** UDP 수신 → 속도 제한 → `servoJ` 송신, 선택적 실제각 echo, 제어 링크 자동 재접속 |
+| `prepose_to_joints.py` | — | **파지 직전 자세 → 관절 각도 → 이동 후 정지.** 카메라로 정한 손바닥 자세를 받아 팔을 그 자세로 옮긴다(잡지 않는다). 좌표 관계는 전부 URDF 에서 읽는다 |
 | `run_ursim.sh` | 18 | URSim 도커 컨테이너 실행 (Linux/macOS, bash) |
 | `run_ursim.ps1` | 19 | 같은 내용의 Windows PowerShell 판 |
 
@@ -192,6 +193,76 @@ python arm/ur_rtde_bridge.py --ip --echo-to-unity
 | 브리지가 시작조차 안 됨 | UDP 5009 포트 점유, `pip install ur_rtde` 여부 |
 | 팔이 홱 점프함 | 슬루 기준점 문제. `--max-deg-per-sec`를 낮추고 재접속 로그를 확인 |
 | `[hold] 패킷 끊김`이 계속 뜸 | Unity 송신이 실제로 멈춰 있는지 확인. 단방향(echo 전용) 사용이라면 정상 |
+
+## 6-2. 파지 직전 자세로 팔 보내기 (`prepose_to_joints.py`)
+
+카메라로 물체를 보고 정한 **파지 직전 자세**를 받아 팔을 거기까지 옮기고 멈춘다.
+위의 `ur_rtde_bridge.py` 와 달리 **관절 각도를 받지 않고 손바닥 자세를 받는다** —
+관절 각도는 이 파일이 푼다.
+
+설계: [`../docs/FESTA_PREGRASP_PLAN.md`](../docs/FESTA_PREGRASP_PLAN.md).
+주고받는 값: [`../contracts/README.md`](../contracts/README.md).
+
+### 좌표 기준이 세 개다 — 여기가 가장 자주 틀린다
+
+| 이름 | 무엇 |
+|---|---|
+| `base_link` | URDF·Unity 가 쓰는 로봇 밑동 |
+| `base` | **UR 컨트롤러가 쓰는 밑동.** `base_link` 를 Z축으로 180° 돌린 것 |
+| `flange` | 팔 끝 접시. UR 컨트롤러의 기본 손끝이 여기다 |
+
+이 관계를 **코드에 적지 않고 URDF 에서 읽는다**(원칙 1). 손이 바뀌거나 장착 위치가
+바뀌어도 URDF 만 고치면 된다.
+
+### 따라 하기
+
+**터미널 1 (PowerShell, 리포 루트, 가짜 팔 띄우기)** — Docker Desktop 이 먼저 켜져 있어야 한다.
+
+```powershell
+./arm/run_ursim.ps1
+```
+
+펜던트 화면이 필요하면 브라우저에서 `http://localhost:6080/vnc.html` 을 연다.
+처음 띄우면 이미지를 내려받느라 몇 분 걸린다. 이 터미널은 **켜 둔 채로** 다음으로 간다.
+
+**터미널 2 (PowerShell, 리포 루트, 자세 보내기)**
+
+```powershell
+# 1) 연결 없이 계산만 — 자세가 UR 좌표로 어떻게 바뀌는지 본다
+python arm/prepose_to_joints.py --demo
+
+# 2) 좌표 기준이 맞는지 팔에게 직접 물어 확인 (움직이지 않는다)
+python arm/prepose_to_joints.py --check-frames --ip
+
+# 3) 실제로 그 자세까지 옮기고 멈춘다
+python arm/prepose_to_joints.py --demo --ip
+```
+
+bash 라면 같은 명령을 그대로 쓰되 1번 줄만 `./arm/run_ursim.sh` 다.
+
+### 무엇이 보이면 정상인가
+
+2번(`--check-frames`)에서 마지막 줄이 이렇게 나와야 한다.
+
+```text
+위치 차이      : 0.000 mm
+방향 차이      : 0.0000 deg
+판정           : 좌표 기준이 맞다
+```
+
+⚠️ **여기서 차이가 크게 나면 그대로 두고 움직이지 마라.** 좌표 기준을 잘못 잡은 것이고,
+팔이 엉뚱한 곳으로 간다.
+
+3번은 `이동함 — 자세까지 이동하고 멈췄다` 가 나오고 펜던트 화면에서 팔이 움직인다.
+못 닿는 자세면 **움직이기 전에** `움직이지 않음 — 팔이 그 자세까지 닿지 못한다` 로 끝난다.
+
+### 시험 돌리기 (팔 없이)
+
+```powershell
+python -m unittest arm.tests.test_prepose_to_joints -v
+```
+
+좌표 계산만 확인하는 시험이라 가짜 팔도 실물도 필요 없다.
 
 ## 7. 관련 문서
 
