@@ -132,6 +132,95 @@ def score_pose(env, pose, seeds, seed0, run_trajectory):
     }
 
 
+def report(path):
+    """이미 만든 채점표를 다시 읽어 사람이 읽을 요약을 낸다.
+
+    표가 채점표로 쓸 만한지 보는 질문은 두 가지다:
+      1. 자세에 따라 결과가 갈리는가 (다 성공/다 실패면 가르칠 게 없다)
+      2. **물체마다 좋은 자세가 다른가** — 다 같으면 자세 하나로 고정하면 되고
+         학습이 필요 없다. 다르면 "물체마다 자세가 다르다" 는 걸림돌이 실재한다는 뜻이다
+    """
+    from collections import defaultdict
+
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    rows = data.get("rows", [])
+    if not rows:
+        print("빈 표다: {}".format(path))
+        return 1
+
+    def key(r):
+        return (tuple(r["place"]), r["rot_name"])
+
+    objects, ok = [], defaultdict(set)
+    poses = set()
+    for r in rows:
+        if r["object"] not in objects:
+            objects.append(r["object"])
+        poses.add(key(r))
+        if r["rate"] >= 0.99:
+            ok[r["object"]].add(key(r))
+
+    print("채점표: {}".format(path))
+    print("만든 때: {}".format(data.get("made_at", "?")))
+    print("자세 {}개 × 물체 {}종 = {}칸".format(len(poses), len(objects), len(rows)))
+    print()
+
+    print("물체별 되는 자세 수 ({}개 중)".format(len(poses)))
+    print("-" * 58)
+    by_obj = defaultdict(list)
+    for r in rows:
+        by_obj[r["object"]].append(r)
+    for name in objects:
+        rs = by_obj[name]
+        full = sum(1 for r in rs if r["rate"] >= 0.99)
+        part = sum(1 for r in rs if 0.01 < r["rate"] < 0.99)
+        print("  {:<12s} 다 성공 {:2d} / 가끔 {:2d} / 다 실패 {:2d}".format(
+            name, full, part, len(rs) - full - part))
+    print()
+
+    print("물체별 잘 되는 자세 상위 3개")
+    print("-" * 58)
+    for name in objects:
+        print("  [{}]".format(name))
+        top = sorted(by_obj[name], key=lambda r: (-r["rate"], -r["tips_best_median"]))[:3]
+        for r in top:
+            x, _, z = r["place"]
+            print("     앞 {:.2f} m  높이 {:.2f} m  {:<8s} -> {:.0f}%  지문 {:.0f}개".format(
+                x, z, r["rot_name"], r["rate"] * 100, r["tips_best_median"]))
+    print()
+
+    sets = [ok[name] for name in objects]
+    shared = set.intersection(*sets) if sets else set()
+    any_ok = set.union(*sets) if sets else set()
+    print("모든 물체에 다 통하는 자세 : {}개 / {}개".format(len(shared), len(poses)))
+    for k in sorted(shared):
+        print("    앞 {:.2f} m  옆 {:.2f} m  높이 {:.2f} m  {}".format(
+            k[0][0], k[0][1], k[0][2], k[1]))
+    print("어느 한 물체라도 되는 자세 : {}개".format(len(any_ok)))
+    print()
+
+    print("물체끼리 되는 자세가 얼마나 겹치나")
+    print("-" * 58)
+    overlaps = []
+    for i, a in enumerate(objects):
+        for b in objects[i + 1:]:
+            inter, uni = len(ok[a] & ok[b]), len(ok[a] | ok[b])
+            pct = 100.0 * inter / max(1, uni)
+            overlaps.append(pct)
+            print("  {:<11s} vs {:<11s} 겹침 {:2d} / 합 {:2d} = {:3.0f}%".format(
+                a, b, inter, uni, pct))
+    print()
+    if overlaps:
+        avg = sum(overlaps) / len(overlaps)
+        print("평균 겹침 {:.0f}%".format(avg))
+        if avg < 60:
+            print("-> 물체마다 좋은 자세가 크게 다르다. 자세 하나로 고정할 수 없다는 뜻이고,")
+            print("   그래서 '보이는 모양 -> 좋은 자세' 를 배우는 것(D-4)이 값어치가 있다.")
+        else:
+            print("-> 겹침이 크다. 자세를 고정해도 되는지 먼저 따져 봐야 한다.")
+    return 0
+
+
 def _floats(text):
     return [float(v) for v in str(text).split(",") if str(v).strip()]
 
@@ -149,7 +238,12 @@ def main() -> int:
     ap.add_argument("--seed0", type=int, default=9000)
     ap.add_argument("--episode-seconds", type=float, default=1.0)
     ap.add_argument("--out", default=None, help="결과 파일 경로(기본: results 폴더에 시각으로)")
+    ap.add_argument("--report", default=None,
+                    help="훑지 않고, 이미 만든 채점표 파일을 읽어 요약만 낸다")
     args = ap.parse_args()
+
+    if args.report:
+        return report(args.report)
 
     wanted = [o.strip() for o in args.objects.split(",") if o.strip()]
     unknown = [o for o in wanted if o not in OBJECTS]
