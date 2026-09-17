@@ -304,6 +304,35 @@ class RobotChain:
         return mat
 
 
+    def frames_along_arm(self, q6: Sequence[float]):
+        """팔 관절각(rad) 6개 → 밑동부터 손끝까지 각 마디의 자세를 순서대로.
+
+        `[(링크이름, 4x4), ...]` 를 돌려준다. 팔을 화면에 그릴 때 쓴다
+        (`arm/watch_arm.py`). `forward_kinematics` 와 같은 계산이고, 중간 것까지
+        같이 내놓는 것만 다르다.
+        """
+        q6 = [float(v) for v in q6]
+        if len(q6) != ARM_JOINT_COUNT:
+            raise ArmKinematicsError(
+                "관절각이 {}개다 — {}개여야 한다.".format(len(q6), ARM_JOINT_COUNT)
+            )
+        joints = list(self.path_to_root(UR_TCP_LINK))
+        joints.reverse()
+        out = [(URDF_BASE_LINK, np.eye(4))]
+        mat = np.eye(4)
+        movable_index = 0
+        for joint in joints:
+            mat = mat @ joint.origin
+            if joint.jtype in _MOVABLE:
+                axis = joint.axis if joint.axis is not None else np.array([0.0, 0.0, 1.0])
+                mat = mat @ make_transform(
+                    _axis_angle_to_matrix(axis, q6[movable_index]), (0, 0, 0)
+                )
+                movable_index += 1
+            out.append((joint.child, mat.copy()))
+        return out
+
+
 def _axis_angle_to_matrix(axis: np.ndarray, angle: float) -> np.ndarray:
     axis = np.asarray(axis, dtype=float)
     norm = np.linalg.norm(axis)

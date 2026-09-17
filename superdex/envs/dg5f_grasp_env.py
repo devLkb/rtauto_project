@@ -77,6 +77,20 @@ OBJECT_REF_COM = "com"
 
 CONTROL_MODE_ARM_HAND26 = "arm_hand26"
 CONTROL_MODE_HAND20 = "hand20"
+def _quat_rotate(quat, vec):
+    """쿼터니언 (x, y, z, w) 로 벡터를 돌린다. physics 쪽 쿼터니언 표기와 같은 순서다.
+
+    물체를 돌려 놓을 때, 물체 안의 기준점(질량중심 등) 오프셋도 같이 돌려야 한다.
+    안 돌리면 기준점이 엉뚱한 자리에 놓여 배치가 조용히 어긋난다.
+    """
+    q = np.asarray(quat, dtype=float)
+    v = np.asarray(vec, dtype=float)
+    u, w = q[:3], float(q[3])
+    return (2.0 * np.dot(u, v) * u
+            + (w * w - np.dot(u, u)) * v
+            + 2.0 * w * np.cross(u, v))
+
+
 ARM_DOFS = 6
 HAND_DOFS = 20
 PALM_LINK = "dg5f_link_palm"
@@ -120,6 +134,21 @@ class Dg5fGraspEnv(gym.Env):
         #   0.015 -> 13%,  0.025 -> 0%,  0.035 -> 0%
         # 0.015를 기본값으로 둔다: 학습 여지가 있으면서 완전 불가능하지는 않은 지점.
         self.place_jitter = float(c.get("place_jitter", 0.015))
+        # 물체를 놓을 **방향**. 쿼터니언 (x, y, z, w) — physics 쪽 표기와 같은 순서다.
+        # 기본값은 회전 없음이라 이 값을 안 주면 지금까지와 똑같이 돈다.
+        #
+        # ⚠️ 왜 필요한가: 파지 직전 자세는 "어디에" 뿐 아니라 "어느 방향으로" 까지다.
+        # 이 값이 없으면 채점표(docs/FESTA_PREGRASP_PLAN.md D-2)가 위치만 훑게 되고,
+        # 손이 물체를 옆에서 잡을지 위에서 잡을지를 구분하지 못한다.
+        self.place_rot = np.asarray(c.get("place_rot", (0.0, 0.0, 0.0, 1.0)), dtype=float)
+        if self.place_rot.shape != (4,):
+            raise ValueError(
+                f"place_rot 는 쿼터니언 4개 (x, y, z, w) 여야 한다 (실제 {self.place_rot.tolist()})"
+            )
+        norm = float(np.linalg.norm(self.place_rot))
+        if norm < 1e-9:
+            raise ValueError("place_rot 의 길이가 0 이다 — 쿼터니언이 될 수 없다")
+        self.place_rot = self.place_rot / norm
 
         # --- 물체 배치 방식 -------------------------------------------------------
         # ⚠️ `place` 는 **물체마다 사람이 맞춘 상수**다. 게이트 4 에서 이 값이 성공을
@@ -710,11 +739,17 @@ class Dg5fGraspEnv(gym.Env):
         else:
             jitter = self.np_random.uniform(-self.place_jitter, self.place_jitter, size=3)
             spawn = self._palm_to_world(tf, self.place + jitter)
-        # spawn 은 기준점이 놓일 위치다. 리셋 자세의 회전은 identity 이므로 root 는
-        # 기준점 오프셋만큼 빼 준 곳에 둔다("root" 면 오프셋이 없어 기존과 같다).
-        root_pos = spawn if self._ref_local is None else spawn - self._ref_local
+        # spawn 은 **기준점**(object_ref)이 놓일 위치다. root 는 그 기준점이 물체 안에서
+        # 어디에 있는지만큼 빼 준 곳에 둔다("root" 면 오프셋이 없어 기존과 같다).
+        # ⚠️ 물체를 돌려 놓으면 그 오프셋도 같이 돌아간다 — 안 돌리면 기준점이 엉뚱한
+        # 곳에 놓여 배치가 조용히 어긋난다.
+        if self._ref_local is None:
+            root_pos = spawn
+        else:
+            root_pos = spawn - _quat_rotate(self.place_rot, self._ref_local)
         t = physics.TransformRT()
         t.translation = [float(v) for v in root_pos]
+        t.rotation = [float(v) for v in self.place_rot]
         self.block.set_root_transform(t)
         self.block.set_velocity([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])
 
