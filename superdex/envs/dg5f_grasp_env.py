@@ -77,6 +77,12 @@ OBJECT_REF_COM = "com"
 
 CONTROL_MODE_ARM_HAND26 = "arm_hand26"
 CONTROL_MODE_HAND20 = "hand20"
+def _quat_angle_deg(a, b):
+    """두 방향 사이의 각도(도). 같은 방향인데 부호만 뒤집힌 표기는 같게 본다."""
+    d = float(abs(np.dot(np.asarray(a, dtype=float), np.asarray(b, dtype=float))))
+    return float(np.degrees(2.0 * np.arccos(min(1.0, d))))
+
+
 def _quat_rotate(quat, vec):
     """쿼터니언 (x, y, z, w) 로 벡터를 돌린다. physics 쪽 쿼터니언 표기와 같은 순서다.
 
@@ -641,6 +647,16 @@ class Dg5fGraspEnv(gym.Env):
         local.translation = [float(v) for v in world_pos]
         return np.asarray((tf[self.palm_idx].inverse() * local).translation, dtype=float)
 
+    def _object_quat_in_palm(self, tf):
+        """물체의 **방향**을 손바닥 좌표계로. 기울기(파지 후 물체 회전) 측정에 쓴다.
+
+        `_world_to_palm` 이 위치를 옮기는 것과 짝이다 — 그쪽은 얼마나 밀렸는지,
+        이쪽은 얼마나 돌아갔는지를 본다.
+        """
+        obj = physics.TransformRT()
+        obj.rotation = [float(v) for v in self.block.get_root_transform().rotation]
+        return np.asarray((tf[self.palm_idx].inverse() * obj).rotation, dtype=float)
+
     def _palm_to_world(self, tf, offset):
         local = physics.TransformRT()
         local.translation = [float(v) for v in offset]
@@ -727,6 +743,7 @@ class Dg5fGraspEnv(gym.Env):
         self._prev_action = None
         self._target = None
         self._slip_ref = None      # 파지 성립 시점의 물체 위치(손바닥 좌표계)
+        self._tilt_ref = None      # 파지 성립 시점의 물체 방향(손바닥 좌표계)
 
         start = self._pose_at(self.start_frac)
         arr = physics.DynamicArrayReal(start.tolist())
@@ -921,14 +938,27 @@ class Dg5fGraspEnv(gym.Env):
         # (게이트 0의 스크립트 파지는 이 값이 1.3mm 였다).
         tf_now = self._link_positions()
         obj_palm = self._world_to_palm(tf_now, bt)
+        obj_quat_palm = self._object_quat_in_palm(tf_now)
         if self._slip_ref is None and gravity_on and n_tips >= self.min_tips:
             self._slip_ref = obj_palm.copy()
+            self._tilt_ref = obj_quat_palm.copy()
         slip = (float(np.linalg.norm(obj_palm - self._slip_ref))
                 if self._slip_ref is not None else float("nan"))
+        # --- 기울기 측정 (미끄러짐의 회전판) ----------------------------------
+        # 잡은 뒤 물체가 손 안에서 **얼마나 돌아갔는가**(도). 들어올렸을 때 물체가
+        # 반듯하게 따라 올라오길 원하면 이 값이 작아야 한다.
+        # ⚠️ 기준은 "처음 놓은 방향"이 아니라 **파지가 성립한 순간의 방향**이다 —
+        #    일부러 눕혀 놓고 훑는 자세(tilt+90 등)를 기울어짐으로 오판하지 않으려는 것이다.
+        # ⚠️ 2026-09-17 현재 이 값은 **기록만 하고 성공 판정에는 넣지 않는다.**
+        #    얼마를 넘으면 실패로 볼지는 실제로 재 본 분포를 보고 정한다
+        #    (숫자를 짐작해서 먼저 박지 않는다 — CLAUDE.md 원칙 6).
+        tilt = (_quat_angle_deg(obj_quat_palm, self._tilt_ref)
+                if self._tilt_ref is not None else float("nan"))
 
         info = {
             "dist": dist, "n_contacts": ncon, "gravity_on": gravity_on,
             "slip": slip, "grasp_established": self._slip_ref is not None,
+            "tilt_deg": tilt,
             "tips_touching": n_tips,
             "tip_force_max": float(np.max(tip_force)),
             # 지문 접촉력의 **합**. 파지가 버틸 수 있는 무게의 상한이 쿨롱 마찰로

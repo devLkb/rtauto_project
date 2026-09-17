@@ -130,6 +130,7 @@ def score_pose(env, pose, seeds, seed0, run_trajectory):
     env.place = np.asarray(pose["place"], dtype=float)
     env.place_rot = np.asarray(pose["place_rot"], dtype=float)
     ok, tips, drops, trials = 0, [], 0, 0
+    tilts = []          # 성공한 시도에서만 모은다 — 못 잡은 것의 각도는 뜻이 없다
     for i in range(seeds):
         seed = seed0 + i
         hit, best = False, 0
@@ -139,6 +140,10 @@ def score_pose(env, pose, seeds, seed0, run_trajectory):
             hit |= r["success"]
             best = max(best, r["tips_best"])
             drops += int(r["dropped"])
+            if r["success"]:
+                t_end = float(r.get("tilt_end", float("nan")))
+                if t_end == t_end:              # NaN 이 아니면
+                    tilts.append(t_end)
         ok += int(hit)
         tips.append(best)
     return {
@@ -147,6 +152,10 @@ def score_pose(env, pose, seeds, seed0, run_trajectory):
         "rate": ok / max(1, seeds),
         "tips_best_median": float(np.median(tips)),
         "drop_rate": drops / max(1, trials),
+        # 잡은 뒤 물체가 손 안에서 돌아간 각도(도). 성공한 시도만 모은 중앙값·최대값.
+        # 작을수록 물체가 반듯하게 따라 올라온다. 성공이 하나도 없으면 없음(None).
+        "tilt_median_deg": float(np.median(tilts)) if tilts else None,
+        "tilt_max_deg": float(np.max(tilts)) if tilts else None,
     }
 
 
@@ -203,8 +212,38 @@ def report(path):
         top = sorted(by_obj[name], key=lambda r: (-r["rate"], -r["tips_best_median"]))[:3]
         for r in top:
             x, _, z = r["place"]
-            print("     앞 {:.2f} m  높이 {:.2f} m  {:<8s} -> {:.0f}%  지문 {:.0f}개".format(
-                x, z, r["rot_name"], r["rate"] * 100, r["tips_best_median"]))
+            tilt = r.get("tilt_median_deg")
+            print("     앞 {:.2f} m  높이 {:.2f} m  {:<8s} -> {:.0f}%  지문 {:.0f}개  기울기 {}".format(
+                x, z, r["rot_name"], r["rate"] * 100, r["tips_best_median"],
+                "{:.0f}도".format(tilt) if tilt is not None else "-"))
+    print()
+
+    # --- 기울기: 잡은 뒤 물체가 손 안에서 얼마나 돌아가는가 ------------------
+    # 들어올렸을 때 물체가 반듯하게 따라 올라오길 원하면 이 값이 작아야 한다.
+    # 아직 성공/실패 판정에는 안 넣는다 — 얼마를 넘으면 실패로 볼지는 이 분포를
+    # 보고 정한다(짐작한 숫자를 먼저 박지 않는다).
+    print("잡은 뒤 물체가 돌아간 각도 (성공한 자세만)")
+    print("-" * 58)
+    tilted = [r for r in rows if r["rate"] >= 0.99 and r.get("tilt_median_deg") is not None]
+    if not tilted:
+        print("  성공한 자세가 없어 잴 것이 없다")
+    else:
+        vals = np.asarray([r["tilt_median_deg"] for r in tilted], dtype=float)
+        for lo, hi, label in ((0, 5, "5도 미만 (거의 안 돌아감)"),
+                              (5, 15, "5~15도"),
+                              (15, 45, "15~45도"),
+                              (45, 1e9, "45도 이상 (크게 돌아감)")):
+            n = int(((vals >= lo) & (vals < hi)).sum())
+            print("  {:<26s} {:4d}칸 ({:3.0f}%)".format(
+                label, n, 100.0 * n / len(vals)))
+        print("  중앙값 {:.0f}도 / 가장 큰 것 {:.0f}도".format(
+            float(np.median(vals)), float(vals.max())))
+        for name in objects:
+            v = [r["tilt_median_deg"] for r in by_obj[name]
+                 if r["rate"] >= 0.99 and r.get("tilt_median_deg") is not None]
+            if v:
+                print("    {:<12s} 중앙값 {:4.0f}도 / 가장 작은 것 {:4.0f}도".format(
+                    name, float(np.median(v)), float(np.min(v))))
     print()
 
     sets = [ok[name] for name in objects]

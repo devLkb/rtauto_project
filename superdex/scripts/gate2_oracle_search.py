@@ -49,6 +49,7 @@ def run_trajectory(env, seed, final_frac, ramp_steps, hold_frac, place_x=None):
     env.reset(seed=seed)
     info = {}
     best_tips = 0
+    worst_tilt = 0.0          # 잡은 뒤 물체가 손 안에서 돌아간 각도의 최대값(도)
     for t in range(env.max_steps):
         if t < ramp_steps:
             frac = final_frac * (t + 1) / ramp_steps
@@ -57,6 +58,9 @@ def run_trajectory(env, seed, final_frac, ramp_steps, hold_frac, place_x=None):
         a = env._pose_at(frac).astype(np.float32)
         _, _, term, trunc, info = env.step(a)
         best_tips = max(best_tips, info.get("tips_touching", 0))
+        _tilt = float(info.get("tilt_deg", float("nan")))
+        if _tilt == _tilt:                       # NaN 이 아니면
+            worst_tilt = max(worst_tilt, _tilt)
         if term or trunc:
             break
     return {
@@ -65,6 +69,9 @@ def run_trajectory(env, seed, final_frac, ramp_steps, hold_frac, place_x=None):
         "tips_best": int(best_tips),
         "dist": float(info.get("dist", float("nan"))),
         "force_max": float(info.get("tip_force_max", 0.0)),
+        # 기울기: 끝났을 때 / 도중 최대. 잡고 나서 물체가 손 안에서 돈 각도(도).
+        "tilt_end": float(info.get("tilt_deg", float("nan"))),
+        "tilt_max": float(worst_tilt),
         "dropped": bool(term),
     }
 
