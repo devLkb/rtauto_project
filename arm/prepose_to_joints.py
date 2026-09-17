@@ -19,10 +19,15 @@
 |---|---|---|
 | `base_link` | URDF·Unity가 쓰는 로봇 밑동 | URDF |
 | `base` | **UR 컨트롤러가 쓰는 밑동.** `base_link`를 Z축으로 180° 돌린 것 | URDF `base_link-base_fixed_joint` |
-| `flange` | 팔 끝 접시. UR 컨트롤러의 기본 TCP가 여기다 | URDF `wrist_3-flange` |
+| `tool0` | **팔 끝. UR 컨트롤러가 말하는 손끝이 여기다** | URDF `flange-tool0` |
+| `flange` | 같은 자리의 다른 이름. **축 방향이 `tool0` 과 120° 다르다** — 여기를 손끝으로 잡으면 위치는 맞는데 손목이 돌아간 채로 간다 | URDF `wrist_3-flange` |
 
 **이 값들을 코드에 적지 않는다.** 전부 URDF에서 읽는다(원칙 1). 그래서 손이 바뀌거나
 장착 위치가 바뀌어도 URDF만 고치면 된다.
+
+⚠️ **`flange` 와 `tool0` 을 헷갈리면 120° 돌아간 채로 간다.** 2026-09-17 에 실제로 겪었고
+`--check-frames` 로 잡았다. 좌표 쪽을 손대면 **움직이기 전에 반드시 `--check-frames` 를
+돌려라.**
 
 계약이 말하는 `frame="base"`는 **URDF의 `base_link`** 를 뜻한다.
 
@@ -33,10 +38,13 @@
     # 1) 연결 없이 계산만 — 자세가 UR 좌표로 어떻게 바뀌는지 확인
     python arm/prepose_to_joints.py --demo
 
-    # 2) 가짜 팔(URSim)에 실제로 보내기. 먼저 다른 터미널에서 arm/run_ursim.ps1 을 띄운다
+    # 2) 좌표 기준이 맞는지 팔에게 직접 물어 확인 (움직이지 않는다). 이걸 먼저 한다
+    python arm/prepose_to_joints.py --check-frames --ip
+
+    # 3) 가짜 팔(URSim)에 실제로 보내기. 먼저 다른 터미널에서 arm/run_ursim.ps1 을 띄운다
     python arm/prepose_to_joints.py --demo --ip
 
-    # 3) 파일로 받은 자세로
+    # 4) 파일로 받은 자세로
     python arm/prepose_to_joints.py --pose-json 자세.json --ip
 
 `--ip` 를 값 없이 주면 `.env` 의 `RTAUTO_UR_IP`(기본 127.0.0.1 = 로컬 URSim)를 쓴다.
@@ -72,9 +80,14 @@ from contracts.grasp_prepose import (  # noqa: E402
 #: config의 `dg5f_link_prefix()`가 준다 — 여기에 손 방향을 적지 않는다.
 PALM_LINK_SUFFIX = "dg_palm"
 
-#: UR 컨트롤러가 밑동으로 삼는 링크와, 기본 TCP가 놓인 링크. URDF의 링크 이름이다.
+#: UR 컨트롤러가 밑동으로 삼는 링크와, 기본 손끝이 놓인 링크. URDF의 링크 이름이다.
+#:
+#: ⚠️ 손끝은 `flange`가 아니라 **`tool0`** 이다. URDF 에는 둘 다 있고 위치는 같지만
+#: **축 방향이 120° 다르다**(x→y→z 로 한 칸씩 돌아가 있다). `flange` 로 잡으면 위치는
+#: 맞는데 손목이 돌아간 채로 간다. 2026-09-17 `--check-frames` 로 실측해 잡은 것이고,
+#: 그 실측이 이 값의 근거다 — 바꾸려면 다시 재고 바꿔라.
 UR_BASE_LINK = "base"
-UR_TCP_LINK = "flange"
+UR_TCP_LINK = "tool0"
 URDF_BASE_LINK = "base_link"
 
 #: 팔 관절 6개의 이름. URDF에서 이 순서로 나오는 것을 `arm_joint_names()`가 확인한다.
@@ -398,16 +411,28 @@ class ArmMover:
         )
         self._control = None
         self._receive = None
+        #: 명령 연결이 막혔을 때 그 이유. 막히지 않았으면 None.
+        self.control_error: Optional[str] = None
 
     # -- 연결 -------------------------------------------------------------
     def connect(self):
+        """팔에 붙는다. **읽기는 필수, 명령은 선택**이다.
+
+        UR e-시리즈는 펜던트에서 원격 조작(Remote Control)을 켜야만 바깥에서 명령을
+        보낼 수 있다. 그게 꺼져 있어도 **관절각을 읽는 것은 된다** — 좌표 기준 확인
+        (`check_frames`)은 읽기만으로 성립하므로, 명령이 막혔다고 확인까지 막지 않는다.
+        """
         if self.ip is None:
             return
         import rtde_control
         import rtde_receive
 
-        self._control = rtde_control.RTDEControlInterface(self.ip)
         self._receive = rtde_receive.RTDEReceiveInterface(self.ip)
+        try:
+            self._control = rtde_control.RTDEControlInterface(self.ip)
+        except Exception as exc:
+            self._control = None
+            self.control_error = str(exc)
 
     def close(self):
         for obj in (self._control, self._receive):
@@ -427,8 +452,18 @@ class ArmMover:
         return False
 
     @property
-    def connected(self) -> bool:
+    def can_read(self) -> bool:
+        """관절각을 읽을 수 있는가. 좌표 확인에는 이것만 있으면 된다."""
+        return self._receive is not None
+
+    @property
+    def can_command(self) -> bool:
+        """팔에 명령을 보낼 수 있는가. 펜던트의 원격 조작이 켜져 있어야 한다."""
         return self._control is not None
+
+    @property
+    def connected(self) -> bool:
+        return self.can_command
 
     # -- 본 일 -------------------------------------------------------------
     def plan(self, pose: GraspPrePose) -> MoveResult:
@@ -445,7 +480,16 @@ class ArmMover:
         tcp_pose = palm_pose_to_ur_tcp_pose(
             pose.palm_position, pose.palm_orientation, self.chain
         )
-        if not self.connected:
+        if not self.can_command:
+            if self.can_read:
+                return MoveResult(
+                    False,
+                    "팔에 명령을 보낼 수 없다 — 펜던트에서 원격 조작(Remote Control)을 "
+                    "켜야 한다. UR 좌표 계산까지만 했다. ({})".format(
+                        self.control_error or "이유 미상"
+                    ),
+                    tcp_pose=tuple(tcp_pose),
+                )
             return MoveResult(
                 False,
                 "연습 모드 — 팔에 연결하지 않았다. UR 좌표 계산까지만 했다.",
@@ -494,13 +538,20 @@ class ArmMover:
 
         이 확인은 가짜 팔(URSim)로도 된다.
         """
-        if not self.connected:
+        if not self.can_read:
             return False, "팔에 연결하지 않아 확인할 수 없다."
         q6 = self._receive.getActualQ()
         ours_flange = baselink_transform_to_ur_pose(
             self.chain.forward_kinematics(q6), self.chain
         )
-        offset = list(self._control.getTCPOffset())
+        if self.can_command:
+            offset = list(self._control.getTCPOffset())
+            offset_note = "컨트롤러에서 읽음"
+        else:
+            # 원격 조작이 꺼져 있으면 손끝 오프셋을 물어볼 수 없다. 0으로 두고 그 사실을
+            # 적는다 — 실제로 0이 아니면 아래 차이로 드러나므로 조용히 넘어가지 않는다.
+            offset = [0.0] * 6
+            offset_note = "못 읽어서 0으로 가정(원격 조작 꺼짐)"
         ours = transform_to_pose6(
             pose6_to_transform(ours_flange) @ pose6_to_transform(offset)
         )
@@ -521,7 +572,8 @@ class ArmMover:
         report = "\n".join(
             [
                 "지금 관절각    : {} rad".format(_fmt(q6)),
-                "손끝 오프셋    : {}".format(_fmt(offset)),
+                "손끝 오프셋    : {} ({})".format(_fmt(offset), offset_note),
+                "손끝으로 삼은 링크: {}".format(UR_TCP_LINK),
                 "우리 계산      : {}".format(_fmt(ours)),
                 "컨트롤러 계산  : {}".format(_fmt(theirs)),
                 "위치 차이      : {:.3f} mm".format(pos_err_mm),

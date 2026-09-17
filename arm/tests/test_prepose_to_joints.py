@@ -91,6 +91,23 @@ class TestRobotChain(unittest.TestCase):
             mat[:3, :3], rpy_to_matrix(0.0, 0.0, math.pi), atol=1e-12
         )
 
+    def test_ur_tool_frame_is_tool0_not_flange(self):
+        """UR 컨트롤러가 말하는 손끝은 `tool0` 이다 — `flange` 가 아니다.
+
+        2026-09-17 실측: 가짜 팔(URSim)에 물어 보니 `flange` 로 잡았을 때 위치는
+        0.0000 mm 로 맞는데 **방향이 120° 어긋났고**, `tool0` 으로 바꾸니 위치·방향이
+        모두 0 이 됐다. 이 시험은 그 실측을 붙잡아 두는 것이다 — 되돌리면 팔이
+        손목만 돌아간 채로 간다.
+        """
+        self.assertEqual(UR_TCP_LINK, "tool0")
+
+    def test_flange_and_tool0_are_the_same_spot_turned_120_degrees(self):
+        """둘은 같은 자리인데 축만 돌아가 있다 — 그래서 헷갈리면 조용히 틀린다."""
+        mat = self.chain.fixed_transform("flange", "tool0")
+        np.testing.assert_allclose(mat[:3, 3], np.zeros(3), atol=1e-12)
+        angle = math.degrees(float(np.linalg.norm(matrix_to_rotvec(mat[:3, :3]))))
+        self.assertAlmostEqual(angle, 120.0, places=6)
+
     def test_palm_sits_ahead_of_the_flange(self):
         mat = self.chain.fixed_transform(UR_TCP_LINK, palm_link_name())
         distance = float(np.linalg.norm(mat[:3, 3]))
