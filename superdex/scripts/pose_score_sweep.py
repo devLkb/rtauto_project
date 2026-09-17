@@ -1,0 +1,241 @@
+# -*- coding: utf-8 -*-
+"""채점표 만들기 — **어느 자세에서 잡히는가**를 훑어서 파일로 남긴다 (D-2).
+
+무엇을 만드는가
+---------------
+`(물체 모양, 파지 직전 자세) -> 잡혔다 / 못 잡았다` 표다. 이 표가 있어야
+"보이는 모양 -> 좋은 자세" 를 예측하는 프로그램(D-4)을 가르칠 수 있다.
+
+설계: [`docs/FESTA_PREGRASP_PLAN.md`](../../docs/FESTA_PREGRASP_PLAN.md) §3·§7.
+
+왜 이렇게 만드는가 — 두 가지를 알아야 한다
+-------------------------------------------
+**1. "이 자세가 좋은 자세인가" 는 거기서 실제로 잡아 봐야만 안다.**
+실물에서는 잡지 않기로 했으므로(전시 범위), 가상 세계에서 잡아 보고 그 결과를 표로 남긴다.
+
+**2. "물체를 손 기준 이 자리에 놓는 것" 과 "손을 물체 기준 저 자리에 두는 것" 은 같은 말이다.**
+이 환경은 손목이 고정돼 있어 손을 못 움직이는 대신 **물체를 옮겨서** 같은 관계를 만든다.
+그래서 `place`(물체 위치) + `place_rot`(물체 방향) 을 훑는 것이 곧 **파지 직전 자세를
+훑는 것**이다. 표에는 사람이 읽기 쉽게 둘 다 적는다.
+
+이미 있던 것과 무엇이 다른가
+----------------------------
+`object_oracle_sweep.py` 는 **궤적 값**(얼마나 빨리 쥐는가)을 훑어 "이 물체가 애초에
+잡히는가" 를 봤다. 이 스크립트는 **자세**를 훑는다 — 궤적은 몇 개만 써서 자세 탓과
+궤적 탓을 섞지 않는다(자세 하나당 궤적 몇 개 중 하나라도 성공하면 그 자세는 성공).
+
+실행
+----
+터미널 1 (PowerShell, 리포 루트):
+
+    superdex/.venv/Scripts/Activate.ps1
+    python -u superdex/scripts/pose_score_sweep.py
+
+터미널 1 (bash, 리포 루트):
+
+    source superdex/.venv/bin/activate
+    python -u superdex/scripts/pose_score_sweep.py
+
+기본값은 **몇 분** 짜리 맛보기다. 넓게 훑으려면 `--xs`·`--yaws`·`--seeds` 를 늘린다.
+결과는 `superdex/results/pose_score_<시각>.json` 에 남는다(git 비추적).
+중간에 멈춰도 그때까지 한 것은 파일에 남는다. 멈추려면 `Ctrl+C`.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "config"))
+sys.path.insert(0, str(REPO_ROOT / "superdex" / "envs"))
+sys.path.insert(0, str(REPO_ROOT / "superdex" / "scripts"))
+
+import rtauto_config as cfg  # noqa: E402,F401  (환경이 asset 경로를 여기서 읽는다)
+
+RESULTS_DIR = REPO_ROOT / "superdex" / "results"
+
+#: 훑을 물체. (표시이름, 프리팹, 조각, 기준점)
+#: 조각이 있는 프리팹(shape_box)은 조각 하나만 써야 한다 — 안 그러면 나머지 13개가
+#: 같은 자리에 겹쳐 놓인다(object_oracle_sweep.py 머리말 참고).
+SHAPE_BOX = "prefabs/shape_box/shape_box.mochi_prefab"
+OBJECTS = {
+    "duck_lamp": ("prefabs/duck_lamp/duck_lamp_recumbent.mochi_prefab", None, "root"),
+    "block_red": ("prefabs/box_and_blocks/block_red.mochi_prefab", None, "com"),
+    "square":    (SHAPE_BOX, "square", "com"),
+    "ellipse":   (SHAPE_BOX, "ellipse", "com"),
+    "star":      (SHAPE_BOX, "star", "com"),
+    "hexagon":   (SHAPE_BOX, "hexagon", "com"),
+}
+
+#: 자세 하나당 써 볼 쥐는 방식. (끝까지 쥐는 정도, 쥐는 데 걸리는 스텝, 더 조이는 정도)
+#: 여러 개를 쓰는 이유는 **자세 탓과 쥐는 방식 탓을 섞지 않기 위해서**다 — 하나라도
+#: 성공하면 그 자세는 "잡히는 자세" 로 친다.
+TRAJECTORIES = ((1.0, 30, 1.0), (0.8, 60, 0.9))
+
+
+def _quat_z(angle_rad):
+    """Z축(위아래 축) 둘레로 도는 회전. 물체를 제자리에서 빙 돌린다."""
+    return (0.0, 0.0, math.sin(angle_rad / 2.0), math.cos(angle_rad / 2.0))
+
+
+def _quat_x(angle_rad):
+    """X축 둘레로 도는 회전. 물체를 눕힌다."""
+    return (math.sin(angle_rad / 2.0), 0.0, 0.0, math.cos(angle_rad / 2.0))
+
+
+def build_poses(xs, ys, zs, yaws_deg, tilts_deg):
+    """훑을 자세 목록. 위치 격자 × 방향 격자."""
+    rots = [("yaw{:+.0f}".format(a), _quat_z(math.radians(a))) for a in yaws_deg]
+    rots += [("tilt{:+.0f}".format(a), _quat_x(math.radians(a)))
+             for a in tilts_deg if abs(a) > 1e-9]
+    poses = []
+    for x in xs:
+        for y in ys:
+            for z in zs:
+                for rot_name, quat in rots:
+                    poses.append({
+                        "place": [float(x), float(y), float(z)],
+                        "place_rot": [float(v) for v in quat],
+                        "rot_name": rot_name,
+                    })
+    return poses
+
+
+def score_pose(env, pose, seeds, seed0, run_trajectory):
+    """자세 하나를 채점한다. 시드마다 쥐는 방식 몇 개를 써 보고 하나라도 되면 성공."""
+    env.place = np.asarray(pose["place"], dtype=float)
+    env.place_rot = np.asarray(pose["place_rot"], dtype=float)
+    ok, tips, drops, trials = 0, [], 0, 0
+    for i in range(seeds):
+        seed = seed0 + i
+        hit, best = False, 0
+        for traj in TRAJECTORIES:
+            r = run_trajectory(env, seed, *traj)
+            trials += 1
+            hit |= r["success"]
+            best = max(best, r["tips_best"])
+            drops += int(r["dropped"])
+        ok += int(hit)
+        tips.append(best)
+    return {
+        "success": ok,
+        "seeds": seeds,
+        "rate": ok / max(1, seeds),
+        "tips_best_median": float(np.median(tips)),
+        "drop_rate": drops / max(1, trials),
+    }
+
+
+def _floats(text):
+    return [float(v) for v in str(text).split(",") if str(v).strip()]
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="채점표 — 어느 자세에서 잡히는가 (D-2)")
+    ap.add_argument("--objects", default="block_red,square,ellipse",
+                    help="훑을 물체. 쉼표로. 가능한 값: " + ", ".join(OBJECTS))
+    ap.add_argument("--xs", default="0.03,0.04,0.05", help="손바닥 앞 거리(m)")
+    ap.add_argument("--ys", default="0.0", help="좌우 치우침(m)")
+    ap.add_argument("--zs", default="0.04", help="손바닥 위 높이(m)")
+    ap.add_argument("--yaws", default="0,45,90", help="제자리 회전(도)")
+    ap.add_argument("--tilts", default="0", help="눕히기(도). 0 은 건너뛴다")
+    ap.add_argument("--seeds", type=int, default=3)
+    ap.add_argument("--seed0", type=int, default=9000)
+    ap.add_argument("--episode-seconds", type=float, default=1.0)
+    ap.add_argument("--out", default=None, help="결과 파일 경로(기본: results 폴더에 시각으로)")
+    args = ap.parse_args()
+
+    wanted = [o.strip() for o in args.objects.split(",") if o.strip()]
+    unknown = [o for o in wanted if o not in OBJECTS]
+    if unknown:
+        print("모르는 물체: {}\n가능한 값: {}".format(unknown, list(OBJECTS)))
+        return 2
+
+    poses = build_poses(_floats(args.xs), _floats(args.ys), _floats(args.zs),
+                        _floats(args.yaws), _floats(args.tilts))
+    total = len(wanted) * len(poses)
+    per_pose = args.seeds * len(TRAJECTORIES)
+
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = Path(args.out) if args.out else (
+        RESULTS_DIR / "pose_score_{}.json".format(time.strftime("%Y%m%d_%H%M%S")))
+
+    print("=== 채점표 만들기 (D-2) ===")
+    print("물체 {}종 × 자세 {}개 = {}칸".format(len(wanted), len(poses), total))
+    print("칸마다 {}번 잡아 본다 (시드 {} × 쥐는 방식 {})".format(
+        per_pose, args.seeds, len(TRAJECTORIES)))
+    print("전체 {}회. 결과 파일: {}".format(total * per_pose, out_path))
+    print()
+
+    from dg5f_grasp_env import Dg5fGraspEnv
+    from gate2_oracle_search import run_trajectory
+
+    rows = []
+    t0 = time.perf_counter()
+    done = 0
+    try:
+        for obj_name in wanted:
+            prefab, actor, ref = OBJECTS[obj_name]
+            config = {"object_prefab": prefab, "object_ref": ref,
+                      "place_jitter": 0.0, "episode_seconds": args.episode_seconds}
+            if actor:
+                config["object_actor"] = actor
+            env = Dg5fGraspEnv(config)
+            try:
+                print("[{}]".format(obj_name), flush=True)
+                for pose in poses:
+                    got = score_pose(env, pose, args.seeds, args.seed0, run_trajectory)
+                    rows.append(dict(object=obj_name, **pose, **got))
+                    done += 1
+                    px, py, pz = pose["place"]
+                    print("   자리({:.3f},{:.3f},{:.3f}) {:>8s} -> {}/{} 성공"
+                          "   지문 {:.0f}개   [{}/{}]".format(
+                              px, py, pz, pose["rot_name"], got["success"], got["seeds"],
+                              got["tips_best_median"], done, total), flush=True)
+            finally:
+                env.close()
+                try:
+                    import superdex.physics as physics
+                    physics.destroy_scene(env.scene)  # 물체마다 씬이 쌓이지 않게
+                except Exception:
+                    pass
+    except KeyboardInterrupt:
+        print("\n중간에 멈췄다 — 그때까지 한 것만 저장한다.")
+    finally:
+        out_path.write_text(json.dumps({
+            "made_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "note": "자세(물체를 손 기준 어디에 어떤 방향으로 두는가) 별 파지 성공 여부",
+            "seeds": args.seeds, "trajectories": [list(t) for t in TRAJECTORIES],
+            "episode_seconds": args.episode_seconds,
+            "rows": rows,
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    seconds = time.perf_counter() - t0
+    print()
+    print("=" * 62)
+    print("칸 {}개 채움, {:.0f}초 ({:.1f}초/칸)".format(
+        len(rows), seconds, seconds / max(1, len(rows))))
+    if rows:
+        rates = [r["rate"] for r in rows]
+        good = [r for r in rows if r["rate"] >= 0.99]
+        bad = [r for r in rows if r["rate"] <= 0.01]
+        print("성공률 범위: {:.0%} ~ {:.0%}   (다 성공 {}칸 / 다 실패 {}칸)".format(
+            min(rates), max(rates), len(good), len(bad)))
+        if max(rates) - min(rates) < 1e-9:
+            print("⚠️ 모든 칸이 같은 결과다 — 자세를 바꿔도 결과가 안 변하면 채점표로 못 쓴다.")
+            print("   훑는 범위(--xs/--yaws)를 넓히거나 물체를 바꿔 본다.")
+        else:
+            print("자세에 따라 결과가 갈린다 — 채점표로 쓸 수 있다.")
+    print("결과: {}".format(out_path))
+    print("=" * 62)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
