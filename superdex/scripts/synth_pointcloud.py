@@ -53,12 +53,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "config"))
 sys.path.insert(0, str(REPO_ROOT / "superdex" / "envs"))
 
-import rtauto_config as cfg  # noqa: E402,F401  (환경이 asset 경로를 여기서 읽는다)
+import rtauto_config as cfg  # noqa: E402  (환경이 asset 경로를 여기서 읽고, 카메라 값도 여기서 온다)
 
-#: 눈에 보이는 거리 범위(m). 이 밖은 버린다 — 실제 카메라도 너무 가깝거나 먼 것은 못 잰다.
-#: D405 는 약 7 cm 부터 잰다(제조사 사양). 실물 값이 확정되면 config 로 뺀다.
-NEAR_M = 0.03
-FAR_M = 1.0
+#: 카메라 값은 **전부 config 에서 온다**(원칙 1). 여기에 숫자를 적지 않는다.
+#: ⚠️ 그 값들은 아직 **제조사 사양이고 실측이 아니다** — 카메라가 도착하면 재서 고친다.
+NEAR_M = cfg.D405_NEAR_M
+FAR_M = cfg.D405_FAR_M
 
 
 # ---------------------------------------------------------------------------
@@ -216,9 +216,10 @@ def main() -> int:
     ap.add_argument("--object", default="prefabs/box_and_blocks/block_red.mochi_prefab")
     ap.add_argument("--object-actor", default=None)
     ap.add_argument("--object-ref", default="com")
-    ap.add_argument("--width", type=int, default=160)
-    ap.add_argument("--height", type=int, default=120)
-    ap.add_argument("--fov", type=float, default=60.0, help="카메라가 보는 각도(도)")
+    ap.add_argument("--width", type=int, default=cfg.D405_SYNTH_WIDTH)
+    ap.add_argument("--height", type=int, default=cfg.D405_SYNTH_HEIGHT)
+    ap.add_argument("--fov", type=float, default=cfg.D405_FOV_H_DEG,
+                    help="가로 시야각(도). 기본값은 D405 제조사 사양 — 실측 아님")
     ap.add_argument("--standoff", type=float, default=0.18,
                     help="카메라를 물체에서 얼마나 떨어뜨릴지(m)")
     ap.add_argument("--no-hand", action="store_true", help="손을 빼고 물체만 본다")
@@ -254,6 +255,8 @@ def main() -> int:
         print("카메라          : {} 에서 {} 쪽, 거리 {:.2f} m, 시야 {:.0f}도".format(
             np.round(cam_pos, 3), np.round(target, 3), args.standoff, args.fov))
         print("사진 크기       : {}x{}".format(args.width, args.height))
+        print("거리 범위       : {:.2f} ~ {:.2f} m".format(NEAR_M, FAR_M))
+        print("⚠️ 카메라 값은 제조사 사양이고 **실측이 아니다** — 도착하면 재서 고칠 것")
         print()
 
         depth, who = render_depth(verts, tris, labels, cam_rot, cam_pos,

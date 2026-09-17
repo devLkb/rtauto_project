@@ -249,6 +249,22 @@ DG5F_DGSDK_LIB_DIR = _env("RTAUTO_DG5F_DGSDK_LIB_DIR", "")
 # 저장소에 포함하지 않는 외부 공개 레포이므로 머신마다 위치가 다르다 — 기본값 없음.
 UR_DESCRIPTION = _env("RTAUTO_UR_DESCRIPTION", "")
 
+# ---------------- eye-in-hand 카메라 (Intel RealSense D405) ----------------
+# 손목에 다는 3D 카메라. 점 덩어리 합성(superdex/scripts/synth_pointcloud.py)이 읽는다.
+#
+# ⚠️ **아래 값은 제조사 공개 사양이고 실측이 아니다.** 카메라가 도착하면
+# `docs/FESTA_PREGRASP_PLAN.md` Q1(실제 장착 시야 확인)에서 재서 이 값을 고친다.
+# 그때까지 여기서 나온 점 덩어리는 "대략 이런 성격" 이지 실물과 같지 않다.
+# ai_festa_plan.md §8-4 도 "핵심 불확실성은 D405 의 실제 시야·유효 깊이" 라고 적어 뒀다.
+D405_FOV_H_DEG = float(_env("RTAUTO_D405_FOV_H_DEG", "87"))    # 가로 시야각
+D405_FOV_V_DEG = float(_env("RTAUTO_D405_FOV_V_DEG", "58"))    # 세로 시야각
+D405_NEAR_M = float(_env("RTAUTO_D405_NEAR_M", "0.07"))        # 이보다 가까우면 못 잰다
+D405_FAR_M = float(_env("RTAUTO_D405_FAR_M", "0.50"))          # 잘 재는 거리의 상한
+# 합성에 쓸 사진 크기. 실물 해상도(최대 1280x720)를 그대로 쓰면 느리므로 줄여서 쓴다 —
+# 학습 입력으로는 점 개수가 중요하지 화소 수가 중요하지 않다.
+D405_SYNTH_WIDTH = int(_env("RTAUTO_D405_SYNTH_WIDTH", "160"))
+D405_SYNTH_HEIGHT = int(_env("RTAUTO_D405_SYNTH_HEIGHT", "120"))
+
 # 팔+손 결합 URDF — **손 관절 20개의 "순서"의 유일한 정본**이다.
 # contracts/grasp_prepose.py가 이 파일을 읽어 관절 이름 순서를 얻는다. 관절 이름 목록을
 # 다른 파일에 다시 타이핑하지 않는다(원칙 1). 저장소 안에 있는 파일이라 기본값이 있고,
