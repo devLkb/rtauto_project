@@ -249,6 +249,14 @@ DG5F_DGSDK_LIB_DIR = _env("RTAUTO_DG5F_DGSDK_LIB_DIR", "")
 # 저장소에 포함하지 않는 외부 공개 레포이므로 머신마다 위치가 다르다 — 기본값 없음.
 UR_DESCRIPTION = _env("RTAUTO_UR_DESCRIPTION", "")
 
+# 팔+손 결합 URDF — **손 관절 20개의 "순서"의 유일한 정본**이다.
+# contracts/grasp_prepose.py가 이 파일을 읽어 관절 이름 순서를 얻는다. 관절 이름 목록을
+# 다른 파일에 다시 타이핑하지 않는다(원칙 1). 저장소 안에 있는 파일이라 기본값이 있고,
+# 다른 손(왼손 등)으로 실험할 때만 오버라이드한다.
+ARM_HAND_URDF = _env("RTAUTO_ARM_HAND_URDF", "") or str(
+    REPO_ROOT / "urdf" / "ur16e_dg5f_right_build" / "ur16e_dg5f_right.urdf"
+)
+
 # vision/dg5f/analyze_teleop.py·analyze_thumbik.py가 읽는 Unity 조인트 로그·URDF 폴더.
 # 머신마다 다른 경로라 기본값 없음 — 없으면 각 스크립트가 --logs-dir/--urdf-dir 요구로 명확히 에러.
 DG5F_UNITY_LOGS = _env("DG5F_UNITY_LOGS", "")
