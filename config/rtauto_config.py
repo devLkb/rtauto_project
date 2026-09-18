@@ -365,6 +365,49 @@ D405_FAR_M = float(_env("RTAUTO_D405_FAR_M", "0.50"))          # 잘 재는 거�
 D405_SYNTH_WIDTH = int(_env("RTAUTO_D405_SYNTH_WIDTH", "160"))
 D405_SYNTH_HEIGHT = int(_env("RTAUTO_D405_SYNTH_HEIGHT", "120"))
 
+# ---------------- 손목 카메라가 팔 끝에 어떻게 붙었나 (D-6) ----------------
+# 🛑 **이 값이 없으면 카메라가 와도 본 것을 로봇 좌표로 못 옮긴다.**
+# 카메라는 "내 앞 20 cm 에 물체가 있다" 까지만 안다. 그걸 "로봇 기준으로 어디" 로
+# 바꾸려면 **카메라가 팔 끝의 어디에 어떤 방향으로 붙었는지**를 알아야 한다.
+# docs/EXTERNAL_GRASP_POLICY_SURVEY.md §9 가 "이게 먼저다" 라고 지목한 항목이다.
+#
+# ⚠️ **기본값 0 은 "아직 안 쟀다" 는 뜻이지 "붙은 자리가 원점" 이라는 뜻이 아니다.**
+#    0 인 채로도 배관은 돌지만(원칙 2 — 새 머신에서 바로 실행 가능), 결과를 믿으면 안 된다.
+#    `arm/eye_in_hand.py --check` 가 이 상태를 눈에 띄게 알려 준다.
+#
+# 재는 법: 체커보드 같은 표식을 고정해 두고 팔을 여러 자세로 옮기며 찍어, 팔 자세와
+#         카메라가 본 표식 위치를 맞춰 푼다(= 흔히 말하는 손-눈 맞추기).
+#         BACKLOG D-7 / FESTA_PREGRASP_PLAN Q2.
+
+#: 카메라가 어느 링크에 붙어 있는가. **`tool0` 이 기본이다** — `flange` 와 위치는 같지만
+#: 방향이 120도 다르다(2026-09-17 URSim 실측으로 확인한 실제 버그).
+D405_MOUNT_PARENT = _env("RTAUTO_D405_MOUNT_PARENT", "tool0")
+
+#: 그 링크 기준 카메라 위치 (x, y, z) [m]. 0,0,0 = 아직 안 쟀다.
+D405_MOUNT_XYZ_M = tuple(
+    float(v) for v in _env("RTAUTO_D405_MOUNT_XYZ_M", "0,0,0").split(","))
+
+#: 그 링크 기준 카메라 방향 (roll, pitch, yaw) [도]. 0,0,0 = 아직 안 쟀다.
+D405_MOUNT_RPY_DEG = tuple(
+    float(v) for v in _env("RTAUTO_D405_MOUNT_RPY_DEG", "0,0,0").split(","))
+
+
+def d405_mount_measured():
+    """손목 카메라 장착값을 **실제로 쟀는가**. 전부 0이면 아직 안 잰 것으로 본다.
+
+    ⚠️ 정말로 0,0,0 인 장착은 현실에 없다(카메라가 팔 끝 축 위 한 점에 부피 없이
+    붙을 수는 없다). 그래서 0을 "안 쟀음" 신호로 써도 안전하다.
+    """
+    return any(abs(v) > 1e-9 for v in D405_MOUNT_XYZ_M + D405_MOUNT_RPY_DEG)
+
+
+#: 카메라 내부 값(초점거리·중심). 0 이면 위 시야각에서 계산해 쓴다.
+#: 실물에서는 RealSense SDK 가 알려 주는 값을 여기에 넣는다 — 개체마다 다르다.
+D405_FX = float(_env("RTAUTO_D405_FX", "0"))
+D405_FY = float(_env("RTAUTO_D405_FY", "0"))
+D405_CX = float(_env("RTAUTO_D405_CX", "0"))
+D405_CY = float(_env("RTAUTO_D405_CY", "0"))
+
 # 팔+손 결합 URDF — **손 관절 20개의 "순서"의 유일한 정본**이다.
 # contracts/grasp_prepose.py가 이 파일을 읽어 관절 이름 순서를 얻는다. 관절 이름 목록을
 # 다른 파일에 다시 타이핑하지 않는다(원칙 1). 저장소 안에 있는 파일이라 기본값이 있고,

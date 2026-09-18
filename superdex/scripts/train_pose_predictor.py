@@ -154,8 +154,18 @@ def make_model(torch, nn):
     class PosePredictor(nn.Module):
         def __init__(self, width=128):
             super().__init__()
-            # 점 하나하나를 같은 방식으로 훑고(점 순서에 흔들리지 않게),
-            # 가장 큰 값만 남겨 덩어리 전체를 한 줄로 요약한다.
+            # 점 하나하나를 같은 방식으로 훑은 뒤(점 순서에 흔들리지 않게),
+            # **평균과 최대값을 둘 다** 남겨 덩어리 전체를 한 줄로 요약한다.
+            #
+            # ⚠️ **왜 평균이 꼭 있어야 하나 — 2026-09-18 에 찾은 두 번째 구조적 결함.**
+            # 우리가 판단해야 하는 것은 "손 안에 물체가 **얼마나** 들었나" 다.
+            # 그런데 최대값만 남기면 **세는 것이 불가능**하다 — 점 하나만 들어와도 값이
+            # 꽉 차 버려서 100개 들어온 것과 구분이 안 된다.
+            # 즉 최대값만 쓰는 구조로는 두 줄짜리 계산 규칙
+            # (`geometric_pose_score.py`)조차 흉내 낼 수 없다.
+            # 평균을 쓰면 그대로 "비율" 이 되므로 그 규칙을 포함할 수 있고,
+            # 거기서 더 배울 수 있다.
+            # 최대값도 함께 남긴다 — "가장 튀어나온 곳이 어디냐" 는 따로 쓸모가 있다.
             self.per_point = nn.Sequential(
                 nn.Linear(3, 64), nn.ReLU(),
                 nn.Linear(64, width), nn.ReLU(),
@@ -165,12 +175,13 @@ def make_model(torch, nn):
             # (중력 방향처럼 손 기준으로만은 알 수 없는 것을 나중에 넣을 자리로 남긴다)
             self.pose = nn.Sequential(nn.Linear(4, 64), nn.ReLU())
             self.head = nn.Sequential(
-                nn.Linear(width + 64, width), nn.ReLU(),
+                nn.Linear(2 * width + 64, width), nn.ReLU(),
                 nn.Linear(width, 1),
             )
 
         def forward(self, cloud, pose):        # cloud (B, N, 3) 손바닥 기준, pose (B, 4)
-            shape = self.per_point(cloud).max(dim=1).values
+            per = self.per_point(cloud)
+            shape = torch.cat([per.mean(dim=1), per.max(dim=1).values], dim=1)
             return self.head(torch.cat([shape, self.pose(pose)], dim=1)).squeeze(1)
 
     return PosePredictor
@@ -269,6 +280,9 @@ def main() -> int:
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", default="cpu", help="cpu 또는 cuda")
+    ap.add_argument("--fit-check", action="store_true",
+                    help="**진단용.** 물체 하나로 배우고 **그 물체로** 시험한다(빼지 않는다). "
+                         "외우는 것조차 못 하면 데이터가 아니라 입력·구조 문제다")
     args = ap.parse_args()
 
     import torch
@@ -298,9 +312,18 @@ def main() -> int:
     rows = []
     t0 = time.perf_counter()
 
+    if args.fit_check:
+        print("⚠️ **진단 모드** — 물체 하나로 배우고 **그 물체로** 시험한다(안 빼고).")
+        print("   여기서도 못 맞히면 모양 수를 늘려도 소용없다 — 입력·구조 문제다.")
+        print()
+
     for held_out in objects:
-        train = [s for s in samples if s[3] != held_out]
-        test = [s for s in samples if s[3] == held_out]
+        if args.fit_check:
+            train = [s for s in samples if s[3] == held_out]
+            test = train
+        else:
+            train = [s for s in samples if s[3] != held_out]
+            test = [s for s in samples if s[3] == held_out]
         if not train or not test:
             continue
         model = PosePredictor().to(device)

@@ -69,10 +69,26 @@ SHAPE_BOX = "prefabs/shape_box/shape_box.mochi_prefab"
 SHAPE_BOX_PIECES = ("cross", "triangle", "square", "trapezoid", "rectangle", "pentagon",
                     "parallelogram", "octagon", "hexagon", "ellipse", "diamond", "star")
 
+#: ⚠️ **모양이 다양해야 한다 — 2026-09-18 에 확인된 병목.**
+#: `shape_box` 도형 12종은 **전부 같은 두께의 납작한 판**이고 테두리만 다르다. 이것만으로
+#: 배우면 "처음 보는 **모양**" 으로 넘어가지 못한다 — 실제로 물체 하나만 놓고 시키면
+#: 13종 전부 100% 인데(외우는 것은 된다), 하나를 빼고 나머지로 배우면 0~15% 였다.
+#: 그래서 **생김새가 근본적으로 다른 것**을 함께 넣는다. 아래 세 줄이 그것이다.
+#: 크기·적합 판정의 근거: `superdex/scripts/survey_object_assets.py` 와
+#: [`docs/SUPERDEX_POC_PLAN.md`](../../docs/SUPERDEX_POC_PLAN.md) "물체 asset 전수 조사".
 OBJECTS = {
+    # --- 생김새가 근본적으로 다른 것들 (3차원 형상) ---
     "duck_lamp": ("prefabs/duck_lamp/duck_lamp_recumbent.mochi_prefab", None, "root"),
+    "paper_cup": ("prefabs/paper_cups/paper_cup.mochi_prefab", None, "com"),
+    "shapebox_body": (SHAPE_BOX, "shapebox_body", "com"),
+    # peg_board 는 뺐다 — 조사표에는 "적합" 으로 나오지만 프리팹에서 움직일 수 있는
+    # actor 목록에 판이 없다(못 9개만 있다). 2026-09-18 확인.
+    "sphere": ("prefabs/sphere/sphere.mochi_prefab", None, "com"),
+    "fdt_peg": ("prefabs/functional_dexterity_test/fdt_peg.mochi_prefab", None, "com"),
+    # --- 작은 정육면체 ---
     "block_red": ("prefabs/box_and_blocks/block_red.mochi_prefab", None, "com"),
 }
+#: 납작한 판 12종. 테두리만 다르므로 **이것만으로는 모양 다양성이 안 된다**(위 주석).
 OBJECTS.update({name: (SHAPE_BOX, name, "com") for name in SHAPE_BOX_PIECES})
 
 #: ⚠️ **벽이 얇은 물체를 넣을 때 확인할 기준.**
