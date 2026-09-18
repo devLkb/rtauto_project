@@ -426,8 +426,16 @@ def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
             continue
         o.source = "YOLO:{} {:.0%}".format(d.name, d.conf)      # 어디서 나왔는지 남긴다
         objs.append(o)
-        # 박스 안 전체가 아니라 **쓴 점만** 소비 처리한다 — 나머지는 모양 쪽이 다시 본다
-        used[idx_in[o.index]] = True
+
+        # 🛑 **크기에 쓴 점만 소비하면 한 물건이 둘로 세어진다** (2026-09-18 사용자 발견,
+        #    확신 기준을 70 % 로 올려도 남았다). 크기를 못 믿어 테두리로 계산한 경우,
+        #    테두리 안의 나머지 점이 그대로 남아 **모양 쪽이 같은 물건을 또 만든다.**
+        #    → 테두리 안에서 **이 물체와 같은 거리대의 점은 전부** 소비한다.
+        #    한참 뒤에 있는 점(배경)만 모양 쪽으로 넘긴다.
+        oz = o.points[:, 2]
+        same_thing = ((inside[:, 2] >= float(oz.min()) - ESTIMATE_BAND_M)
+                      & (inside[:, 2] <= float(oz.max()) + ESTIMATE_BAND_M))
+        used[idx_in[same_thing]] = True
 
     # 사람으로 잡힌 박스 안의 점은 **버린다** — 잡으러 가면 안 된다
     for d in dets:
@@ -435,7 +443,44 @@ def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
             continue
         used |= d.contains(px, py, shape)
 
+    _absorb_halo(objs, pts, used)
     return objs, pts[~used]
+
+
+#: 물체 테두리 **바로 바깥**의 점은 그 물체의 것으로 본다(m).
+#: ⚠️ 왜 필요한가: YOLO 테두리는 색 사진 기준이고 거리 사진은 절반 크기라, 물체
+#:    가장자리의 점 몇 줄이 테두리 밖으로 삐져나온다. 그 껍질이 따로 덩어리가 되어
+#:    **같은 물건이 "모양" 물체로 한 번 더 세어졌다**(2026-09-18).
+#:    1.5 cm 는 그 어긋남을 덮되 옆 물건까지 먹지는 않는 폭이다.
+ABSORB_M = 0.015
+
+
+def _absorb_halo(objs, pts, used):
+    """물체 **바로 옆에 남은 점**을 그 물체에 합친다. `used` 를 그 자리에서 고친다.
+
+    남은 점끼리 다시 덩어리를 만들기 **전에** 한다 — 안 그러면 같은 물건이 두 번 세어진다.
+    이미 다른 YOLO 물체로 잡힌 점은 대상이 아니므로, **나란히 놓인 컵 두 개는 안 합쳐진다.**
+    """
+    for o in objs:
+        free = np.flatnonzero(~used)
+        if len(free) == 0:
+            return
+        lo = o.points.min(axis=0) - ABSORB_M
+        hi = o.points.max(axis=0) + ABSORB_M
+        near = free[np.all((pts[free] >= lo) & (pts[free] <= hi), axis=1)]
+        if len(near) == 0:
+            continue
+        used[near] = True
+        grown = np.vstack([o.points, pts[near].astype(np.float32)])
+        o.points = grown
+        if o.estimated:
+            # 🛑 **추정 물체의 크기는 다시 계산하지 않는다.** 그 크기는 테두리에서 나온
+            #    것이고, 몇 개 안 되는 점으로 다시 재면 도로 작아진다. 점은 화면에
+            #    보이라고만 붙인다.
+            continue
+        o.center = grown.mean(axis=0).astype(np.float64)
+        o.size = (grown.max(axis=0) - grown.min(axis=0)).astype(np.float64)
+        o.n_points = len(grown)
 
 
 def find_objects_hybrid(points, pixel_xy, color_bgr, detector, near=None, far=None,

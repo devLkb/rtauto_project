@@ -299,5 +299,59 @@ class TestHoleyObject(unittest.TestCase):
         self.assertEqual(len(objs), 1)
         self.assertFalse(objs[0].estimated, "잘 덮였는데도 추정으로 넘겼다")
 
+class TestNoDoubleCounting(unittest.TestCase):
+    """**한 물건이 둘로 세어지면 안 된다** (2026-09-18 사용자 발견).
+
+    확신 기준을 70 % 로 올려도 남았다 — 두 번째 덩어리가 YOLO 가 아니라 **모양** 쪽에서
+    나왔기 때문이다. 그래서 남는 점 자체를 없애야 한다.
+    """
+
+    def test_leftovers_inside_the_outline_are_consumed(self):
+        """테두리 안에서 **크기 계산에 안 쓴 점도** 같은 거리대면 소비해야 한다."""
+        det = _cup_detection(280, 190, 360, 290)
+        # 테두리의 왼쪽 1/4 에만 촘촘히 값이 있다 → 크기는 테두리로 추정하게 된다
+        pts, pix = _points_on_rect(281, 190, 300, 290, z=0.25, step=1)
+
+        objs, rest = split_by_boxes(pts, pix, [det], COLOR_SHAPE,
+                                    depth_shape=DEPTH_SHAPE, intr=_Intr)
+
+        self.assertEqual(len(objs), 1)
+        self.assertTrue(objs[0].estimated)
+        self.assertEqual(len(rest), 0,
+                         "테두리 안의 점이 남아 모양 쪽이 같은 물건을 또 만든다")
+
+    def test_points_just_outside_the_outline_are_absorbed(self):
+        """테두리 **바로 바깥**으로 삐져나온 점은 그 물체에 합친다."""
+        det = _cup_detection(280, 190, 360, 290)
+        inside, pix_in = _points_on_rect(281, 190, 359, 290, z=0.25, step=1)
+        halo, pix_halo = _points_on_rect(362, 190, 368, 290, z=0.25, step=1)
+
+        pts = np.vstack([inside, halo])
+        pix = (np.concatenate([pix_in[0], pix_halo[0]]),
+               np.concatenate([pix_in[1], pix_halo[1]]))
+
+        objs, rest = split_by_boxes(pts, pix, [det], COLOR_SHAPE,
+                                    depth_shape=DEPTH_SHAPE, intr=_Intr)
+
+        self.assertEqual(len(objs), 1, "삐져나온 껍질이 따로 물체가 됐다")
+        self.assertEqual(len(rest), 0)
+
+    def test_a_separate_object_is_not_eaten(self):
+        """**떨어져 있는 다른 물건은 안 먹는다** — 나란히 놓인 컵이 하나로 합쳐지면 안 된다."""
+        det = _cup_detection(280, 190, 360, 290)
+        inside, pix_in = _points_on_rect(281, 190, 359, 290, z=0.25, step=1)
+        other, pix_other = _points_on_rect(460, 190, 540, 290, z=0.25, step=1)
+
+        pts = np.vstack([inside, other])
+        pix = (np.concatenate([pix_in[0], pix_other[0]]),
+               np.concatenate([pix_in[1], pix_other[1]]))
+
+        objs, rest = split_by_boxes(pts, pix, [det], COLOR_SHAPE,
+                                    depth_shape=DEPTH_SHAPE, intr=_Intr)
+
+        self.assertEqual(len(objs), 1)
+        self.assertGreaterEqual(len(rest), len(other) * 0.9,
+                                "옆에 있는 다른 물건까지 먹어 치웠다")
+
 if __name__ == "__main__":
     unittest.main()
