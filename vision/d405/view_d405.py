@@ -113,9 +113,57 @@ def _font(size=15):
     return got
 
 
-def put_lines(img, lines, color=(255, 255, 255)):
-    """왼쪽 위에 여러 줄을 적는다. 한글이 되게 PIL 로 그린다."""
+def _text_width(font, text):
+    """글자가 화면에서 차지하는 가로 길이(화소). 글꼴이 없으면 어림잡는다."""
+    if font is None:
+        return len(text) * 9
+    try:
+        return int(font.getlength(text))
+    except AttributeError:                          # 오래된 Pillow
+        return int(font.getsize(text)[0])
+
+
+def _wrap(lines, font, max_width):
+    """**화면 밖으로 잘리지 않게** 줄을 나눈다.
+
+    빈칸에서 먼저 나누고, 빈칸 없이 긴 덩어리는 글자 단위로 자른다.
+    (한글은 빈칸이 적어 글자 단위 자르기가 실제로 필요하다)
+    """
+    out = []
+    for text in lines:
+        if _text_width(font, text) <= max_width:
+            out.append(text)
+            continue
+        cur = ""
+        for word in text.split(" "):
+            trial = word if not cur else cur + " " + word
+            if _text_width(font, trial) <= max_width:
+                cur = trial
+                continue
+            if cur:
+                out.append(cur)
+            while _text_width(font, word) > max_width:   # 한 낱말이 통째로 길 때
+                cut = len(word)
+                while cut > 1 and _text_width(font, word[:cut]) > max_width:
+                    cut -= 1
+                out.append(word[:cut])
+                word = word[cut:]
+            cur = word
+        if cur:
+            out.append(cur)
+    return out
+
+
+def put_lines(img, lines, color=(255, 255, 255), max_width=None):
+    """왼쪽 위에 여러 줄을 적는다. 한글이 되게 PIL 로 그린다.
+
+    `max_width` 를 넘는 줄은 **알아서 접는다**(기본: 사진 너비). 전에는 그냥 잘려서
+    화면 밖으로 나갔다 — 사용자가 화면에서 발견(2026-09-18).
+    """
     font = _font()
+    max_width = (img.shape[1] - 16) if max_width is None else int(max_width)
+    lines = _wrap(list(lines), font, max_width)
+
     if font is None:                    # 글꼴이 없으면 OpenCV 로(영어만 제대로 나온다)
         import cv2
         for i, t in enumerate(lines):
@@ -134,6 +182,45 @@ def put_lines(img, lines, color=(255, 255, 255)):
             draw.text((xy[0] + dx, xy[1] + dy), t, font=font, fill=(0, 0, 0))
         draw.text(xy, t, font=font, fill=color[::-1])
     return np.asarray(pil)[:, :, ::-1].copy()       # RGB -> BGR
+
+
+def put_labels(img, labels, size=22):
+    """**그림 위 아무 자리에나** 글자를 적는다 — 덩어리마다 번호를 찍을 때 쓴다.
+
+    `labels` 는 `(x, y, 글자, 색BGR)` 목록. `(x, y)` 는 글자의 **가운데**다.
+    화면 밖으로 나가지 않게 안쪽으로 밀어 넣는다.
+
+    왜 필요한가: 목록에는 "99번" 이라고 적혀 있는데 **그림의 어느 덩어리가 99번인지**
+    알 수가 없었다(2026-09-18 사용자 지적). 한글이 섞이므로 PIL 로 그린다.
+    """
+    if not labels:
+        return img
+    font = _font(size)
+    h, w = img.shape[:2]
+
+    if font is None:
+        import cv2
+        for x, y, text, col in labels:
+            p = (int(np.clip(x - 8, 2, w - 20)), int(np.clip(y, 14, h - 4)))
+            cv2.putText(img, text, p, cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 4)
+            cv2.putText(img, text, p, cv2.FONT_HERSHEY_SIMPLEX, 0.6, col, 1)
+        return img
+
+    from PIL import Image, ImageDraw
+    pil = Image.fromarray(img[:, :, ::-1])
+    draw = ImageDraw.Draw(pil)
+    # 글자가 클수록 테두리도 두껍게 — 얇으면 초록 덩어리 위에서 안 읽힌다
+    pad = max(1, size // 10)
+    ring = [(dx, dy) for dx in range(-pad, pad + 1) for dy in range(-pad, pad + 1)
+            if (dx, dy) != (0, 0)]
+    for x, y, text, col in labels:
+        tw = _text_width(font, text)
+        px = int(np.clip(x - tw / 2, 2, max(2, w - tw - 2)))
+        py = int(np.clip(y - size / 2, 2, max(2, h - size - 2)))
+        for dx, dy in ring:
+            draw.text((px + dx, py + dy), text, font=font, fill=(0, 0, 0))
+        draw.text((px, py), text, font=font, fill=tuple(col[::-1]))
+    return np.asarray(pil)[:, :, ::-1].copy()
 
 
 def to_points(depth_m, intr, color_img=None):
@@ -282,7 +369,8 @@ def main() -> int:
         print("다듬기 켜짐 — 구멍 메우기는 **안 쓴다**(없는 값을 지어내므로)")
     print()
 
-    win = "D405  (왼쪽: 색 사진   오른쪽: 깊이)"
+    # 창 제목은 영어로 — OpenCV 가 한글 제목을 깨뜨린다
+    win = "D405  (left: photo / right: depth)"
     frames_seen = 0
     try:
         while True:
