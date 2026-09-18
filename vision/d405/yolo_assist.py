@@ -240,7 +240,20 @@ FEW_POINTS_MIN = 6
 
 #: 추정할 때 "이 물체" 로 볼 거리 폭(m). 가장 가까운 값에서 이만큼 안쪽만 쓴다 —
 #: 테두리가 가장자리에서 물고 온 **뒤 배경**을 빼려는 것.
+#: 조각을 도로 합칠 때도 같은 폭을 쓴다(`_merge_pieces`).
 ESTIMATE_BAND_M = 0.05
+
+#: 점 덩어리가 테두리의 **가로 폭을 이 비율만큼은 덮어야** 크기를 믿는다.
+#: 못 덮으면 테두리 쪽 계산으로 넘긴다.
+#:
+#: ⚠️ **왜 가로만 보나.** 카메라가 물체를 위에서 비스듬히 내려다보면 컵의 **아랫부분은
+#:    거리값이 안 나온다** — 세로는 원래 덜 덮이는 게 정상이라 기준으로 쓸 수 없다.
+#:    반면 가로(폭)는 손을 얼마나 벌릴지와 직결되고, 위에서 봐도 테두리 전체가 보인다.
+#:
+#: 이 장치가 필요한 이유(2026-09-18 실측): 뒤쪽에 반쯤 가린 작은 종이컵이
+#: **3.2 cm** 로 나왔다 — 실제 7 cm. 거리값이 숭숭 뚫려 조각난 것 중 한 조각만
+#: 쓰고 있었다.
+MASK_COVER_MIN = 0.6
 
 #: 추정 물체의 앞뒤 두께를 최소 이만큼으로 본다(m). 한 면만 보이므로 0 이 나올 수 있는데,
 #: 0 이면 크기 판정이 이상해진다.
@@ -262,6 +275,41 @@ def _mask_extent(d, shape):
                     float(xs.mean() + 0.5) * sx, float(ys.mean() + 0.5) * sy)
     x1, y1, x2, y2 = d.box
     return (float(x2 - x1), float(y2 - y1), (x1 + x2) / 2.0, (y1 + y2) / 2.0)
+
+
+def _merge_pieces(pieces, inside):
+    """**같은 물체의 조각들을 도로 합친다.**
+
+    거리값이 숭숭 뚫린 물체는 덩어리 묶기에서 여러 조각으로 부서진다. 전에는 그중
+    **카메라에 가장 가까운 한 조각**만 썼는데, 그러면 크기가 실제보다 훨씬 작게 나온다
+    (2026-09-18 실측: 7 cm 짜리 종이컵이 3.2 cm).
+
+    **YOLO 가 이미 "여기까지가 한 물체" 라고 말해 줬으므로**, 가장 가까운 조각에서
+    `ESTIMATE_BAND_M` 안쪽에 있는 조각은 전부 같은 물체로 본다. 그보다 뒤에 있는 것은
+    배경이므로 계속 버린다.
+    """
+    from segment_objects import ObjectCloud
+
+    near = min(pieces, key=lambda p: p.distance_m)
+    idx = np.unique(np.concatenate(
+        [p.index for p in pieces
+         if p.distance_m <= near.distance_m + ESTIMATE_BAND_M]))
+    pts = inside[idx]
+    return ObjectCloud(points=pts.astype(np.float32), center=pts.mean(axis=0),
+                       size=pts.max(axis=0) - pts.min(axis=0),
+                       n_points=len(idx), index=idx)
+
+
+def _covers_enough(o, d, intr, shape, depth_shape, need=MASK_COVER_MIN):
+    """점 덩어리가 **테두리의 가로 폭을 충분히 덮었나.** 못 덮었으면 크기를 못 믿는다."""
+    if intr is None:
+        return True
+    u_px, _, _, _ = _mask_extent(d, shape)
+    mask_w = u_px / (shape[1] / float(depth_shape[1]))      # 깊이 사진 화소 기준
+    if mask_w <= 0:
+        return True
+    seen_w = o.size[0] * float(intr.fx) / max(float(o.center[2]), 1e-6)
+    return seen_w >= need * mask_w
 
 
 def estimate_from_mask(d, inside, intr, shape, depth_shape):
@@ -363,16 +411,19 @@ def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
         #    통째로 한 물체로 썼더니 텀블러가 **324x344x598 cm** 로 나왔다(2026-09-18) —
         #    뒤의 벽·모니터가 같이 들어온 것이다. 테두리(mask)를 쓰면서 대부분 해결됐지만,
         #    테두리도 가장자리에서 배경을 조금 물고 온다. 그래서 여기서 **모양으로 한 번
-        #    더 나누고 카메라에 가장 가까운 덩어리**만 쓴다 —
+        #    더 나누고, 앞쪽 조각들만** 쓴다 —
         #    물체가 배경보다 앞에 있다는 것은 항상 참이다.
         pieces = cluster(inside) if len(idx_in) >= min_points else []
-        if pieces:
-            o = min(pieces, key=lambda p: p.distance_m)
-        else:
-            # 점이 모자라 덩어리를 못 만든다 — **흰 종이컵이 늘 여기로 온다.**
-            o = estimate_from_mask(d, inside, intr, shape, depth_shape)
-            if o is None:
-                continue
+        o = _merge_pieces(pieces, inside) if pieces else None
+
+        # 점이 테두리의 가로 폭을 충분히 못 덮으면 **크기를 점으로 재지 않는다.**
+        # (거리값이 숭숭 뚫린 흰 물체가 여기로 온다)
+        if o is None or not _covers_enough(o, d, intr, shape, depth_shape):
+            guess = estimate_from_mask(d, inside, intr, shape, depth_shape)
+            if guess is not None:
+                o = guess
+        if o is None:
+            continue
         o.source = "YOLO:{} {:.0%}".format(d.name, d.conf)      # 어디서 나왔는지 남긴다
         objs.append(o)
         # 박스 안 전체가 아니라 **쓴 점만** 소비 처리한다 — 나머지는 모양 쪽이 다시 본다

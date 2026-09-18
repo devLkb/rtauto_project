@@ -250,5 +250,54 @@ class TestWholeScreenRuns(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+class TestHoleyObject(unittest.TestCase):
+    """거리값이 **숭숭 뚫린** 물체 — 조각 하나만 쓰면 크기가 반토막 난다.
+
+    2026-09-18 실측: 뒤쪽에 반쯤 가린 7 cm 짜리 종이컵이 **3.2 cm** 로 나왔다.
+    """
+
+    def _cup_with_gaps(self, gaps):
+        """테두리는 280~360 인데 거리값은 `gaps` 구간에만 있는 컵."""
+        det = _cup_detection(280, 190, 360, 290)
+        chunks = [_points_on_rect(a, 190, b, 290, z=0.25, step=1) for a, b in gaps]
+        pts = np.vstack([c[0] for c in chunks])
+        pix = (np.concatenate([c[1][0] for c in chunks]),
+               np.concatenate([c[1][1] for c in chunks]))
+        return det, pts, pix
+
+    def test_pieces_of_one_object_are_put_back_together(self):
+        # 컵의 왼쪽 끝과 오른쪽 끝에만 값이 있다 — 가운데는 뚫렸다
+        det, pts, pix = self._cup_with_gaps([(281, 300), (340, 359)])
+
+        objs, _ = split_by_boxes(pts, pix, [det], COLOR_SHAPE,
+                                 depth_shape=DEPTH_SHAPE, intr=_Intr)
+
+        self.assertEqual(len(objs), 1)
+        # 조각 하나만 쓰면 1.5 cm 안팎, 합치면 참값(3.1 cm)에 가까워야 한다
+        self.assertGreater(objs[0].size[0], 0.025,
+                           "조각 하나만 써서 크기가 반토막 났다")
+
+    def test_a_sliver_falls_back_to_the_outline(self):
+        # 테두리의 왼쪽 1/4 에만 값이 있다 — 이걸로 크기를 재면 안 된다
+        det, pts, pix = self._cup_with_gaps([(281, 300)])
+
+        objs, _ = split_by_boxes(pts, pix, [det], COLOR_SHAPE,
+                                 depth_shape=DEPTH_SHAPE, intr=_Intr)
+
+        self.assertEqual(len(objs), 1)
+        o = objs[0]
+        self.assertTrue(o.estimated, "점이 일부만 덮었는데 그 크기를 그대로 믿었다")
+        self.assertAlmostEqual(o.size[0], 0.0313, delta=0.004)   # 테두리에서 나온 참값
+
+    def test_full_coverage_keeps_the_measured_size(self):
+        """제대로 덮였으면 **점으로 잰 크기를 쓴다** — 함부로 추정으로 넘기지 않는다."""
+        det, pts, pix = self._cup_with_gaps([(281, 359)])
+
+        objs, _ = split_by_boxes(pts, pix, [det], COLOR_SHAPE,
+                                 depth_shape=DEPTH_SHAPE, intr=_Intr)
+
+        self.assertEqual(len(objs), 1)
+        self.assertFalse(objs[0].estimated, "잘 덮였는데도 추정으로 넘겼다")
+
 if __name__ == "__main__":
     unittest.main()
