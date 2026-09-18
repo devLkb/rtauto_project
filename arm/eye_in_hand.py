@@ -155,11 +155,19 @@ def intrinsics(width: int, height: int):
 
     ⚠️ 시야각에서 계산한 값은 **제조사 공개 사양 기준**이라 개체 차이가 안 들어 있다.
     실물에서는 RealSense SDK 가 알려 주는 값을 `.env` 에 넣어 쓴다.
+
+    ⚠️ 실측값은 **잰 해상도**(`D405_CALIB_WIDTH/HEIGHT`)에서만 맞으므로, 다른 크기로
+    물어보면 **그 비율만큼 환산해서** 돌려준다.
     """
     if cfg.D405_FX > 0 and cfg.D405_FY > 0:
-        cx = cfg.D405_CX if cfg.D405_CX > 0 else width / 2.0
-        cy = cfg.D405_CY if cfg.D405_CY > 0 else height / 2.0
-        return cfg.D405_FX, cfg.D405_FY, cx, cy, True
+        # ⚠️ **잰 해상도에서만 맞는 값이다.** 다른 크기로 물어보면 그 비율만큼 환산한다 —
+        #    안 그러면 640x480 으로 물었는데 1280x720 값이 그대로 나가 **2배 틀린다**
+        #    (2026-09-18 에 시험이 잡은 버그). 사진을 그냥 줄인 경우 이 환산이 맞다.
+        sx = width / float(cfg.D405_CALIB_WIDTH)
+        sy = height / float(cfg.D405_CALIB_HEIGHT)
+        cx = cfg.D405_CX * sx if cfg.D405_CX > 0 else width / 2.0
+        cy = cfg.D405_CY * sy if cfg.D405_CY > 0 else height / 2.0
+        return cfg.D405_FX * sx, cfg.D405_FY * sy, cx, cy, True
     fx = width / (2.0 * math.tan(math.radians(cfg.D405_FOV_H_DEG) / 2.0))
     fy = height / (2.0 * math.tan(math.radians(cfg.D405_FOV_V_DEG) / 2.0))
     return fx, fy, width / 2.0, height / 2.0, False

@@ -131,9 +131,24 @@ class DepthTests(unittest.TestCase):
         depth = np.full((10, 10), 0.3)
         pts = depth_to_points_cam(depth)
         fx, fy, cx, cy, _ = intrinsics(10, 10)
-        # 중심 화소(cx, cy)에 해당하는 점은 x, y 가 0 이어야 한다
-        self.assertAlmostEqual(cx, 5.0)
+        # 중심은 화면 안에 있어야 한다(실측값이든 계산값이든)
+        self.assertTrue(0 <= cx <= 10, cx)
         self.assertLess(float(np.abs(pts[:, 0]).min()), 1e-9 + 0.3 * 0.5 / fx)
+
+    def test_실측값은_해상도에_맞춰_환산된다(self):
+        """⚠️ 잰 해상도의 값을 그대로 쓰면 **2배 틀린다** — 2026-09-18 에 시험이 잡았다."""
+        import rtauto_config as c
+        if not (c.D405_FX > 0 and c.D405_FY > 0):
+            self.skipTest("실측값이 .env 에 없다 — 환산할 것이 없다")
+        fx_big, _, cx_big, _, real = intrinsics(c.D405_CALIB_WIDTH, c.D405_CALIB_HEIGHT)
+        fx_half, _, cx_half, _, _ = intrinsics(c.D405_CALIB_WIDTH // 2,
+                                               c.D405_CALIB_HEIGHT // 2)
+        self.assertTrue(real)
+        self.assertAlmostEqual(fx_big, c.D405_FX, places=6)
+        self.assertAlmostEqual(fx_half, c.D405_FX / 2, places=6)   # 절반이어야 한다
+        self.assertAlmostEqual(cx_half, c.D405_CX / 2, places=6)
+        # 중심은 늘 화면 안에 있어야 한다
+        self.assertTrue(0 <= cx_half <= c.D405_CALIB_WIDTH // 2)
 
     def test_사진이_2차원이_아니면_거부한다(self):
         with self.assertRaises(ValueError):

@@ -409,6 +409,12 @@ def d405_mount_measured():
 
 #: 카메라 내부 값(초점거리·중심). 0 이면 위 시야각에서 계산해 쓴다.
 #: 실물에서는 RealSense SDK 가 알려 주는 값을 여기에 넣는다 — 개체마다 다르다.
+#: ⚠️ **이 값은 잰 해상도에서만 맞는다.** 아래 D405_CALIB_* 에 잰 해상도를 함께 적고,
+#:    다른 해상도로 물어보면 그 비율만큼 **자동으로 환산한다**(arm/eye_in_hand.py).
+#:    안 그러면 640x480 으로 물었는데 1280x720 값이 그대로 나가 **2배 틀린다.**
+#:    2026-09-18 에 시험이 이 버그를 잡았다.
+D405_CALIB_WIDTH = int(_env("RTAUTO_D405_CALIB_WIDTH", "1280"))
+D405_CALIB_HEIGHT = int(_env("RTAUTO_D405_CALIB_HEIGHT", "720"))
 D405_FX = float(_env("RTAUTO_D405_FX", "0"))
 D405_FY = float(_env("RTAUTO_D405_FY", "0"))
 D405_CX = float(_env("RTAUTO_D405_CX", "0"))
