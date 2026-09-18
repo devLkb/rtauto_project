@@ -135,8 +135,27 @@ def depth_report(stack, scale, near, far, note=""):
     dist = float(np.median(mid)) if mid.size else float("nan")
     in_band = float(((d >= near) & (d <= far)).mean())
 
+    # --- 거리별 흔들림 ------------------------------------------------------
+    # 한 장면 안에 가까운 것부터 먼 것까지 다 들어 있으므로, **물체를 옮기지 않고도**
+    # "거리가 멀어지면 얼마나 나빠지나" 를 잴 수 있다. 이 곡선이 D405_NEAR_M /
+    # D405_FAR_M 을 정하는 근거다(지금 값 0.07~0.50 m 는 제조사 사양이고 실측이 아니다).
+    bands = []
+    if always.any():
+        med = np.median(d[:, always], axis=0)          # 화소마다 거리 중앙값
+        std = d[:, always].std(axis=0)                 # 화소마다 흔들림
+        edges = [0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.75, 1.0, 1.5, 2.0, 99.0]
+        for lo, hi in zip(edges[:-1], edges[1:]):
+            sel = (med >= lo) & (med < hi)
+            n = int(sel.sum())
+            if n < 50:                                  # 표본이 적으면 안 믿는다
+                continue
+            bands.append(dict(lo_m=lo, hi_m=hi, pixels=n,
+                              jitter_mm=float(np.median(std[sel]) * 1000.0),
+                              jitter_rel_pct=float(
+                                  np.median(std[sel] / np.maximum(med[sel], 1e-6)) * 100.0)))
+
     return dict(note=note, valid_frac=frac, in_band_frac=in_band,
-                median_dist_m=dist, jitter_mm=jitter_mm,
+                median_dist_m=dist, jitter_mm=jitter_mm, bands=bands,
                 min_m=float(d[valid].min()) if valid.any() else float("nan"),
                 max_m=float(d[valid].max()) if valid.any() else float("nan"))
 
@@ -150,6 +169,50 @@ def to_points(depth_m, intr):
                      (ys - intr["ppy"]) * z / intr["fy"], z], axis=1)
 
 
+def summarize() -> int:
+    """지금까지 잰 것들을 **거리 x 각도 표**로 모은다. 카메라가 없어도 돈다.
+
+    무엇을 보나:
+      - **값이 있는 화소 비율** — 낮으면 그 거리·각도에서는 물체가 잘 안 보인다는 뜻
+      - **흔들림(mm)** — 같은 자리를 여러 장 봤을 때 거리가 얼마나 들쭉날쭉한가
+    """
+    files = sorted(RESULTS_DIR.glob("probe_*.json"))
+    rows = []
+    for f in files:
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        dep = d.get("depth")
+        if dep:
+            rows.append(dep)
+    if not rows:
+        print("아직 잰 것이 없다. `--depth --object <이름> --dist-cm <거리> --angle-deg <각도>`")
+        print("로 몇 번 재고 나서 다시 부르면 표가 나온다.")
+        return 0
+
+    print("=== 깊이 품질 표 ({}건) ===".format(len(rows)))
+    print("값이 있는 화소가 많고 흔들림이 작을수록 좋다.")
+    print()
+    print("  {:<14s} {:>7s} {:>7s} {:>10s} {:>9s} {:>9s}".format(
+        "물체", "거리cm", "각도도", "값있는화소", "흔들림mm", "중앙거리m"))
+    print("  " + "-" * 62)
+    for r in sorted(rows, key=lambda r: (str(r.get("object") or ""),
+                                         r.get("dist_cm") or 0.0,
+                                         r.get("angle_deg") or 0.0)):
+        print("  {:<14s} {:>7s} {:>7s} {:>9.1%} {:>9.2f} {:>9.3f}".format(
+            str(r.get("object") or r.get("note") or "?")[:14],
+            "-" if r.get("dist_cm") is None else "{:.0f}".format(r["dist_cm"]),
+            "-" if r.get("angle_deg") is None else "{:.0f}".format(r["angle_deg"]),
+            r.get("valid_frac", float("nan")),
+            r.get("jitter_mm", float("nan")),
+            r.get("median_dist_m", float("nan"))))
+    print()
+    print("⚠️ **값이 있는 화소 비율이 낮은 칸**을 눈여겨볼 것 — 그 거리·각도에서는 물체가")
+    print("   깊이에 안 찍힌다는 뜻이고, 손목 카메라를 그렇게 달면 안 된다는 근거가 된다.")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="D405 실측 (계획서 Q1)")
     ap.add_argument("--info", action="store_true", help="초점거리·중심·시야각을 읽는다")
@@ -157,10 +220,20 @@ def main() -> int:
     ap.add_argument("--cloud", action="store_true", help="점 덩어리를 파일로 남긴다")
     ap.add_argument("--env", action="store_true", help=".env 에 넣을 형태로 출력")
     ap.add_argument("--note", default="", help="지금 무엇을 찍고 있는지 (기록용)")
+    ap.add_argument("--object", default="", help="찍고 있는 물체 이름 (예: paper_cup)")
+    ap.add_argument("--dist-cm", type=float, default=None,
+                    help="카메라에서 물체까지 대략 거리(cm). 표로 모으려면 넣을 것")
+    ap.add_argument("--angle-deg", type=float, default=None,
+                    help="물체 면을 얼마나 비스듬히 보고 있나(도). 0=정면")
+    ap.add_argument("--summary", action="store_true",
+                    help="지금까지 잰 것들을 표로 모아 보여 준다 (카메라 필요 없음)")
     ap.add_argument("--width", type=int, default=None)
     ap.add_argument("--height", type=int, default=None)
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
+
+    if args.summary:
+        return summarize()
 
     if not (args.info or args.depth or args.cloud or args.env):
         print(__doc__)
@@ -219,6 +292,9 @@ def main() -> int:
                 print("깊이 장면을 못 받았다.")
                 return 2
             rep = depth_report(stack, scale, cfg.D405_NEAR_M, cfg.D405_FAR_M, args.note)
+            rep["object"] = args.object
+            rep["dist_cm"] = args.dist_cm
+            rep["angle_deg"] = args.angle_deg
             result["depth"] = rep
             print("  적은 것 : {}".format(args.note or "(없음)"))
             print("  값이 있는 화소      : {:.1%}".format(rep["valid_frac"]))
@@ -229,6 +305,18 @@ def main() -> int:
             print("  보이는 거리 범위     : {:.3f} ~ {:.3f} m".format(
                 rep["min_m"], rep["max_m"]))
             print()
+            if rep.get("bands"):
+                print("  --- 거리별 흔들림 (같은 자리를 여러 장 봤을 때) ---")
+                print("    {:>14s} {:>9s} {:>10s} {:>9s}".format(
+                    "거리(m)", "화소수", "흔들림mm", "거리대비%"))
+                for b in rep["bands"]:
+                    hi = "이상" if b["hi_m"] > 90 else "{:.2f}".format(b["hi_m"])
+                    print("    {:>6.2f} ~ {:>5s} {:>9d} {:>10.2f} {:>8.2f}%".format(
+                        b["lo_m"], hi, b["pixels"], b["jitter_mm"], b["jitter_rel_pct"]))
+                print()
+                print("  👉 파지에 쓰는 거리(약 0.15~0.30 m)의 흔들림을 보라.")
+                print("     이 값이 곧 '물체 위치를 얼마나 정확히 알 수 있나' 다.")
+                print()
 
             if args.cloud:
                 depth_m = stack[-1].astype(np.float64) * scale
