@@ -127,3 +127,8 @@ config/dg5f_current_baseline.json
 # YOLO11 공식 가중치 — 인터넷에서 자동으로 받으므로 커밋하지 않는다(6~20 MB).
 # 없으면 vision/d405/yolo_assist.py 가 알아서 내려받는다.
 vision/d405/weights/*.pt
+
+# YOLOE 가 글자를 이해하려고 받는 모델 (254 MB). **커밋하지 않는다.**
+# 이건 make_ready.py 로 찾을 말을 구울 때만 필요하고, 시연 노트북에는 필요 없다.
+mobileclip2_b.ts
+vision/d405/weights/*.ts
