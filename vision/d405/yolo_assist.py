@@ -22,22 +22,40 @@ YOLO 는 그 반대다. **붙어 있어도 하나씩 가르지만 배운 종류�
 잡는 것이다. YOLO 만 쓰면 배운 9종 밖에서는 아무것도 못 한다. 그래서 **YOLO 는 도우미**고,
 못 찾았을 때는 모양으로 나누는 쪽이 계속 답을 낸다.
 
-쓰는 모델
----------
-`vision/zed_object_detection/weights/dg5f_target_objects_yolov8s.pt` (9종):
+쓰는 모델 — 공식 **YOLO11-seg**
+-------------------------------
+`vision/d405/weights/yolo11s-seg.pt` (없으면 자동으로 내려받는다, 약 20 MB).
+COCO 80종이라 우리에게 필요한 것이 다 있다: **cup · bottle · mouse · keyboard ·
+cell phone · person** …
 
-    tumbler · plastic cup · phone · can · box · mouse · laptop · bracelet · human
+**테두리를 따 주는 판(-seg)** 을 쓴다. 네모 박스가 아니라 **물체 모양 그대로** 잘라내므로
+뒤의 배경이 안 딸려온다.
 
-⚠️ **이 모델을 누가 언제 무엇으로 학습시켰는지 기록이 없다.** 얼마나 잘 맞히는지 우리는
-   모른다 — 돌려 보고 판단할 것. 그래서 화면에 **확신 정도**를 같이 찍는다.
+🛑 **처음엔 ZED 폴더의 `dg5f_target_objects_yolov8s.pt`(9종)를 썼는데 버렸다.**
+   우리 D405 사진에서 **확신 기준을 5 % 까지 낮춰도 거의 못 찾았다**(2026-09-18 실측).
+   같은 사진으로 견준 결과:
 
-⚠️ ZED 폴더 자체는 폐기됐다(`vision/zed_object_detection/DEPRECATED.md`) — 받는 쪽
-   Unity 코드가 없어졌기 때문이다. **가중치 파일만 가져다 쓴다.** 그 폴더의 파이프라인을
-   되살리는 것이 아니다.
+   =================  ===========  =================
+   같은 사진            ZED 모델      **YOLO11s-seg**
+   =================  ===========  =================
+   컵                   10 %         **89~92 %**
+   마우스                못 찾음       **89~91 %**
+   사람                  못 찾음       **67 %**
+   테두리                없음          **있음**
+   =================  ===========  =================
 
-`human` 이 쓸모 있다
---------------------
+   ZED 모델이 왜 못 하는지는 확정하지 않았다(색이 다른 카메라로 학습됐거나, 20 cm 코앞
+   장면이 학습 범위 밖이거나). **원인을 더 파지 않고 버렸다** — 공식 모델이 훨씬 잘하므로
+   파 볼 값어치가 없다.
+
+⚠️ **남은 문제는 YOLO 가 아니다.** YOLO 는 "여기 컵이 있다" 를 정확히 말하는데,
+   **흰 종이컵은 거리가 안 잡혀 점 덩어리를 못 만든다**(적외선 무늬를 쏘는 장치가 없어
+   민무늬 면을 못 재는 문제 — 2026-09-18). 조명을 밝히면 나아진다.
+
+`person` 이 쓸모 있다
+---------------------
 사람 팔이 물체로 잡히던 문제(25 cm 짜리 덩어리)를 **걸러낼 수 있다.**
+`NOT_OBJECT` 에 사람·책상·의자·모니터를 넣어 잡으러 가지 않게 했다.
 
 돌리는 법
 ---------
@@ -73,8 +91,13 @@ RESULTS_DIR = REPO_ROOT / "vision" / "d405" / "results"
 #: ⚠️ 이 모델의 성적을 우리가 모르므로 **잠정값**이다 — 돌려 보고 맞출 것.
 YOLO_CONF = 0.35
 
-#: 사람은 물체가 아니다 — 잡으러 가면 안 된다.
-NOT_OBJECT = ("human",)
+#: 잡으러 가면 안 되는 것들. 사람은 물체가 아니고, 책상·의자·모니터는 손에 안 들어온다.
+NOT_OBJECT = ("person", "dining table", "chair", "couch", "bed", "tv", "refrigerator")
+
+#: 기본 가중치. 없으면 ultralytics 가 인터넷에서 자동으로 내려받는다(약 20 MB).
+#: n(작고 빠름) / s(조금 크고 정확) 중 **s** 를 쓴다 — 우리는 장면당 한 번만 보므로
+#: 속도보다 정확도가 낫다.
+DEFAULT_WEIGHTS = "yolo11s-seg.pt"
 
 
 def model_path():
@@ -83,8 +106,8 @@ def model_path():
     if override:
         p = Path(override)
         return p if p.is_absolute() else (REPO_ROOT / p)
-    return REPO_ROOT / "vision" / "zed_object_detection" / "weights" / \
-        "dg5f_target_objects_yolov8s.pt"
+    local = REPO_ROOT / "vision" / "d405" / "weights" / DEFAULT_WEIGHTS
+    return local if local.exists() else Path(DEFAULT_WEIGHTS)   # 없으면 자동 내려받기
 
 
 @dataclass
@@ -92,11 +115,27 @@ class Detection:
     """YOLO 가 찾은 것 하나."""
     name: str
     conf: float
-    box: tuple          # (x1, y1, x2, y2) 화면 좌표
+    box: tuple                      # (x1, y1, x2, y2) 화면 좌표
+    mask: Optional[np.ndarray] = None   # 물체 모양 그대로 (있으면 박스 대신 이걸 쓴다)
 
     @property
     def is_object(self) -> bool:
         return self.name not in NOT_OBJECT
+
+    def contains(self, px, py, shape):
+        """화면 좌표 `(px, py)` 들이 이 물체 안에 드는가.
+
+        **테두리(mask)가 있으면 그것을 쓰고**, 없을 때만 네모 박스로 물러선다.
+        박스는 물체 뒤의 배경까지 긁어오므로 테두리 쪽이 훨씬 깨끗하다.
+        """
+        x1, y1, x2, y2 = self.box
+        in_box = (px >= x1) & (px <= x2) & (py >= y1) & (py <= y2)
+        if self.mask is None:
+            return in_box
+        h, w = self.mask.shape
+        ix = np.clip(np.round(px * (w / shape[1])).astype(int), 0, w - 1)
+        iy = np.clip(np.round(py * (h / shape[0])).astype(int), 0, h - 1)
+        return in_box & (self.mask[iy, ix] > 0.5)
 
 
 class Detector:
@@ -107,9 +146,6 @@ class Detector:
         self.model = None
         self.why = ""
         p = Path(path) if path else model_path()
-        if not p.exists():
-            self.why = "가중치 파일이 없다: {}".format(p)
-            return
         try:
             from ultralytics import YOLO
             self.model = YOLO(str(p))
@@ -125,16 +161,23 @@ class Detector:
         if not self.ready:
             return []
         res = self.model.predict(bgr, conf=self.conf, verbose=False)[0]
+        masks = None
+        if getattr(res, "masks", None) is not None:
+            masks = res.masks.data.cpu().numpy()      # (물체수, 높이, 너비)
         out = []
-        for b in res.boxes:
+        for i, b in enumerate(res.boxes):
             xy = [float(v) for v in b.xyxy[0].tolist()]
             out.append(Detection(name=str(self.names[int(b.cls[0])]),
-                                 conf=float(b.conf[0]), box=tuple(xy)))
+                                 conf=float(b.conf[0]), box=tuple(xy),
+                                 mask=(masks[i] if masks is not None and i < len(masks)
+                                       else None)))
         return out
 
 
-def split_by_boxes(points, pixel_xy, dets, min_points=120):
-    """**박스 안의 점들을 따로 떼어낸다.**
+def split_by_boxes(points, pixel_xy, dets, shape, min_points=120):
+    """**YOLO 가 찾은 것들의 점을 따로 떼어낸다.**
+
+    테두리(mask)가 있으면 그것으로, 없으면 네모 박스로 가른다.
 
     돌려주는 것: `(박스별 물체 목록, 어느 박스에도 안 든 점)`
 
@@ -153,8 +196,7 @@ def split_by_boxes(points, pixel_xy, dets, min_points=120):
         d = dets[i]
         if not d.is_object:
             continue
-        x1, y1, x2, y2 = d.box
-        inside = (px >= x1) & (px <= x2) & (py >= y1) & (py <= y2)
+        inside = d.contains(px, py, shape)
         take = inside & (d.conf >= best_conf)
         owner[take] = i
         best_conf[take] = d.conf
@@ -168,11 +210,12 @@ def split_by_boxes(points, pixel_xy, dets, min_points=120):
             continue
         inside = pts[sel]
 
-        # ⚠️ **박스는 평면(2D)이라 그 방향의 배경까지 전부 긁어온다.**
-        #    처음엔 박스 안의 점을 통째로 한 물체로 썼더니 텀블러 크기가
-        #    324x344x598 cm 로 나왔다(2026-09-18) — 뒤의 벽·모니터가 같이 들어온 것이다.
-        #    그래서 박스 안에서 **모양으로 한 번 더 나누고, 카메라에 가장 가까운
-        #    덩어리**만 쓴다. 물체가 배경보다 앞에 있다는 것은 항상 참이다.
+        # ⚠️ **네모 박스는 그 방향의 배경까지 전부 긁어온다.** 처음엔 박스 안의 점을
+        #    통째로 한 물체로 썼더니 텀블러가 **324x344x598 cm** 로 나왔다(2026-09-18) —
+        #    뒤의 벽·모니터가 같이 들어온 것이다. 테두리(mask)를 쓰면서 대부분 해결됐지만,
+        #    테두리도 가장자리에서 배경을 조금 물고 온다. 그래서 여기서 **모양으로 한 번
+        #    더 나누고 카메라에 가장 가까운 덩어리**만 쓴다 —
+        #    물체가 배경보다 앞에 있다는 것은 항상 참이다.
         pieces = cluster(inside)
         if not pieces:
             continue
@@ -195,8 +238,7 @@ def split_by_boxes(points, pixel_xy, dets, min_points=120):
     for d in dets:
         if d.is_object:
             continue
-        x1, y1, x2, y2 = d.box
-        used |= (px >= x1) & (px <= x2) & (py >= y1) & (py <= y2)
+        used |= d.contains(px, py, shape)
 
     return objs, pts[~used]
 
@@ -209,7 +251,7 @@ def find_objects_hybrid(points, pixel_xy, color_bgr, detector, near=None, far=No
     from segment_objects import find_objects
 
     dets = detector.detect(color_bgr) if (detector and detector.ready) else []
-    boxed, rest = split_by_boxes(points, pixel_xy, dets)
+    boxed, rest = split_by_boxes(points, pixel_xy, dets, color_bgr.shape[:2])
 
     shape_objs, _, note = find_objects(rest, near=near, far=far)
     for o in shape_objs:

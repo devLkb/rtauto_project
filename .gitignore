@@ -123,3 +123,7 @@ superdex/assets/bots/.superdex_root
 
 # 실측해서 만드는 무부하 전류 기준표 — 머신/개체마다 다르므로 커밋하지 않는다
 config/dg5f_current_baseline.json
+
+# YOLO11 공식 가중치 — 인터넷에서 자동으로 받으므로 커밋하지 않는다(6~20 MB).
+# 없으면 vision/d405/yolo_assist.py 가 알아서 내려받는다.
+vision/d405/weights/*.pt
