@@ -98,11 +98,129 @@ python -c "import rtde_control, rtde_receive; print('ur_rtde OK')"
 mlagents-learn --help
 ```
 
+> 카메라(D405)를 쓰는 PC라면 `pip check`가
+> `ultralytics ... requires opencv-python, which is not installed`를 낼 수 있다.
+> **정상이다** — 이유와 확인 방법은 아래 §3-1 (1)에 있다.
+
 비전 시연만 하는 PC에서는 마지막 `mlagents-learn` 검증은 생략할 수 있다. 검증된 핵심
 조합은 `mediapipe==0.10.11`, `opencv-contrib-python==4.8.1.78`,
 `numpy==1.23.5`, `protobuf==3.20.3`이다. `ur_rtde`(UR16e 팔 디지털 트윈,
 `arm/ur_rtde_bridge.py`)는 이 조합과 버전 충돌 이력이 없어 같은 venv에 공존한다 —
 검증된 버전은 `ur_rtde==1.6.5`(Windows/Linux 모두 PyPI 휠 제공, 별도 빌드 도구 불필요).
+
+## 3-1. 손목 카메라(D405)를 쓰는 PC에서 추가로 할 일
+
+카메라를 꽂아 쓰는 PC에서만 필요하다. **이 네 단계를 안 하면 카메라 쪽이 조용히
+반쪽으로 돈다** — 물체 찾기가 통째로 꺼지거나, 제조사 사양값으로 계산해 어긋난다.
+(2026-09-18 리눅스 노트북에서 실제로 밟아 확인했다.)
+
+### (1) 준비물 다시 맞추기 — **이미 만들어 둔 가상환경에서도 한 번 더**
+
+`pyrealsense2`(카메라를 여는 것)와 `ultralytics`(물체를 찾는 것)는
+`requirements-vision.txt`에 **2026-09-18에 추가됐다.** 그 전에 만든 가상환경에는 없다.
+
+```powershell
+.\vision\.vision\Scripts\Activate.ps1
+python -m pip install -r requirements-vision.txt
+```
+
+```bash
+source vision/.vision/bin/activate
+python -m pip install -r requirements-vision.txt
+```
+
+🛑 **설치가 끝나면 `torch`와 `opencv`가 바뀌지 않았는지 반드시 확인한다.**
+`ultralytics`는 둘 다 자기 취향대로 갈아치우려 든다.
+
+```bash
+python -c "import torch, cv2; print(torch.__version__, cv2.__version__)"
+```
+
+- `torch`가 `2.1.1`이 아니면: `python -m pip install "torch==2.1.1" "torchvision==0.16.1"`
+- `cv2`가 `4.8.1`이 아니면 (= `opencv-python`이 끼어든 것):
+
+```bash
+python -m pip uninstall -y opencv-python opencv-contrib-python
+python -m pip install "opencv-contrib-python==4.8.1.78"
+```
+
+> 왜 이런 일이 나나: `opencv-python`과 `opencv-contrib-python`은 **같은 폴더에 같은
+> 이름으로** 깔린다. 둘이 겹치면 나중에 깔린 쪽이 앞의 것을 덮어써, 어느 쪽 기능이
+> 살아 있는지 알 수 없는 상태가 된다. 우리가 고정한 것은 `opencv-contrib-python`이다.
+
+⚠️ 이렇게 되돌리면 `python -m pip check`가 아래 한 줄을 낸다. **정상이고, 고치지 않는다.**
+
+```
+ultralytics 8.4.155 requires opencv-python, which is not installed.
+```
+
+`ultralytics`가 요구하는 것은 **`cv2`라는 기능**이고 그것은 `opencv-contrib-python`이
+똑같이 제공한다. 설치 목록의 이름만 다를 뿐이다. 여기서 `opencv-python`을 다시 깔면
+위의 덮어쓰기 문제로 되돌아간다. (2026-09-18 확인: 이 상태로 물체 찾기가 정상 동작한다.)
+
+### (2) 카메라가 알려 주는 실측값을 `.env`에 넣기
+
+**카메라 개체마다 다르므로 코드에 굳히지 않는다**(원칙 1). 그래서 `.env`(git 비추적)에
+들어가고, **다른 PC로 옮기면 그 값이 따라오지 않는다.** 새 PC에서 한 번 돌린다.
+
+```powershell
+python vision/d405/probe_d405.py --info --env
+```
+
+```bash
+python vision/d405/probe_d405.py --info --env
+```
+
+마지막에 `RTAUTO_D405_FX=...` 로 시작하는 줄들이 나온다. **그대로 복사해 `.env` 끝에
+붙인다.** `RTAUTO_D405_CALIB_WIDTH` / `_HEIGHT`(잰 해상도)도 같이 넣어야 한다 —
+없으면 다른 해상도로 물어볼 때 **2배 틀린 값이 조용히 나간다.**
+
+```
+RTAUTO_D405_CALIB_WIDTH=1280
+RTAUTO_D405_CALIB_HEIGHT=720
+```
+
+확인(넣은 값이 실제로 읽히는지):
+
+```bash
+python arm/eye_in_hand.py --check
+```
+
+→ `카메라 내부: fx ... (실측값)` 이라고 나오면 성공. `(시야각에서 계산)` 이면 아직 안 들어간 것이다.
+(그 아래 "손목 카메라 장착값을 아직 안 쟀다" 경고는 **정상이다** — 팔에 달고 재는 값이라 따로다.)
+
+### (3) 물체 찾기 모델 파일 만들기 (인터넷 되는 곳에서 한 번만)
+
+이 파일은 용량이 커서 저장소에 안 들어간다(`.gitignore`). 받아서 구워야 한다.
+
+```powershell
+mkdir vision/d405/weights -Force
+curl.exe -L -o vision/d405/weights/yoloe26-n-seg.pt "https://huggingface.co/openvision/yoloe26-n-seg/resolve/main/model.pt"
+python vision/d405/make_ready.py
+```
+
+```bash
+mkdir -p vision/d405/weights
+curl -fL -o vision/d405/weights/yoloe26-n-seg.pt "https://huggingface.co/openvision/yoloe26-n-seg/resolve/main/model.pt"
+python vision/d405/make_ready.py
+```
+
+`vision/d405/weights/yoloe26-n-seg-ready.pt` (약 11.5 MB)가 생기면 끝이다.
+
+- 굽는 도중 **242 MB짜리 글자 이해용 모델**을 내려받아 리포 루트에 `mobileclip2_b.ts`로
+  남긴다. **지워도 된다**(필요하면 다시 받는다). git은 이 파일을 무시한다.
+- 굽는 것은 **여기서 한 번만** 한다. 시연 노트북에는 `...-ready.pt` 한 개만 있으면 된다.
+
+### (4) 되는지 확인
+
+```bash
+python -m unittest discover -s vision/d405/tests -p "test_*.py"
+python vision/d405/yolo_assist.py --save
+```
+
+- 시험은 **14개 전부 통과**여야 한다.
+- `--save`는 사진 한 장을 찍어 `vision/d405/results/yolo_<시각>.png`로 남긴다.
+  화면에 `⚠️ YOLO 를 못 쓴다` 가 뜨면 (1)이나 (3)이 덜 된 것이다.
 
 ## 4. PC별 설정
 

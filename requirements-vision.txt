@@ -31,4 +31,10 @@ pyrealsense2==2.58.4.10922
 # ⚠️ 설치할 때 torch 를 갈아치우려 든다. **torch 는 위 핀을 유지할 것**
 #    (2026-09-18 에 2.1.1+cu121 -> 2.14.0+cpu 로 바뀌어 CUDA 가 꺼졌다. 되돌렸다)
 #    설치 후 확인: python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+# ⚠️ opencv 도 갈아치우려 든다. ultralytics 는 opencv-python 을 끌고 들어오는데, 이것은
+#    위에 고정한 opencv-contrib-python 과 **같은 폴더에 같은 이름으로** 깔려 서로를 덮어쓴다
+#    (2026-09-18 리눅스에서 4.8.1 -> 4.11.0 으로 바뀌었다. 되돌렸다).
+#    설치 후 확인: python -c "import cv2; print(cv2.__version__)"   # 4.8.1 이어야 한다
+#    아니면: pip uninstall -y opencv-python opencv-contrib-python
+#           pip install "opencv-contrib-python==4.8.1.78"
 ultralytics
