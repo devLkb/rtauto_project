@@ -190,6 +190,26 @@ DG5F_GRASP_POSE_FILE = _env("RTAUTO_DG5F_GRASP_POSE", "config/dg5f_grasp_pose.js
 #    "그 기준값에서 얼마나 벗어나야 접촉으로 볼지"의 배수·여유로만 쓴다.
 #    설계 정본: docs/GRASP_CONTACT_DETECTION.md
 
+# ---------------- "좋은 자세" 를 고르는 기준 ----------------
+# 잡은 뒤 물체가 손 안에서 돌아간 각도(도)가 이 값 이하여야 **고를 만한 자세**로 본다.
+#
+# ⚠️ **성공/실패 판정은 이것과 무관하다.** 시뮬레이터의 성공 기준(손끝 3개 접촉 + 물체가
+#    손 중심 근처 유지)은 그대로 두고, 이 값은 **성공한 자세들 중에서 어느 것을 고를지**
+#    에만 쓴다 (2026-09-18 사용자 결정). 그래야 예전 결과와 계속 비교할 수 있다.
+#
+# 쓰는 곳: superdex/scripts/{build_pose_dataset,train_pose_predictor,pose_score_sweep,
+#          watch_grasp}.py — 네 군데가 이 값 하나를 본다(숫자를 베끼지 않는다).
+#
+# 실측 근거 (2026-09-18, 물체 9종 324칸):
+#   기울기 안 봄  -> 좋은 자세 124칸(38%), 물체별 최소  6개
+#   5도 이하      -> 좋은 자세  42칸(13%), 물체별 최소  2개   <- 지금 값
+#   8도 이하      -> 좋은 자세  63칸(19%), 물체별 최소  4개
+#   10도 이하     -> 좋은 자세  85칸(26%), 물체별 최소  4개
+# 성공한 자세 전체의 중앙값이 8도이고, 물체 9종 모두 **0~3도짜리 자세를 하나씩은** 갖고
+# 있다. 5도는 "거의 안 돌아감" 에 해당한다.
+# 👉 학습이 표본 부족으로 안 되면 **여기부터 8~10도로 올려 본다.**
+GRASP_GOOD_TILT_DEG = float(_env("RTAUTO_GRASP_GOOD_TILT_DEG", "5.0"))
+
 #: 무부하 전류 기준표. hand/measure_baseline.py 가 만든다. **없으면 접촉 감지를 거부한다.**
 DG5F_BASELINE_FILE = _env("RTAUTO_DG5F_BASELINE", "config/dg5f_current_baseline.json")
 

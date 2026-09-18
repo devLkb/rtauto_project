@@ -26,8 +26,8 @@ import numpy as np
 INPUT_ALLOWED = {"points", "cloud_start"}
 
 #: 정답을 만들거나 사람이 읽는 데만 쓰는 것. **입력에 넣으면 안 된다.**
-LABEL_ONLY = {"pose_pos", "pose_quat", "pose_rate", "pose_object", "cloud_object",
-              "frame", "made_from"}
+LABEL_ONLY = {"pose_pos", "pose_quat", "pose_rate", "pose_tilt", "pose_object",
+              "cloud_object", "frame", "made_from"}
 
 _fail = 0
 

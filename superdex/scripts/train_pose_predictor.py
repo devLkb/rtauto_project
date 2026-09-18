@@ -41,6 +41,10 @@ from pathlib import Path
 import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "config"))
+
+import rtauto_config as cfg  # noqa: E402  (기준값의 유일한 출처 — 원칙 1)
+
 RESULTS_DIR = REPO_ROOT / "superdex" / "results"
 
 #: 한 점 덩어리에서 뽑아 쓸 점 개수. 장마다 점 수가 달라 맞춰 준다(실측 168~468개).
@@ -50,6 +54,15 @@ POINTS_PER_SAMPLE = 256
 #: 한쪽으로 몰면 잘못 가르치게 된다. 첫 채점표는 시드가 3개라 사이값이 아예 없었다.
 GOOD_RATE = 0.99
 BAD_RATE = 0.01
+
+#: 잡은 뒤 물체가 이보다 많이 돌아가면, **잡히더라도 고르고 싶지 않은 자세**로 본다.
+#: 정본은 config 하나뿐이다(숫자를 여기 베끼지 않는다).
+#:
+#: ⚠️ **그런 자세를 버리지 않고 "나쁜 예"로 넣는다.** 버리면 표본이 124개에서 42개로
+#:    줄어 학습할 거리가 모자란다(2026-09-18 실측). 자리를 옮기면 표본 수는 그대로이고
+#:    정답만 바뀐다 — 그리고 "잡히긴 하는데 돌아가는 자세" 와 "깔끔하게 잡히는 자세" 를
+#:    가르는 것이야말로 모양을 제대로 봐야 풀리는 문제다.
+MAX_TILT_DEG = cfg.GRASP_GOOD_TILT_DEG
 
 
 def _features(points, pose_pos, pose_quat):
@@ -71,6 +84,10 @@ def load_pairs(path):
     pose_pos = data["pose_pos"].astype(np.float32)
     pose_quat = data["pose_quat"].astype(np.float32)
     rate = data["pose_rate"].astype(np.float32)
+    # 기울기가 없는 옛 파일도 읽히게 한다 — 없으면 "안 돌아간 것" 으로 둬서
+    # 예전과 똑같이 동작한다(조용히 달라지지 않게).
+    tilt = (data["pose_tilt"].astype(np.float32) if "pose_tilt" in data.files
+            else np.zeros_like(rate))
     pose_obj = data["pose_object"]
 
     clouds_by_obj = {}
@@ -83,7 +100,9 @@ def load_pairs(path):
         if BAD_RATE < r < GOOD_RATE:
             continue                      # 애매한 것은 뺀다
         name = str(pose_obj[k])
-        label = 1.0 if r >= GOOD_RATE else 0.0
+        # 좋은 자세 = 잡히고 **그리고** 잡은 뒤 별로 안 돌아간다.
+        # 잡히지만 많이 돌아가는 자세는 버리지 않고 **나쁜 예**로 넣는다.
+        label = 1.0 if (r >= GOOD_RATE and float(tilt[k]) <= MAX_TILT_DEG) else 0.0
         for cloud in clouds_by_obj.get(name, []):
             cloud_f, pose_f = _features(cloud, pose_pos[k], pose_quat[k])
             samples.append((cloud_f, pose_f.astype(np.float32), label, name))
@@ -184,6 +203,8 @@ def main() -> int:
     print("물체     : {}".format(", ".join(objects)))
     print("입력     : 점 좌표 {}개 + 자세 7개 — **그 밖에는 없다** (§7-3)".format(
         POINTS_PER_SAMPLE))
+    print("좋은 자세: 잡히고(성공률 {:.0%} 이상) **그리고** 잡은 뒤 {:.0f}도 이하로 돌아간 것".format(
+        GOOD_RATE, MAX_TILT_DEG))
     print("채점 방식: 물체 하나를 빼고 배운 뒤 **뺀 물체로** 시험한다")
     print()
 

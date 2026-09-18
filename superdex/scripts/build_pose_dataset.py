@@ -156,7 +156,10 @@ def main() -> int:
     ap.add_argument("--views", type=int, default=12, help="물체당 카메라 방향 수")
     ap.add_argument("--standoff", type=float, default=0.18, help="카메라 거리(m)")
     ap.add_argument("--good-rate", type=float, default=0.99,
-                    help="이 이상이면 '좋은 자세' 로 본다")
+                    help="이 이상이면 '잡히는 자세' 로 본다")
+    ap.add_argument("--max-tilt", type=float, default=cfg.GRASP_GOOD_TILT_DEG,
+                    help="잡은 뒤 돌아간 각도가 이 이하여야 '고를 만한 자세'. "
+                         "기본값은 config 의 GRASP_GOOD_TILT_DEG")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
@@ -182,13 +185,15 @@ def main() -> int:
     print("채점표   : {} (물체 {}종)".format(args.table, len(by_object)))
     print("카메라   : 방향 {}개, 거리 {:.2f} m, 시야 {:.0f}도, {}x{}".format(
         len(dirs), args.standoff, fov, width, height))
-    print("좋은 자세 기준: 성공률 {:.0%} 이상".format(args.good_rate))
+    print("좋은 자세 기준: 성공률 {:.0%} 이상 **그리고** 잡은 뒤 돌아간 각도 {:.0f}도 이하".format(
+        args.good_rate, args.max_tilt))
     print()
 
     from dg5f_grasp_env import Dg5fGraspEnv
 
     clouds, cloud_start, cloud_object = [], [0], []
     pose_pos, pose_quat, pose_rate, pose_object = [], [], [], []
+    pose_tilt = []      # 잡은 뒤 물체가 돌아간 각도(도). 정답 만드는 데만 쓴다
 
     for name, obj_rows in by_object.items():
         prefab, actor, ref = OBJECTS[name]
@@ -207,8 +212,13 @@ def main() -> int:
                 pose_pos.append(pos)
                 pose_quat.append(quat)
                 pose_rate.append(float(r["rate"]))
+                # 기울기가 없는 칸(성공이 하나도 없던 자세)은 매우 큰 값으로 둔다 —
+                # 어차피 성공률로 이미 나쁜 자세로 갈리므로 정답이 바뀌지 않는다.
+                tilt = r.get("tilt_median_deg")
+                pose_tilt.append(999.0 if tilt is None else float(tilt))
                 pose_object.append(name)
-                good += int(r["rate"] >= args.good_rate)
+                good += int(r["rate"] >= args.good_rate
+                            and tilt is not None and tilt <= args.max_tilt)
 
             # --- 입력: 여러 방향에서 본 점 덩어리 ----------------------------
             env.place = np.asarray(obj_rows[0]["place"], dtype=float)
@@ -242,6 +252,7 @@ def main() -> int:
         pose_pos=np.asarray(pose_pos, dtype=np.float32),
         pose_quat=np.asarray(pose_quat, dtype=np.float32),
         pose_rate=np.asarray(pose_rate, dtype=np.float32),
+        pose_tilt=np.asarray(pose_tilt, dtype=np.float32),
         pose_object=np.asarray(pose_object),
         frame=np.asarray("object"),
         made_from=np.asarray(str(args.table)),
@@ -251,9 +262,15 @@ def main() -> int:
     print("=" * 60)
     print("점 덩어리 {}장 (점 {}개), 자세 {}개".format(
         len(cloud_object), len(all_points), len(pose_object)))
-    good_total = int((np.asarray(pose_rate) >= args.good_rate).sum())
-    print("그중 좋은 자세 {}개 ({:.0f}%)".format(
-        good_total, 100.0 * good_total / max(1, len(pose_rate))))
+    rate_arr = np.asarray(pose_rate)
+    tilt_arr = np.asarray(pose_tilt)
+    held = int((rate_arr >= args.good_rate).sum())
+    good_total = int(((rate_arr >= args.good_rate) & (tilt_arr <= args.max_tilt)).sum())
+    print("잡히는 자세 {}개 / 그중 **덜 돌아가는(고를 만한) 자세 {}개** ({:.0f}%)".format(
+        held, good_total, 100.0 * good_total / max(1, len(pose_rate))))
+    if good_total < 2 * len(by_object):
+        print("⚠️ 물체당 좋은 자세가 평균 2개 미만이다 — 학습할 거리가 모자랄 수 있다.")
+        print("   .env 의 RTAUTO_GRASP_GOOD_TILT_DEG 를 8~10 으로 올려 보라.")
     print("좌표 기준: 물체 기준 (점 덩어리·자세 둘 다)")
     print("저장: {}".format(out_path))
     print("=" * 60)

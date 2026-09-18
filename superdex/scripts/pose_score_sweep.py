@@ -209,7 +209,13 @@ def report(path):
     print("-" * 58)
     for name in objects:
         print("  [{}]".format(name))
-        top = sorted(by_obj[name], key=lambda r: (-r["rate"], -r["tips_best_median"]))[:3]
+        def _tilt(r):
+            v = r.get("tilt_median_deg")
+            return 999.0 if v is None else float(v)
+
+        # 잡히는 것 먼저, 그다음 **덜 돌아간 것** 먼저 (config 의 GRASP_GOOD_TILT_DEG 참고)
+        top = sorted(by_obj[name],
+                     key=lambda r: (-r["rate"], _tilt(r), -r["tips_best_median"]))[:3]
         for r in top:
             x, _, z = r["place"]
             tilt = r.get("tilt_median_deg")
@@ -249,6 +255,24 @@ def report(path):
     sets = [ok[name] for name in objects]
     shared = set.intersection(*sets) if sets else set()
     any_ok = set.union(*sets) if sets else set()
+    # 기울기까지 본 "고를 만한 자세" 가 물체마다 몇 개나 남는지 — 학습 표본이 되는 수다
+    thr = cfg.GRASP_GOOD_TILT_DEG
+    print("기울기 {:.0f}도 이하까지 따지면 (config GRASP_GOOD_TILT_DEG)".format(thr))
+    print("-" * 58)
+    thin = []
+    for name in objects:
+        n = sum(1 for r in by_obj[name]
+                if r["rate"] >= 0.99 and r.get("tilt_median_deg") is not None
+                and r["tilt_median_deg"] <= thr)
+        allgood = sum(1 for r in by_obj[name] if r["rate"] >= 0.99)
+        print("  {:<12s} {:2d}개 (잡히는 자세 {:2d}개 중)".format(name, n, allgood))
+        if n < 2:
+            thin.append(name)
+    if thin:
+        print("  ⚠️ {}개 물체는 고를 만한 자세가 2개 미만이다: {}".format(len(thin), ", ".join(thin)))
+        print("     학습이 안 되면 .env 의 RTAUTO_GRASP_GOOD_TILT_DEG 를 8~10 으로 올려 본다.")
+    print()
+
     print("모든 물체에 다 통하는 자세 : {}개 / {}개".format(len(shared), len(poses)))
     for k in sorted(shared):
         print("    앞 {:.2f} m  옆 {:.2f} m  높이 {:.2f} m  {}".format(

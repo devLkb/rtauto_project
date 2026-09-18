@@ -140,16 +140,24 @@ def main() -> None:
     if args.from_table:
         import json
         rows = json.loads(Path(args.from_table).read_text(encoding="utf-8"))["rows"]
+        # 좋은 순서 = 잡히는 것 먼저, 그다음 **덜 돌아간 것** 먼저.
+        # (기울기가 없는 옛 채점표도 읽히게 999도로 둔다)
+        def _tilt(r):
+            v = r.get("tilt_median_deg")
+            return 999.0 if v is None else float(v)
+
         mine = sorted((r for r in rows if r["object"] == args.object),
-                      key=lambda r: (-r["rate"], -r["tips_best_median"]))
+                      key=lambda r: (-r["rate"], _tilt(r), -r["tips_best_median"]))
         if not mine:
             raise SystemExit("채점표에 '{}' 자세가 없다: {}".format(
                 args.object, args.from_table))
         pick = mine[min(args.rank, len(mine) - 1)]
         args.place = ",".join(str(v) for v in pick["place"])
         args.place_rot = ",".join(str(v) for v in pick["place_rot"])
-        table_note = "채점표가 적어 둔 성공률 {:.0%} ({}, 지문 {:.0f}개)".format(
-            pick["rate"], pick["rot_name"], pick["tips_best_median"])
+        tilt = pick.get("tilt_median_deg")
+        table_note = "채점표가 적어 둔 성공률 {:.0%} ({}, 지문 {:.0f}개, 잡은 뒤 {} 돌아감)".format(
+            pick["rate"], pick["rot_name"], pick["tips_best_median"],
+            "{:.0f}도".format(tilt) if tilt is not None else "각도 기록 없음")
 
     from dg5f_grasp_env import Dg5fGraspEnv
     from superdex.physics.viewer import Viewer, ViewerCfg
