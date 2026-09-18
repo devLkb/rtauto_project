@@ -229,6 +229,12 @@ def evaluate(torch, model, samples, rng, device):
     return acc, f1, n
 
 
+#: ⚠️ **좋은 자세가 0개인 물체는 채점에서 뺀다.** 어떤 방법을 써도 무조건 실패라서
+#: 평균만 깎고 방법끼리의 차이를 가리지 못한다. 대신 **몇 종이 그랬는지 따로 적는다** —
+#: 숨기는 것이 아니라 "이 물체는 지금 기준으로는 아예 못 잡는다" 는 별개의 사실이다.
+#: (2026-09-18: sphere 는 둥글어 손 안에서 구르고, duck_lamp 는 물렁해 전부 5도를 넘었다)
+
+
 def rank_poses(torch, model, samples, rng, device, topk=(1, 3)):
     """**실제로 쓸 방식 그대로 채점한다** — 후보를 전부 매기고 위에서 몇 개를 고른다.
 
@@ -310,6 +316,7 @@ def main() -> int:
 
     PosePredictor = make_model(torch, nn)
     rows = []
+    impossible = []
     t0 = time.perf_counter()
 
     if args.fit_check:
@@ -344,6 +351,11 @@ def main() -> int:
         tr_acc, tr_f1, _ = evaluate(torch, model, train, rng, device)
         te_acc, te_f1, n = evaluate(torch, model, test, rng, device)
         top, n_poses, chance = rank_poses(torch, model, test, rng, device)
+        if chance <= 0.0:
+            # 좋은 자세가 0개인 물체 — 어떤 방법도 무조건 실패라 평균만 깎는다(위 주석)
+            impossible.append(held_out)
+            print("  [{:<10s}] — 좋은 자세가 0개라 채점에서 뺀다".format(held_out), flush=True)
+            continue
         rows.append((held_out, tr_acc, tr_f1, te_acc, te_f1, n, top[1], top[3], chance))
         print("  [{:<10s}] 배운 것 {:.0%}(F1 {:.2f}) | 안 배운 물체 {:.0%}(F1 {:.2f}) | "
               "**고른 자세가 좋았나** 1등 {} / 3등 안 {}  (후보 {}개, 아무거나 찍으면 {:.0%})".format(
@@ -369,6 +381,9 @@ def main() -> int:
         print("  3등 안에 좋은 자세가 있던 물체      : {:.0%} ({}종 중 {}종)".format(
             top3, len(rows), int(round(top3 * len(rows)))))
         print("  아무거나 찍었을 때                 : {:.0%}".format(chance))
+        if impossible:
+            print("  ⚠️ 좋은 자세가 0개라 뺀 물체 {}종: {}".format(
+                len(impossible), ", ".join(impossible)))
         print()
         base = float(labels.mean())
         # ⚠️ 어느 쪽으로 찍는 게 유리한지 **정답 비율을 보고 정한다.** 전에는 비율과

@@ -90,6 +90,12 @@ def score_pose(points_obj, palm_pos, palm_quat):
     return inside - off
 
 
+#: ⚠️ **좋은 자세가 0개인 물체는 채점에서 뺀다.** 어떤 방법을 써도 무조건 실패라서
+#: 평균만 깎고 방법끼리의 차이를 가리지 못한다. 대신 **몇 종이 그랬는지 따로 적는다** —
+#: 숨기는 것이 아니라 "이 물체는 지금 기준으로는 아예 못 잡는다" 는 별개의 사실이다.
+#: (2026-09-18: sphere 는 둥글어 손 안에서 구르고, duck_lamp 는 물렁해 전부 5도를 넘었다)
+
+
 def load(path):
     data = np.load(path, allow_pickle=True)
     pts = data["points"].astype(np.float64)
@@ -125,6 +131,7 @@ def main() -> int:
     print()
 
     hit1, hit3, chance1, chance3 = [], [], [], []
+    impossible = []
     for name in objects:
         idx = [k for k, o in enumerate(pose_obj) if o == name]
         label = np.array([1.0 if (rate[k] >= args.good_rate and tilt[k] <= args.max_tilt)
@@ -138,6 +145,10 @@ def main() -> int:
         top1 = float(label[order[0]] >= 0.5)
         top3 = float(label[order[:3]].max() >= 0.5)
         n, g = len(idx), int(label.sum())
+        if g == 0:
+            impossible.append(name)
+            print("  [{:<12s}] — 좋은 자세가 0개라 채점에서 뺀다 (후보 {}개)".format(name, n))
+            continue
         c1 = g / n
         c3 = 1.0 - (comb(n - g, 3) / comb(n, 3) if n - g >= 3 else 0.0)
         hit1.append(top1)
@@ -151,11 +162,17 @@ def main() -> int:
     print("=" * 70)
     print("**계산 규칙** — 후보를 다 매기고 위에서 고르기")
     print("  1등으로 고른 자세가 좋았던 물체: {:.0%} ({}종 중 {}종)".format(
-        np.mean(hit1), len(objects), int(sum(hit1))))
+        np.mean(hit1), len(hit1), int(sum(hit1))))
     print("  3등 안에 좋은 자세가 있던 물체 : {:.0%} ({}종 중 {}종)".format(
-        np.mean(hit3), len(objects), int(sum(hit3))))
+        np.mean(hit3), len(hit3), int(sum(hit3))))
     print("  아무거나 1개 찍기              : {:.0%}".format(np.mean(chance1)))
     print("  아무거나 3개 찍기              : {:.0%}".format(np.mean(chance3)))
+    if impossible:
+        print()
+        print("  ⚠️ 좋은 자세가 0개라 뺀 물체 {}종: {}".format(
+            len(impossible), ", ".join(impossible)))
+        print("     (지금 기준 — 잡히고 **그리고** 5도 이하로만 돌아가는 자세 — 으로는")
+        print("      이 물체들을 아예 못 잡는다. 어떤 방법을 써도 실패다)")
     print("=" * 70)
     return 0
 
