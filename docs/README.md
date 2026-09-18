@@ -38,6 +38,7 @@ Unity 는 버려진 게 아니라 **디지털 트윈·시각화·ROS2 통합**�
 | [`GLOSSARY.md`](GLOSSARY.md) | 용어를 어떻게 적을지 정할 때. **표기의 정본** |
 | [`GRASP_POINT_ARCHITECTURE.md`](GRASP_POINT_ARCHITECTURE.md) | "어디를 잡을지 스스로 정하게" 하는 구조를 왜 이렇게 골랐는지. **2026-09-10 채택됨** — 계약 자체는 위 `RL_POLICY_REDESIGN.md` v6 에 들어갔고, 이 문서는 **고른 이유의 기록**이다 |
 | [`../ai_festa_plan.md`](../ai_festa_plan.md) | **11월 전시** 준비. 기한이 있는 유일한 묶음이다 |
+| [`advice/`](advice/) | **바깥 조언자에게 물어서 받은 답의 전문.** 요약은 `claudeDocs/daily/` 에 있고 여기엔 줄이지 않은 원문을 둔다. ⚠️ **조언이지 정본이 아니다** — 우리가 직접 돌려서 확인하기 전까지는 |
 
 ## 4. 코드가 무슨 일을 하는지 — [`modules/`](modules/README.md)
 
