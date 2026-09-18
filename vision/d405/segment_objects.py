@@ -97,6 +97,8 @@ class ObjectCloud:
     center: np.ndarray          # (3,) 가운데
     size: np.ndarray            # (3,) 가로·세로·깊이 크기
     n_points: int
+    track_id: int = -1          # 장면이 바뀌어도 **같은 물체면 같은 번호** (Tracker 가 매긴다)
+    seen_frames: int = 0        # 몇 장면 연속으로 보였나 — 클수록 믿을 만하다
 
     @property
     def max_side_m(self) -> float:
@@ -222,13 +224,71 @@ def find_objects(points, colors=None, near=None, far=None):
     return objs, rest, "{} / 덩어리 {}개".format(note, len(objs))
 
 
+#: 장면이 바뀔 때 "같은 물체" 로 볼 최대 이동 거리(m). 물체는 가만히 있고 카메라만
+#: 조금 흔들리므로 이 정도면 충분하다. 크게 잡으면 옆 물체와 헷갈린다.
+TRACK_MAX_MOVE_M = 0.05
+
+#: 이 장면 수만큼 안 보이면 그 번호를 버린다. 깊이가 깜빡이므로 한두 장면 빠지는 것은
+#: 흔하다 — 바로 버리면 번호가 계속 바뀐다.
+TRACK_KEEP_MISSING = 8
+
+
+class Tracker:
+    """**같은 물체에 같은 번호**를 계속 준다.
+
+    왜 필요한가
+    -----------
+    덩어리 묶기는 장면마다 처음부터 다시 한다. 그래서 번호가 매번 뒤바뀌어 **화면 색이
+    깜빡거리고**, 더 중요하게는 "아까 그 물체" 를 못 알아본다. 우리 방식이
+    **"보고 → 정하고 → 가고 → 다시 보기"** 이므로, 다시 봤을 때 같은 물체인지 알아야 한다.
+
+    방법은 단순하다: 지난 장면의 물체 가운데와 **가장 가까운 것**에 같은 번호를 준다.
+    물체는 가만히 있고 카메라만 조금 흔들리므로 이것으로 충분하다.
+    """
+
+    def __init__(self, max_move=TRACK_MAX_MOVE_M, keep_missing=TRACK_KEEP_MISSING):
+        self.max_move = float(max_move)
+        self.keep_missing = int(keep_missing)
+        self._next_id = 1
+        self._tracks = {}          # id -> [가운데, 안 보인 장면 수, 본 장면 수]
+
+    def update(self, objs: List[ObjectCloud]) -> List[ObjectCloud]:
+        used = set()
+        for o in objs:
+            best, best_d = None, self.max_move
+            for tid, (center, _missing, _seen) in self._tracks.items():
+                if tid in used:
+                    continue
+                d = float(np.linalg.norm(o.center - center))
+                if d < best_d:
+                    best, best_d = tid, d
+            if best is None:
+                best = self._next_id
+                self._next_id += 1
+                self._tracks[best] = [o.center.copy(), 0, 0]
+            used.add(best)
+            seen = self._tracks[best][2] + 1
+            self._tracks[best] = [o.center.copy(), 0, seen]
+            o.track_id = best
+            o.seen_frames = seen
+
+        for tid in list(self._tracks):
+            if tid in used:
+                continue
+            self._tracks[tid][1] += 1
+            if self._tracks[tid][1] > self.keep_missing:
+                del self._tracks[tid]
+        return objs
+
+
 def describe(objs: List[ObjectCloud]) -> str:
     if not objs:
         return "물체를 못 찾았다"
     lines = []
     for i, o in enumerate(objs[:6]):
-        lines.append("  {}번  점 {:6d}개  거리 {:.3f} m  크기 {:.1f}x{:.1f}x{:.1f} cm".format(
-            i + 1, o.n_points, o.distance_m, *(o.size * 100)))
+        lines.append("  {}번 [{:4s}] 점 {:6d}개  거리 {:.3f} m  크기 {:.1f}x{:.1f}x{:.1f} cm".format(
+            o.track_id if o.track_id > 0 else i + 1, size_verdict(o)[1],
+            o.n_points, o.distance_m, *(o.size * 100)))
     return "\n".join(lines)
 
 
@@ -246,9 +306,24 @@ def _to_points(depth_m, intr, color_img=None):
     return pts, cols, (ys, xs)
 
 
-#: 물체마다 다른 색으로 칠한다(BGR).
-OBJ_COLORS = ((0, 0, 255), (0, 255, 0), (255, 0, 0), (0, 255, 255),
-              (255, 0, 255), (255, 255, 0))
+#: 손이 잡을 수 있는 크기(m). `superdex/scripts/survey_object_assets.py` 의 실측 기준
+#: (최소변 4 cm ~ 최대변 16 cm)에서 왔다. 한쪽만 보이므로 아래쪽은 조금 느슨하게 본다.
+GRASPABLE_MIN_M = 0.03
+GRASPABLE_MAX_M = 0.16
+
+
+def size_verdict(obj: "ObjectCloud"):
+    """덩어리 크기가 **손에 들어가나**. `(색 BGR, 한 글자 표시)`.
+
+    색에 뜻을 준다 — 잘라낸 덩어리가 진짜 잡을 만한 물체인지 한눈에 보이게.
+    (전에는 발견 순서대로 색을 돌려 썼는데, 그건 아무 뜻이 없었다)
+    """
+    big = obj.max_side_m
+    if big > GRASPABLE_MAX_M:
+        return (0, 0, 255), "큼"          # 빨강 — 손보다 크다
+    if big < GRASPABLE_MIN_M:
+        return (255, 128, 0), "작음"      # 파랑 — 지문 1~2개만 닿는다
+    return (0, 255, 0), "잡을만"          # 초록 — 손에 들어간다
 
 
 def main() -> int:
@@ -291,35 +366,41 @@ def main() -> int:
     print()
 
     stream = open_depth(args.width, args.height, color=True)
+    tracker = Tracker()
     win = "물체 잘라내기  (왼쪽: 색 사진   오른쪽: 찾은 물체)"
     try:
         while True:
-            got, intr = stream.frames(count=1, warmup=2)
+            got, intr = stream.frames(count=1, warmup=0)
             if not got:
                 continue
             depth_m, color = got[0]
             pts, cols, (ys, xs) = _to_points(depth_m, intr, None)
             objs, rest, note = find_objects(pts, near=near, far=far)
+            objs = tracker.update(objs)      # 같은 물체는 같은 번호 -> 색이 안 바뀐다
 
             # 찾은 물체를 화면에 칠한다 — 어느 점이 어느 물체인지 보이게
             paint = colorize(depth_m, near, far)
             if objs:
-                # 각 물체의 점을 화면 좌표로 되돌려 칠한다
-                for oi, o in enumerate(objs[:len(OBJ_COLORS)]):
+                # 색은 **번호**로 고른다(점 개수 순이 아니라) — 그래야 안 깜빡인다
+                for oi, o in enumerate(objs[:8]):
                     px = np.round(o.points[:, 0] * intr.fx / o.points[:, 2] + intr.ppx)
                     py = np.round(o.points[:, 1] * intr.fy / o.points[:, 2] + intr.ppy)
                     ok = ((px >= 0) & (px < depth_m.shape[1])
                           & (py >= 0) & (py < depth_m.shape[0]))
-                    paint[py[ok].astype(int), px[ok].astype(int)] = OBJ_COLORS[oi]
+                    paint[py[ok].astype(int), px[ok].astype(int)] = size_verdict(o)[0]
 
             view_c = cv2.resize(color, (640, 480)) if color is not None else np.zeros(
                 (480, 640, 3), np.uint8)
             view_o = cv2.resize(paint, (640, 480), interpolation=cv2.INTER_NEAREST)
             view_c = put_lines(view_c, ["색 사진"])
-            lines = ["찾은 물체 {}개   ({})".format(len(objs), note)]
+            n_ok = sum(1 for o in objs if size_verdict(o)[1] == "잡을만")
+            lines = ["찾은 덩어리 {}개 — 그중 **잡을만한 크기 {}개**".format(len(objs), n_ok),
+                     "초록=잡을만(3~16cm) / 빨강=손보다 큼 / 파랑=너무 작음",
+                     note]
             for i, o in enumerate(objs[:4]):
-                lines.append("  {}번 {:.1f}x{:.1f}x{:.1f} cm  거리 {:.2f} m  점 {}개".format(
-                    i + 1, *(o.size * 100), o.distance_m, o.n_points))
+                lines.append("  {}번 [{}] {:.1f}x{:.1f}x{:.1f} cm  거리 {:.2f} m  연속 {}장면".format(
+                    o.track_id, size_verdict(o)[1], *(o.size * 100),
+                    o.distance_m, o.seen_frames))
             view_o = put_lines(view_o, lines)
             both = np.hstack([view_c, view_o])
 
