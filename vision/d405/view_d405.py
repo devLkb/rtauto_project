@@ -65,6 +65,9 @@ RESULTS_DIR = REPO_ROOT / "vision" / "d405" / "results"
 #: 창에 띄울 크기. 너무 크면 느리고 너무 작으면 안 보인다.
 VIEW_W, VIEW_H = 640, 360
 
+#: 사진 한 장만 찍을 때(`--save-only`) 버리는 장면 수. 시간 다듬기가 채워질 시간을 준다.
+SETTLE_FRAMES = 20
+
 
 def colorize(depth_m, near, far):
     """깊이(m) → 보기 좋은 색. **값이 없는 곳은 검정**으로 남긴다.
@@ -185,8 +188,12 @@ def show_3d(pts, cols, near, far, max_points=40000):
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="D405 실시간 보기 (원칙 6)")
-    ap.add_argument("--near", type=float, default=None, help="색칠 시작 거리(m)")
-    ap.add_argument("--far", type=float, default=None, help="색칠 끝 거리(m)")
+    ap.add_argument("--near", type=float, default=None,
+                    help="색칠 시작 거리(m). 안 주면 **지금 장면에 맞춰 자동**")
+    ap.add_argument("--far", type=float, default=None,
+                    help="색칠 끝 거리(m). 안 주면 자동")
+    ap.add_argument("--fixed-range", action="store_true",
+                    help="색 범위를 설정값(D405_NEAR_M~FAR_M)으로 고정한다")
     ap.add_argument("--width", type=int, default=848)
     ap.add_argument("--height", type=int, default=480)
     ap.add_argument("--save-only", action="store_true",
@@ -204,6 +211,11 @@ def main() -> int:
         print("필요한 것이 없다: {}".format(e))
         return 2
 
+    # ⚠️ **색 범위는 성능이 아니라 보기다.** RealSense Viewer 는 장면에 맞춰 색 범위를
+    #    자동으로 늘리는데, 우리가 범위를 고정해 두면 그 밖은 한 색으로 눌려 "Viewer 가
+    #    더 잘 본다" 처럼 보인다(2026-09-18 사용자 지적). 실제로 재 보면 잡히는 화소
+    #    비율은 같다. 그래서 **기본을 자동**으로 바꾸고, 고정하려면 --fixed-range 를 준다.
+    auto_range = (args.near is None and args.far is None and not args.fixed_range)
     near = cfg.D405_NEAR_M if args.near is None else args.near
     far = cfg.D405_FAR_M if args.far is None else args.far
 
@@ -253,7 +265,13 @@ def main() -> int:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     print("=== D405 실시간 보기 ===")
     print("깊이 색: 가까움 빨강 → 멂 파랑,  **검정 = 거리를 못 잰 곳**")
-    print("색칠 범위 {:.2f} ~ {:.2f} m".format(near, far))
+    if auto_range:
+        print("색칠 범위: **지금 장면에 맞춰 자동** (RealSense Viewer 와 같은 방식)")
+        print("  고정하려면 --fixed-range 또는 --near/--far 를 줄 것")
+    else:
+        print("색칠 범위 {:.2f} ~ {:.2f} m (고정)".format(near, far))
+    print("🛑 **구멍 메우기는 안 쓴다** — 화면이 Viewer 보다 덜 차 보일 수 있는데,")
+    print("   그 빈 곳은 **실제로 거리를 못 잰 곳**이다. 지어내지 않는다.")
     print("키: q 끝내기 / s 사진 저장 / c 점 덩어리 저장 / 3 3차원 보기 / r 범위 다시 잡기")
     if args.compare:
         print("비교 모드: 왼쪽 색 사진 / 가운데 **날것** / 오른쪽 **다듬기 켬**")
@@ -283,6 +301,16 @@ def main() -> int:
                 filt_m = raw_m
             depth_m = raw_m if args.raw else filt_m
 
+            if auto_range:
+                # 지금 장면의 거리 분포에 맞춘다. 양 끝 몇 %는 버려야 튀는 값에 안 끌린다.
+                got_d = depth_m[depth_m > 0]
+                if got_d.size > 500:
+                    lo, hi = np.percentile(got_d, (2, 92))
+                    if hi - lo > 0.02:
+                        # 갑자기 바뀌면 눈이 피로하므로 조금씩 따라간다
+                        near += (float(lo) - near) * 0.25
+                        far += (float(hi) - far) * 0.25
+
             dcol = colorize(depth_m, near, far)
             h, w = depth_m.shape
             cy, cx = h // 2, w // 2
@@ -298,6 +326,7 @@ def main() -> int:
             view_c = put_lines(view_c, ["색 사진 (사람 눈으로 보는 것)"])
             view_d = put_lines(view_d, [
                 "깊이 — 가까움 빨강 / 멂 파랑 / **검정 = 거리를 못 잼**",
+                "실제로 본 값만 표시 (구멍 메우기 안 씀)",
                 ("가운데 십자 거리 {:.3f} m".format(center) if center > 0
                  else "가운데 십자: 거리를 못 잼"),
                 "값 있는 화소 {:.0%}   이 범위 안 {:.0%}".format(valid, in_band),
@@ -320,6 +349,12 @@ def main() -> int:
                 both = np.hstack([view_c, rcol, view_d])
             else:
                 both = np.hstack([view_c, view_d])
+
+            if args.save_only and frames_seen <= SETTLE_FRAMES:
+                # ⚠️ **바로 찍으면 안 된다.** 시간 다듬기(앞뒤 장면 맞추기)는 장면이
+                #    몇 장 쌓여야 값을 내놓는다. 첫 장면을 찍으면 값이 있는 화소가
+                #    14 % 밖에 안 나온다(2026-09-18 실측) — 실제 성능이 아니다.
+                continue
 
             if args.save_only:
                 stem = args.note or time.strftime("%Y%m%d_%H%M%S")
