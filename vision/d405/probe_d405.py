@@ -139,20 +139,36 @@ def depth_report(stack, scale, near, far, note=""):
     # 한 장면 안에 가까운 것부터 먼 것까지 다 들어 있으므로, **물체를 옮기지 않고도**
     # "거리가 멀어지면 얼마나 나빠지나" 를 잴 수 있다. 이 곡선이 D405_NEAR_M /
     # D405_FAR_M 을 정하는 근거다(지금 값 0.07~0.50 m 는 제조사 사양이고 실측이 아니다).
+    # ⚠️ **두 가지를 따로 봐야 한다 (2026-09-18, 사용자가 화면에서 발견).**
+    #   ① 흔들림  : 값이 **나오는** 화소가 얼마나 일정한가
+    #   ② 깜빡임  : 값이 **나오다 말다** 하는가
+    # 처음에는 ①만 쟀는데, 그러면 "값이 늘 나오는 화소" 만 대상이 되어 ②를 통째로
+    # 놓친다. 사용자가 화면에서 "0.3 m 는 되어야 안정적으로 보인다" 를 발견해 드러났다.
+    # 어느 한쪽만 좋아도 못 쓴다 — 값이 정확해도 깜빡이면 매번 다른 답이 나온다.
     bands = []
-    if always.any():
-        med = np.median(d[:, always], axis=0)          # 화소마다 거리 중앙값
-        std = d[:, always].std(axis=0)                 # 화소마다 흔들림
-        edges = [0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.75, 1.0, 1.5, 2.0, 99.0]
+    any_valid = valid.any(axis=0)                      # 한 번이라도 값이 나온 화소
+    if any_valid.any():
+        d_any = d[:, any_valid]
+        v_any = valid[:, any_valid]
+        # 거리는 값이 있었던 장면만 모아서 낸다
+        med = np.array([np.median(col[m]) if m.any() else np.nan
+                        for col, m in zip(d_any.T, v_any.T)])
+        avail = v_any.mean(axis=0)                     # 몇 %의 장면에서 값이 나왔나
+        edges = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.75, 1.0, 1.5, 99.0]
         for lo, hi in zip(edges[:-1], edges[1:]):
-            sel = (med >= lo) & (med < hi)
+            sel = np.isfinite(med) & (med >= lo) & (med < hi)
             n = int(sel.sum())
             if n < 50:                                  # 표본이 적으면 안 믿는다
                 continue
+            # 흔들림은 **늘 값이 나온 화소만** 대상으로 낸다(깜빡이는 화소의 표준편차는
+            # 뜻이 없다). 그래서 두 지표의 대상이 다르다 — 그래서 따로 적는다.
+            steady = sel & (avail >= 0.999)
+            jit = (float(np.median(d_any[:, steady].std(axis=0)) * 1000.0)
+                   if steady.sum() >= 20 else float("nan"))
             bands.append(dict(lo_m=lo, hi_m=hi, pixels=n,
-                              jitter_mm=float(np.median(std[sel]) * 1000.0),
-                              jitter_rel_pct=float(
-                                  np.median(std[sel] / np.maximum(med[sel], 1e-6)) * 100.0)))
+                              avail_pct=float(np.mean(avail[sel]) * 100.0),
+                              steady_pct=float(np.mean(avail[sel] >= 0.999) * 100.0),
+                              jitter_mm=jit))
 
     return dict(note=note, valid_frac=frac, in_band_frac=in_band,
                 median_dist_m=dist, jitter_mm=jitter_mm, bands=bands,
@@ -306,16 +322,19 @@ def main() -> int:
                 rep["min_m"], rep["max_m"]))
             print()
             if rep.get("bands"):
-                print("  --- 거리별 흔들림 (같은 자리를 여러 장 봤을 때) ---")
-                print("    {:>14s} {:>9s} {:>10s} {:>9s}".format(
-                    "거리(m)", "화소수", "흔들림mm", "거리대비%"))
+                print("  --- 거리별 품질 ---")
+                print("    값이 나오나(깜빡임)와 값이 일정한가(흔들림)는 **다른 문제**다.")
+                print("    {:>14s} {:>8s} {:>10s} {:>10s} {:>10s}".format(
+                    "거리(m)", "화소수", "값나온비율", "늘나온비율", "흔들림mm"))
                 for b in rep["bands"]:
                     hi = "이상" if b["hi_m"] > 90 else "{:.2f}".format(b["hi_m"])
-                    print("    {:>6.2f} ~ {:>5s} {:>9d} {:>10.2f} {:>8.2f}%".format(
-                        b["lo_m"], hi, b["pixels"], b["jitter_mm"], b["jitter_rel_pct"]))
+                    jit = ("{:>10.2f}".format(b["jitter_mm"])
+                           if b["jitter_mm"] == b["jitter_mm"] else "{:>10s}".format("-"))
+                    print("    {:>6.2f} ~ {:>5s} {:>8d} {:>9.0f}% {:>9.0f}% {}".format(
+                        b["lo_m"], hi, b["pixels"], b["avail_pct"], b["steady_pct"], jit))
                 print()
-                print("  👉 파지에 쓰는 거리(약 0.15~0.30 m)의 흔들림을 보라.")
-                print("     이 값이 곧 '물체 위치를 얼마나 정확히 알 수 있나' 다.")
+                print("  👉 **늘나온비율**이 낮은 거리는 값이 나오다 말다 한다 — 그 거리에서는")
+                print("     매번 다른 답이 나오므로 흔들림이 작아도 못 쓴다.")
                 print()
 
             if args.cloud:

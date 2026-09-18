@@ -192,6 +192,9 @@ def main() -> int:
     ap.add_argument("--save-only", action="store_true",
                     help="창을 안 띄우고 사진만 저장한다(원격 접속 등 창이 안 될 때)")
     ap.add_argument("--note", default="", help="무엇을 찍는지 (파일 이름에 들어간다)")
+    ap.add_argument("--compare", action="store_true",
+                    help="**날것과 다듬기 켠 것을 나란히** 보여 준다 (무엇이 좋아졌는지 눈으로)")
+    ap.add_argument("--raw", action="store_true", help="다듬기를 끄고 날것만 본다")
     args = ap.parse_args()
 
     try:
@@ -204,20 +207,61 @@ def main() -> int:
     near = cfg.D405_NEAR_M if args.near is None else args.near
     far = cfg.D405_FAR_M if args.far is None else args.far
 
-    pipe = rs.pipeline()
-    conf = rs.config()
-    conf.enable_stream(rs.stream.depth, args.width, args.height, rs.format.z16, 30)
-    conf.enable_stream(rs.stream.color, args.width, args.height, rs.format.bgr8, 30)
-    profile = pipe.start(conf)
+    def start_once():
+        pipe = rs.pipeline()
+        conf = rs.config()
+        conf.enable_stream(rs.stream.depth, args.width, args.height, rs.format.z16, 30)
+        conf.enable_stream(rs.stream.color, args.width, args.height, rs.format.bgr8, 30)
+        profile = pipe.start(conf)
+        pipe.wait_for_frames(4000)             # 진짜 영상이 오는지 확인
+        return pipe, profile
+
+    try:
+        pipe, profile = start_once()
+    except Exception:
+        # ⚠️ 파란 화면·강제 종료 뒤에는 **장치는 보이는데 영상이 안 오는** 상태로 남는다
+        #    (2026-09-18 실측). 그때는 재설정하면 살아난다.
+        print("카메라가 영상을 안 준다 — 재설정하고 다시 연다...")
+        devs = list(rs.context().query_devices())
+        if not devs:
+            print("카메라가 안 보인다. USB 를 다시 꽂을 것.")
+            return 2
+        devs[0].hardware_reset()
+        for _ in range(20):
+            time.sleep(1.0)
+            if list(rs.context().query_devices()):
+                break
+        time.sleep(2.0)
+        pipe, profile = start_once()
+
     align = rs.align(rs.stream.color)          # 깊이를 색 사진에 맞춰 겹친다
     scale = profile.get_device().first_depth_sensor().get_depth_scale()
     intr = profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
+
+    # --- 깊이 다듬기 ---------------------------------------------------------
+    # **지어내지 않는 것만** 켠다. 구멍 메우기는 없는 값을 만들어 내므로 안 쓴다 —
+    # 근거와 실측표는 vision/d405/d405_stream.py 머리말.
+    use_filter = not args.raw
+    dec = rs.decimation_filter(2)
+    to_disp, to_depth = rs.disparity_transform(True), rs.disparity_transform(False)
+    spatial, temporal = rs.spatial_filter(), rs.temporal_filter()
+
+    def smooth(frame):
+        return to_depth.process(temporal.process(spatial.process(
+            to_disp.process(dec.process(frame)))))
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     print("=== D405 실시간 보기 ===")
     print("깊이 색: 가까움 빨강 → 멂 파랑,  **검정 = 거리를 못 잰 곳**")
     print("색칠 범위 {:.2f} ~ {:.2f} m".format(near, far))
     print("키: q 끝내기 / s 사진 저장 / c 점 덩어리 저장 / 3 3차원 보기 / r 범위 다시 잡기")
+    if args.compare:
+        print("비교 모드: 왼쪽 색 사진 / 가운데 **날것** / 오른쪽 **다듬기 켬**")
+        print("  -> 검정(못 잰 곳)이 오른쪽에서 얼마나 줄었는지 보면 된다")
+    elif args.raw:
+        print("날것 모드 (다듬기 꺼짐)")
+    else:
+        print("다듬기 켜짐 — 구멍 메우기는 **안 쓴다**(없는 값을 지어내므로)")
     print()
 
     win = "D405  (왼쪽: 색 사진   오른쪽: 깊이)"
@@ -230,8 +274,14 @@ def main() -> int:
             if not d or not c:
                 continue
             frames_seen += 1
-            depth_m = np.asanyarray(d.get_data()).astype(np.float32) * scale
+            raw_m = np.asanyarray(d.get_data()).astype(np.float32) * scale
             color = np.asanyarray(c.get_data())
+            if use_filter or args.compare:
+                sm = smooth(d)
+                filt_m = np.asanyarray(sm.get_data()).astype(np.float32) * scale
+            else:
+                filt_m = raw_m
+            depth_m = raw_m if args.raw else filt_m
 
             dcol = colorize(depth_m, near, far)
             h, w = depth_m.shape
@@ -253,7 +303,23 @@ def main() -> int:
                 "값 있는 화소 {:.0%}   이 범위 안 {:.0%}".format(valid, in_band),
                 "색칠 범위 {:.2f} ~ {:.2f} m".format(near, far),
             ])
-            both = np.hstack([view_c, view_d])
+            if args.compare:
+                rcol = cv2.resize(colorize(raw_m, near, far), (VIEW_W, VIEW_H),
+                                  interpolation=cv2.INTER_NEAREST)
+                rcol = put_lines(rcol, [
+                    "① 날것 (지금까지 쓰던 것)",
+                    "값 있는 화소 {:.0%}".format(float((raw_m > 0).mean())),
+                ])
+                view_d = put_lines(cv2.resize(
+                    colorize(filt_m, near, far), (VIEW_W, VIEW_H),
+                    interpolation=cv2.INTER_NEAREST), [
+                    "② 다듬기 켬 — 지어내지 않음",
+                    "값 있는 화소 {:.0%}".format(float((filt_m > 0).mean())),
+                    "가운데 십자 {:.3f} m".format(center) if center > 0 else "가운데: 못 잼",
+                ])
+                both = np.hstack([view_c, rcol, view_d])
+            else:
+                both = np.hstack([view_c, view_d])
 
             if args.save_only:
                 stem = args.note or time.strftime("%Y%m%d_%H%M%S")
