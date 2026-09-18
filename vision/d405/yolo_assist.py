@@ -57,9 +57,25 @@ CPU 한 장                 —          41 ms       76 ms       **43 ms**
    별도 모델(`mobileclip2_b.ts`, 242 MB)이 필요한데, 그 일은 **미리 한 번만** 하면 된다.
    `make_ready.py` 가 결과를 모델에 구워 11.5 MB 파일 하나로 만든다.
 
-⚠️ **남은 문제는 YOLO 가 아니다.** YOLO 는 "여기 컵이 있다" 를 정확히 말하는데,
-   **흰 종이컵은 거리가 안 잡혀 점 덩어리를 못 만든다**(적외선 무늬를 쏘는 장치가 없어
-   민무늬 면을 못 재는 문제 — 2026-09-18). 조명을 밝히면 나아진다.
+**흰 종이컵 문제 — 거리값이 몇 개 없어도 물체를 낸다** (2026-09-18)
+------------------------------------------------------------------
+YOLO 는 "여기 컵이 있다" 를 정확히 말하는데, **흰 종이컵은 무늬가 없어 거리값이 거의
+안 나온다.** D405 에는 무늬를 쏘는 장치가 없고, 렌즈에 적외선을 막는 필터가 들어 있어
+**적외선 무늬 장치를 사도 안 통한다**(제조사 답변). 그래서 코드 쪽에서 세 가지를 했다.
+
+1. **좌표 환산을 고쳤다.** 깊이 사진은 줄이기 때문에 색 사진의 **절반 크기**인데
+   (640x480 → 320x240) 그 화소 번호를 환산 없이 테두리에 대고 있었다. 화면 가운데
+   있는 컵이 **통째로 버려지고 있었다** — 컵이 안 잡히던 이유의 큰 몫이다.
+2. **여러 장을 합친다** (`--frames`, `depth_stack.py`). 깜빡이는 자리가 매번 달라서,
+   여러 장에서 **한 번이라도 읽힌 값**을 모으면 건지는 양이 늘어난다.
+   구멍 메우기와 달리 **없는 값을 지어내지 않는다.**
+3. **그래도 모자라면 테두리로 계산한다** (`estimate_from_mask`). 거리값이 6개만 있어도
+   그것으로 거리를 정하고, 가로·세로는 **테두리 화소 수 × 거리 ÷ 초점거리**로 낸다.
+   이런 물체는 `estimated=True` 로 표시되고 화면에 **노란 네모 + "추정"** 으로 그려진다 —
+   잡으러 갈지 정할 때 **덜 믿어야 한다.**
+
+⚠️ 그래도 **조명은 여전히 성능을 좌우한다**(값 있는 화소 14 % → 45 %). 위 셋은
+   "어두워도 된다" 는 뜻이 아니라 **값이 듬성듬성해도 버티게** 만든 것이다.
 
 `person` 이 쓸모 있다
 ---------------------
@@ -93,6 +109,8 @@ sys.path.insert(0, str(REPO_ROOT / "config"))
 sys.path.insert(0, str(REPO_ROOT / "vision" / "d405"))
 
 import rtauto_config as cfg  # noqa: E402
+
+import depth_stack  # noqa: E402
 
 RESULTS_DIR = REPO_ROOT / "vision" / "d405" / "results"
 
@@ -151,10 +169,13 @@ class Detection:
         return self.name not in NOT_OBJECT
 
     def contains(self, px, py, shape):
-        """화면 좌표 `(px, py)` 들이 이 물체 안에 드는가.
+        """**색 사진 좌표** `(px, py)` 들이 이 물체 안에 드는가.
 
         **테두리(mask)가 있으면 그것을 쓰고**, 없을 때만 네모 박스로 물러선다.
         박스는 물체 뒤의 배경까지 긁어오므로 테두리 쪽이 훨씬 깨끗하다.
+
+        🛑 **깊이 사진의 화소 번호를 그대로 넣으면 안 된다.** 깊이 사진은 줄이기 때문에
+           색 사진의 절반 크기다(640x480 → 320x240). 환산은 `split_by_boxes` 가 한다.
         """
         x1, y1, x2, y2 = self.box
         in_box = (px >= x1) & (px <= x2) & (py >= y1) & (py <= y2)
@@ -207,20 +228,114 @@ class Detector:
         return out
 
 
-def split_by_boxes(points, pixel_xy, dets, shape, min_points=120):
+#: 덩어리로 묶으려면 점이 이만큼은 있어야 한다.
+CLUSTER_MIN_POINTS = 120
+
+#: 덩어리를 못 만들 때, 거리값이 이만큼이라도 있으면 **테두리로 크기를 계산**한다.
+#: ⚠️ 이게 **흰 종이컵 대책**이다 — YOLO 는 "여기 컵이 있다" 를 정확히 말하는데
+#:    무늬가 없어 거리값이 몇 개밖에 안 나온다(2026-09-18). 그 몇 개로 거리를 정하고,
+#:    가로·세로는 **테두리 화소 수**에서 계산한다. 값을 지어내는 것이 아니라
+#:    **실제로 읽힌 거리 + 실제로 본 테두리**만 쓴다.
+FEW_POINTS_MIN = 6
+
+#: 추정할 때 "이 물체" 로 볼 거리 폭(m). 가장 가까운 값에서 이만큼 안쪽만 쓴다 —
+#: 테두리가 가장자리에서 물고 온 **뒤 배경**을 빼려는 것.
+ESTIMATE_BAND_M = 0.05
+
+#: 추정 물체의 앞뒤 두께를 최소 이만큼으로 본다(m). 한 면만 보이므로 0 이 나올 수 있는데,
+#: 0 이면 크기 판정이 이상해진다.
+ESTIMATE_MIN_DEPTH_M = 0.005
+
+
+def _mask_extent(d, shape):
+    """테두리(없으면 박스)가 **색 사진 좌표**에서 차지하는 범위.
+
+    돌려주는 것: `(가로 화소수, 세로 화소수, 가운데 u, 가운데 v)`
+    """
+    if d.mask is not None:
+        ys, xs = np.nonzero(d.mask > 0.5)
+        if len(xs):
+            h, w = d.mask.shape
+            sx, sy = shape[1] / float(w), shape[0] / float(h)
+            return (float(xs.max() - xs.min() + 1) * sx,
+                    float(ys.max() - ys.min() + 1) * sy,
+                    float(xs.mean() + 0.5) * sx, float(ys.mean() + 0.5) * sy)
+    x1, y1, x2, y2 = d.box
+    return (float(x2 - x1), float(y2 - y1), (x1 + x2) / 2.0, (y1 + y2) / 2.0)
+
+
+def estimate_from_mask(d, inside, intr, shape, depth_shape):
+    """**거리값이 몇 개 없을 때** 테두리와 그 몇 개로 물체 하나를 만든다.
+
+    - **거리**: 있는 값 중 앞쪽 무리의 중앙값 (뒤 배경은 뺀다)
+    - **가로·세로**: 테두리가 차지한 화소 수 × 거리 ÷ 초점거리 — 학교에서 배우는 닮은꼴이다
+    - **앞뒤 두께**: 한 면만 보이므로 잰 값의 폭. 사실상 모른다고 봐야 한다
+
+    돌려주는 것: `ObjectCloud`(`estimated=True` 로 표시된다). 못 하면 `None`.
+    """
+    from segment_objects import ObjectCloud
+
+    if len(inside) < FEW_POINTS_MIN or intr is None:
+        return None
+
+    z = inside[:, 2]
+    band = z <= float(np.percentile(z, 10)) + ESTIMATE_BAND_M
+    if int(band.sum()) < FEW_POINTS_MIN:
+        band = np.ones(len(z), dtype=bool)
+    zz = z[band]
+    z_med = float(np.median(zz))
+
+    u_px, v_px, uc, vc = _mask_extent(d, shape)
+    sx, sy = shape[1] / float(depth_shape[1]), shape[0] / float(depth_shape[0])
+    w_m = (u_px / sx) * z_med / float(intr.fx)
+    h_m = (v_px / sy) * z_med / float(intr.fy)
+    cx = (uc / sx - float(intr.ppx)) * z_med / float(intr.fx)
+    cy = (vc / sy - float(intr.ppy)) * z_med / float(intr.fy)
+    d_m = max(float(zz.max() - zz.min()), ESTIMATE_MIN_DEPTH_M)
+
+    n = int(band.sum())
+    return ObjectCloud(
+        points=inside[band].astype(np.float32),
+        center=np.array([cx, cy, z_med], dtype=np.float64),
+        size=np.array([w_m, h_m, d_m], dtype=np.float64),
+        n_points=n, estimated=True, index=np.flatnonzero(band),
+        why="거리값 {}개뿐 — 테두리로 가로·세로를 계산했다(앞뒤 두께는 모른다)".format(n))
+
+
+def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
+                   min_points=CLUSTER_MIN_POINTS):
     """**YOLO 가 찾은 것들의 점을 따로 떼어낸다.**
 
     테두리(mask)가 있으면 그것으로, 없으면 네모 박스로 가른다.
+
+    ==============  =====================================================
+    `points`         3D 점 (N, 3)
+    `pixel_xy`       그 점들의 **깊이 사진** 화소 번호 `(x들, y들)`
+    `dets`           YOLO 가 찾은 것들
+    `shape`          **색 사진** 크기 `(세로, 가로)` — 박스·테두리가 사는 좌표
+    `depth_shape`    **깊이 사진** 크기 `(세로, 가로)`. 안 주면 색 사진과 같다고 본다
+    `intr`           깊이 사진 기준 초점거리·중심. 있으면 **듬성듬성해도 추정**한다
+    ==============  =====================================================
 
     돌려주는 것: `(박스별 물체 목록, 어느 박스에도 안 든 점)`
 
     같은 점이 두 박스에 겹쳐 들면 **확신이 높은 쪽**에 준다 — 나란히 놓인 컵처럼
     박스가 조금 겹칠 때 점이 양쪽에 중복되지 않게 한다.
+
+    🛑 **좌표계가 둘이다.** 깊이 사진은 줄이기 때문에 색 사진의 절반 크기인데
+       (640x480 → 320x240), 전에는 깊이 화소 번호를 **환산 없이** 테두리에 대고 있었다.
+       그러면 화면 가운데 있는 컵의 점이 테두리 밖으로 밀려나 **통째로 버려진다**
+       (2026-09-18 발견). 여기서 한 번에 환산한다.
     """
-    from segment_objects import ObjectCloud, cluster
+    from segment_objects import cluster
 
     pts = np.asarray(points, dtype=np.float64)
-    px, py = np.asarray(pixel_xy[0], dtype=float), np.asarray(pixel_xy[1], dtype=float)
+    depth_shape = tuple(shape) if depth_shape is None else tuple(depth_shape)
+    sx = shape[1] / float(depth_shape[1])
+    sy = shape[0] / float(depth_shape[0])
+    px = np.asarray(pixel_xy[0], dtype=float) * sx      # 색 사진 좌표로 환산
+    py = np.asarray(pixel_xy[1], dtype=float) * sy
+
     owner = np.full(len(pts), -1, dtype=np.int64)
     best_conf = np.zeros(len(pts))
 
@@ -239,7 +354,8 @@ def split_by_boxes(points, pixel_xy, dets, shape, min_points=120):
         if not d.is_object:
             continue
         sel = owner == i
-        if int(sel.sum()) < min_points:
+        idx_in = np.flatnonzero(sel)
+        if len(idx_in) == 0:
             continue
         inside = pts[sel]
 
@@ -249,23 +365,18 @@ def split_by_boxes(points, pixel_xy, dets, shape, min_points=120):
         #    테두리도 가장자리에서 배경을 조금 물고 온다. 그래서 여기서 **모양으로 한 번
         #    더 나누고 카메라에 가장 가까운 덩어리**만 쓴다 —
         #    물체가 배경보다 앞에 있다는 것은 항상 참이다.
-        pieces = cluster(inside)
-        if not pieces:
-            continue
-        near_piece = min(pieces, key=lambda o: o.distance_m)
-        o = ObjectCloud(points=near_piece.points, center=near_piece.center,
-                        size=near_piece.size, n_points=near_piece.n_points)
+        pieces = cluster(inside) if len(idx_in) >= min_points else []
+        if pieces:
+            o = min(pieces, key=lambda p: p.distance_m)
+        else:
+            # 점이 모자라 덩어리를 못 만든다 — **흰 종이컵이 늘 여기로 온다.**
+            o = estimate_from_mask(d, inside, intr, shape, depth_shape)
+            if o is None:
+                continue
         o.source = "YOLO:{} {:.0%}".format(d.name, d.conf)      # 어디서 나왔는지 남긴다
         objs.append(o)
         # 박스 안 전체가 아니라 **쓴 점만** 소비 처리한다 — 나머지는 모양 쪽이 다시 본다
-        taken = np.zeros(len(pts), dtype=bool)
-        idx_in = np.flatnonzero(sel)
-        # near_piece 의 점이 inside 의 어느 줄인지 되찾는다(좌표로 맞춘다)
-        keep = np.isin(inside.view([('', inside.dtype)] * 3).ravel(),
-                       near_piece.points.astype(inside.dtype).view(
-                           [('', inside.dtype)] * 3).ravel())
-        taken[idx_in[keep]] = True
-        used |= taken
+        used[idx_in[o.index]] = True
 
     # 사람으로 잡힌 박스 안의 점은 **버린다** — 잡으러 가면 안 된다
     for d in dets:
@@ -276,24 +387,31 @@ def split_by_boxes(points, pixel_xy, dets, shape, min_points=120):
     return objs, pts[~used]
 
 
-def find_objects_hybrid(points, pixel_xy, color_bgr, detector, near=None, far=None):
+def find_objects_hybrid(points, pixel_xy, color_bgr, detector, near=None, far=None,
+                        depth_shape=None, intr=None, dets=None):
     """**YOLO 로 먼저 가르고, 남은 곳은 모양으로 나눈다.**
 
-    돌려주는 것: `(물체 목록, 설명 문구)`
+    `depth_shape` 와 `intr` 를 주면 **거리값이 듬성듬성한 물체도** 위치·크기를 낸다.
+    `dets` 를 미리 주면 YOLO 를 **다시 돌리지 않는다**(화면에도 그려야 하므로 한 번만 돈다).
+
+    돌려주는 것: `(물체 목록, 설명 문구, YOLO 가 찾은 것들)`
     """
     from segment_objects import find_objects
 
-    dets = detector.detect(color_bgr) if (detector and detector.ready) else []
-    boxed, rest = split_by_boxes(points, pixel_xy, dets, color_bgr.shape[:2])
+    if dets is None:
+        dets = detector.detect(color_bgr) if (detector and detector.ready) else []
+    boxed, rest = split_by_boxes(points, pixel_xy, dets, color_bgr.shape[:2],
+                                 depth_shape=depth_shape, intr=intr)
 
     shape_objs, _, note = find_objects(rest, near=near, far=far)
-    for o in shape_objs:
-        o.source = "모양"
 
     objs = boxed + shape_objs
     objs.sort(key=lambda o: -o.n_points)
     found = ", ".join("{} {:.0%}".format(d.name, d.conf) for d in dets) or "없음"
-    return objs, "YOLO: {} / 모양으로 추가 {}개 ({})".format(found, len(shape_objs), note)
+    guess = sum(1 for o in objs if o.estimated)
+    extra = " / 거리값이 모자라 추정한 것 {}개".format(guess) if guess else ""
+    return objs, "YOLO: {} / 모양으로 추가 {}개 ({}){}".format(
+        found, len(shape_objs), note, extra), dets
 
 
 # --------------------------------------------------------------------------
@@ -315,6 +433,10 @@ def main() -> int:
     ap.add_argument("--far", type=float, default=None)
     ap.add_argument("--width", type=int, default=640)
     ap.add_argument("--height", type=int, default=480)
+    ap.add_argument("--frames", type=int, default=None,
+                    help="거리 사진 몇 장을 합칠지. **흰 종이컵처럼 값이 깜빡이는 물체**를 "
+                         "건지는 수단이다(지어내지 않는다). 기본: 한 장 찍기는 {}장, "
+                         "실시간은 1장".format(depth_stack.DEFAULT_FRAMES))
     args = ap.parse_args()
 
     if not (args.live or args.save):
@@ -325,6 +447,11 @@ def main() -> int:
     from d405_stream import open_depth
     from segment_objects import Tracker, size_verdict
     from view_d405 import colorize, put_lines
+
+    n_frames = args.frames
+    if n_frames is None:
+        n_frames = depth_stack.DEFAULT_FRAMES if args.save else 1
+    n_frames = max(1, int(n_frames))
 
     near = cfg.D405_NEAR_M if args.near is None else args.near
     far = cfg.D405_FAR_M if args.far is None else args.far
@@ -339,6 +466,9 @@ def main() -> int:
     else:
         print("⚠️ YOLO 를 못 쓴다 ({}) — **모양으로 나누기만 돈다**".format(det.why))
     print("🛑 YOLO 로 갈아타는 것이 아니다. 배운 9종 밖은 모양 쪽이 계속 답을 낸다.")
+    if n_frames > 1:
+        print("거리 사진 {}장을 합친다 — 깜빡이는 화소를 건진다(없는 값은 안 지어낸다). "
+              "⚠️ 카메라가 멈춰 있을 때만 맞다.".format(n_frames))
     print("키: q 끝내기 / s 사진 저장")
     print()
 
@@ -347,14 +477,20 @@ def main() -> int:
     win = "YOLO + 모양  (왼쪽: 색 사진+박스   오른쪽: 나눈 결과)"
     try:
         while True:
-            got, intr = stream.frames(count=1, warmup=0)
+            got, intr = stream.frames(count=n_frames, warmup=0)
             if not got:
                 continue
-            depth_m, color = got[0]
+            depth_m, color = got[-1]
             if color is None:
                 continue
+            stack_note = ""
+            if len(got) > 1:
+                depth_m, st = depth_stack.stack([d for d, _ in got])
+                stack_note = st["message"]
             pts, pix = _to_points(depth_m, intr)
-            objs, note = find_objects_hybrid(pts, pix, color, det, near, far)
+            objs, note, dets = find_objects_hybrid(
+                pts, pix, color, det, near, far,
+                depth_shape=depth_m.shape, intr=intr)
             objs = tracker.update(objs)
 
             paint = colorize(depth_m, near, far)
@@ -368,7 +504,7 @@ def main() -> int:
 
             view_c = cv2.resize(color, (640, 480))
             sx, sy = 640 / color.shape[1], 480 / color.shape[0]
-            for d in det.detect(color) if det.ready else []:
+            for d in dets:
                 x1, y1, x2, y2 = d.box
                 col = (0, 200, 255) if d.is_object else (80, 80, 80)
                 cv2.rectangle(view_c, (int(x1 * sx), int(y1 * sy)),
@@ -378,13 +514,33 @@ def main() -> int:
                             cv2.FONT_HERSHEY_SIMPLEX, 0.45, col, 1)
 
             view_o = cv2.resize(paint, (640, 480), interpolation=cv2.INTER_NEAREST)
+
+            # **추정으로 낸 물체는 점이 몇 개 없어 화면에 거의 안 보인다.** 그래서 네모로
+            # 따로 그려 준다 — 눈으로 확인할 수 있어야 한다(CLAUDE.md 원칙 6).
+            vx, vy = 640 / depth_m.shape[1], 480 / depth_m.shape[0]
+            for o in objs:
+                if not o.estimated:
+                    continue
+                z = max(float(o.center[2]), 1e-6)
+                cu = (o.center[0] * intr.fx / z + intr.ppx) * vx
+                cv_ = (o.center[1] * intr.fy / z + intr.ppy) * vy
+                hw = (o.size[0] / 2) * intr.fx / z * vx
+                hh = (o.size[1] / 2) * intr.fy / z * vy
+                cv2.rectangle(view_o, (int(cu - hw), int(cv_ - hh)),
+                              (int(cu + hw), int(cv_ + hh)), (0, 255, 255), 2)
+                cv2.putText(view_o, "추정", (int(cu - hw), max(12, int(cv_ - hh) - 4)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+
             n_ok = sum(1 for o in objs if size_verdict(o)[1] == "잡을만")
             lines = ["찾은 덩어리 {}개 — 잡을만한 크기 {}개".format(len(objs), n_ok),
-                     "초록=잡을만 / 빨강=큼 / 파랑=작음", note]
+                     "초록=잡을만 / 빨강=큼 / 파랑=작음 / 노란 네모=거리값이 모자라 추정",
+                     note]
+            if stack_note:
+                lines.append(stack_note)
             for o in objs[:4]:
-                lines.append("  {}번 [{}] {:.1f}x{:.1f}x{:.1f} cm  {}".format(
-                    o.track_id, size_verdict(o)[1], *(o.size * 100),
-                    getattr(o, "source", "?")))
+                lines.append("  {}번 [{}] {:.1f}x{:.1f}x{:.1f} cm  {}{}".format(
+                    o.track_id, size_verdict(o)[1], *(o.size * 100), o.source,
+                    "  ← 추정" if o.estimated else ""))
             view_o = put_lines(view_o, lines)
             both = np.hstack([view_c, view_o])
 
@@ -392,11 +548,15 @@ def main() -> int:
                 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
                 stamp = time.strftime("%Y%m%d_%H%M%S")
                 cv2.imwrite(str(RESULTS_DIR / "yolo_{}.png".format(stamp)), both)
+                if stack_note:
+                    print(stack_note)
                 print(note)
                 for o in objs[:8]:
                     print("  {}번 [{}] {:.1f}x{:.1f}x{:.1f} cm  거리 {:.2f} m  {}".format(
                         o.track_id, size_verdict(o)[1], *(o.size * 100),
-                        o.distance_m, getattr(o, "source", "?")))
+                        o.distance_m, o.source))
+                    if o.estimated:
+                        print("        ⚠️ {}".format(o.why))
                 print("저장: {}".format(RESULTS_DIR / "yolo_{}.png".format(stamp)))
                 break
 

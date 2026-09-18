@@ -116,6 +116,15 @@ class ObjectCloud:
     n_points: int
     track_id: int = -1          # 장면이 바뀌어도 **같은 물체면 같은 번호** (Tracker 가 매긴다)
     seen_frames: int = 0        # 몇 장면 연속으로 보였나 — 클수록 믿을 만하다
+    source: str = "모양"        # 어디서 나왔나 — "모양" / "YOLO:cup 89%"
+    #: ⚠️ **크기를 재지 못하고 추정한 것인가.** 흰 종이컵처럼 거리값이 몇 개밖에 안 나오면
+    #:    점으로 크기를 잴 수 없어 **테두리와 거리 하나로 계산**한다(`yolo_assist.py`).
+    #:    잡으러 갈지 정할 때 이 표시를 보고 **덜 믿어야 한다.**
+    estimated: bool = False
+    why: str = ""               # 추정이라면 왜 그랬는지 한 줄
+    #: 이 덩어리가 **원래 점 목록의 몇 번째 줄들**이었나. 값으로 되찾으면 어긋나므로
+    #: 번호를 그대로 들고 다닌다(`_raw_clusters` 주석 참고).
+    index: Optional[np.ndarray] = None
 
     @property
     def max_side_m(self) -> float:
@@ -191,7 +200,12 @@ def remove_plane(points, colors=None):
 
 
 def _raw_clusters(points, cell, min_points):
-    """칸 격자로 한 번 묶는다. 크기 판정 없이 **점 묶음**만 돌려준다."""
+    """칸 격자로 한 번 묶는다. 크기 판정 없이 **점 번호 묶음**만 돌려준다.
+
+    ⚠️ 점 자체가 아니라 **번호(index)** 를 돌려준다. 값을 돌려주면 "이 점이 원래 몇 번째
+       줄이었나" 를 나중에 값 비교로 되찾아야 하는데, float32/float64 를 오가면서 값이
+       미세하게 달라져 **하나도 못 찾는 일**이 실제로 있었다(2026-09-18).
+    """
     from scipy import ndimage
 
     pts = np.asarray(points, dtype=np.float64)
@@ -211,27 +225,29 @@ def _raw_clusters(points, cell, min_points):
     for k in range(1, n + 1):
         sel = per_point == k
         if int(sel.sum()) >= min_points:
-            out.append(pts[sel])
+            out.append(np.flatnonzero(sel))
     return out
 
 
-def _split_if_too_big(chunk, cell, min_points, depth=0):
+def _split_if_too_big(pts, idx, cell, min_points, depth=0):
     """손보다 큰 묶음이면 **더 촘촘한 칸으로 다시 묶어 본다.**
 
     쪼개지면 쪼갠 것을 쓰고, 더 못 쪼개면 그대로 둔다(억지로 자르지 않는다).
+    `idx` 는 `pts` 안에서의 점 번호이고, 돌려주는 것도 같은 기준의 번호다.
     """
+    chunk = pts[idx]
     size = chunk.max(axis=0) - chunk.min(axis=0)
     if float(size.max()) <= SPLIT_ABOVE_M or cell <= SPLIT_MIN_CELL_M or depth >= 6:
-        return [chunk]
+        return [idx]
     smaller = cell * SPLIT_SHRINK
-    pieces = _raw_clusters(chunk, smaller, min_points)
+    pieces = [idx[p] for p in _raw_clusters(chunk, smaller, min_points)]
     if len(pieces) <= 1:
         # 더 촘촘하게 해도 안 갈라진다 — 진짜 하나로 이어진 것이다
-        return [chunk] if not pieces else _split_if_too_big(
-            pieces[0], smaller, min_points, depth + 1)
+        return [idx] if not pieces else _split_if_too_big(
+            pts, pieces[0], smaller, min_points, depth + 1)
     out = []
     for p in pieces:
-        out.extend(_split_if_too_big(p, smaller, min_points, depth + 1))
+        out.extend(_split_if_too_big(pts, p, smaller, min_points, depth + 1))
     return out
 
 
@@ -241,17 +257,19 @@ def cluster(points, cell=CLUSTER_CELL_M, min_points=MIN_POINTS):
     칸 격자에 점을 넣고, 붙어 있는 칸끼리 이어 붙인다. 학습이 필요 없고 빠르다.
     그다음 **손보다 큰 덩어리만 더 촘촘한 칸으로 다시 쪼갠다**(위 SPLIT_* 주석 참고).
     """
+    pts = np.asarray(points, dtype=np.float64)
     out = []
-    for chunk in _raw_clusters(points, cell, min_points):
-        for piece in _split_if_too_big(chunk, cell, min_points):
-            if len(piece) < min_points:
+    for chunk_idx in _raw_clusters(pts, cell, min_points):
+        for idx in _split_if_too_big(pts, chunk_idx, cell, min_points):
+            if len(idx) < min_points:
                 continue
+            piece = pts[idx]
             size = piece.max(axis=0) - piece.min(axis=0)
             if not (MIN_SIZE_M <= float(size.max()) <= MAX_SIZE_M):
                 continue
             out.append(ObjectCloud(points=piece.astype(np.float32),
                                    center=piece.mean(axis=0), size=size,
-                                   n_points=len(piece)))
+                                   n_points=len(piece), index=idx))
     out.sort(key=lambda o: -o.n_points)
     return out
 
