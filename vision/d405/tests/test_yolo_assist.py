@@ -164,5 +164,91 @@ class TestDepthStack(unittest.TestCase):
         self.assertEqual(float(merged[1, 1]), 0.0)
 
 
+
+class TestScreenText(unittest.TestCase):
+    """화면 글자 — **잘리지 않고, 번호가 그림 안에 들어가야** 한다."""
+
+    def setUp(self):
+        import view_d405
+        self.v = view_d405
+
+    def test_long_line_is_folded_not_cut(self):
+        font = self.v._font()
+        long_line = ("YOLO: cup 89%, cup 87%, cup 86%, keyboard 72%, bottle 57%, "
+                     "pen 55% / 모양으로 추가 2개 (평평한 면 제거 — 붙은 점 44%)")
+        folded = self.v._wrap([long_line], font, 624)
+        self.assertGreater(len(folded), 1, "긴 줄을 안 접었다 — 화면 밖으로 잘린다")
+        for line in folded:
+            self.assertLessEqual(self.v._text_width(font, line), 624)
+        # 글자를 잃지 않았는지 — 빈칸만 빼고 다 남아 있어야 한다
+        self.assertEqual("".join(folded).replace(" ", ""),
+                         long_line.replace(" ", ""))
+
+    def test_label_stays_inside_the_picture(self):
+        img = np.zeros((480, 640, 3), dtype=np.uint8)
+        out = self.v.put_labels(img, [(-50, -50, "3", (255, 255, 255)),
+                                      (700, 700, "104 추정", (0, 255, 255))])
+        self.assertEqual(out.shape, img.shape)
+        self.assertGreater(int((out > 0).sum()), 0, "화면 밖으로 나가 아무것도 안 그려졌다")
+
+    def test_no_labels_is_harmless(self):
+        img = np.zeros((10, 10, 3), dtype=np.uint8)
+        self.assertIs(self.v.put_labels(img, []), img)
+
+
+class TestWholeScreenRuns(unittest.TestCase):
+    """**카메라 없이** 화면 그리기까지 통째로 돌려 본다.
+
+    그리기 코드는 실물 카메라가 있어야만 도는 자리라 시험이 안 닿았다. 가짜 카메라를
+    끼워 `main()` 을 그대로 돌리면 오타·좌표 실수가 여기서 걸린다(원칙 2 — 카메라가
+    없는 다른 머신에서도 확인할 수 있어야 한다).
+    """
+
+    def test_save_writes_a_picture(self):
+        import shutil
+        import tempfile
+
+        import cv2  # noqa: F401  (없으면 이 시험은 건너뛴다)
+        import d405_stream
+        import yolo_assist
+
+        class Intr:
+            fx = fy = 320.0
+            ppx, ppy = 160.0, 120.0
+
+        def scene():
+            d = np.zeros((240, 320), np.float32)
+            yy, _ = np.mgrid[0:240, 0:320]
+            d[:] = 0.30 + (yy - 120) * 0.0004        # 비스듬한 책상
+            d[90:150, 60:100] = 0.20                 # 물체 1
+            d[80:160, 170:210] = 0.23                # 물체 2
+            d[30:60, 250:300] = 0.0                  # 값이 없는 구멍
+            return d, np.full((480, 640, 3), 90, np.uint8)
+
+        class Stream:
+            def frames(self, count=1, warmup=0):
+                return [tuple(x.copy() for x in scene()) for _ in range(count)], Intr
+
+            def close(self):
+                pass
+
+        tmp = Path(tempfile.mkdtemp())
+        keep = (d405_stream.open_depth, yolo_assist.RESULTS_DIR, sys.argv)
+        try:
+            d405_stream.open_depth = lambda *a, **k: Stream()
+            yolo_assist.RESULTS_DIR = tmp
+            sys.argv = ["yolo_assist.py", "--save", "--frames", "3",
+                        "--weights", "no_such_model.pt"]
+            self.assertEqual(yolo_assist.main(), 0)
+
+            shots = list(tmp.glob("yolo_*.png"))
+            self.assertEqual(len(shots), 1, "사진을 안 남겼다")
+            img = cv2.imread(str(shots[0]))
+            self.assertEqual(img.shape, (480, 1280, 3), "화면 크기가 달라졌다")
+        finally:
+            d405_stream.open_depth, yolo_assist.RESULTS_DIR, sys.argv = keep
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()

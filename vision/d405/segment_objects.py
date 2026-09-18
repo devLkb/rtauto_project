@@ -435,7 +435,8 @@ def main() -> int:
 
     stream = open_depth(args.width, args.height, color=True)
     tracker = Tracker()
-    win = "물체 잘라내기  (왼쪽: 색 사진   오른쪽: 찾은 물체)"
+    # 창 제목은 영어로 — OpenCV 가 한글 제목을 깨뜨린다(`yolo_assist.py` 주석 참고)
+    win = "D405 - segment  (left: photo / right: objects)"
     try:
         while True:
             got, intr = stream.frames(count=1, warmup=0)

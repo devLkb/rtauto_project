@@ -446,7 +446,7 @@ def main() -> int:
     import cv2
     from d405_stream import open_depth
     from segment_objects import Tracker, size_verdict
-    from view_d405 import colorize, put_lines
+    from view_d405 import colorize, put_labels, put_lines
 
     n_frames = args.frames
     if n_frames is None:
@@ -474,7 +474,10 @@ def main() -> int:
 
     stream = open_depth(args.width, args.height, color=True)
     tracker = Tracker()
-    win = "YOLO + 모양  (왼쪽: 색 사진+박스   오른쪽: 나눈 결과)"
+    # ⚠️ 창 제목은 **영어로 적는다.** OpenCV 가 윈도우 창 제목에 한글을 못 넣어
+    #    "모양" 같은 글자로 깨져 나온다(2026-09-18 사용자 화면에서 확인).
+    #    설명은 그림 안에 한글로 적으므로 제목은 창을 구분하는 용도만 한다.
+    win = "D405 - YOLO + shape  (left: photo / right: objects)"
     try:
         while True:
             got, intr = stream.frames(count=n_frames, warmup=0)
@@ -515,29 +518,40 @@ def main() -> int:
 
             view_o = cv2.resize(paint, (640, 480), interpolation=cv2.INTER_NEAREST)
 
-            # **추정으로 낸 물체는 점이 몇 개 없어 화면에 거의 안 보인다.** 그래서 네모로
-            # 따로 그려 준다 — 눈으로 확인할 수 있어야 한다(CLAUDE.md 원칙 6).
+            # **덩어리마다 번호를 찍는다.** 목록에는 "99번" 이라고 나오는데 그림의 어느
+            # 덩어리가 99번인지 알 수가 없었다(2026-09-18 사용자 지적). 같은 번호를
+            # **왼쪽 사진에도** 찍어 실제 물건과 맞춰 볼 수 있게 한다(원칙 6).
+            #
+            # 추정으로 낸 물체는 점이 몇 개 없어 화면에 거의 안 보이므로 **노란 네모**까지
+            # 그린다.
             vx, vy = 640 / depth_m.shape[1], 480 / depth_m.shape[0]
-            for o in objs:
-                if not o.estimated:
-                    continue
+            tags = []
+            for o in objs[:10]:                      # 색칠한 것과 같은 범위
                 z = max(float(o.center[2]), 1e-6)
                 cu = (o.center[0] * intr.fx / z + intr.ppx) * vx
                 cv_ = (o.center[1] * intr.fy / z + intr.ppy) * vy
-                hw = (o.size[0] / 2) * intr.fx / z * vx
-                hh = (o.size[1] / 2) * intr.fy / z * vy
-                cv2.rectangle(view_o, (int(cu - hw), int(cv_ - hh)),
-                              (int(cu + hw), int(cv_ + hh)), (0, 255, 255), 2)
-                cv2.putText(view_o, "추정", (int(cu - hw), max(12, int(cv_ - hh) - 4)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                # 번호는 **흰색**으로 쓴다. 덩어리 색(초록/빨강/파랑)과 같은 색으로 쓰면
+                # 그 위에서 안 읽힌다 — 크기 판정은 덩어리 색이 이미 말해 준다.
+                col = (255, 255, 255)
+                if o.estimated:
+                    col = (0, 255, 255)              # 노랑 — 거리값이 모자라 추정한 것
+                    hw = (o.size[0] / 2) * intr.fx / z * vx
+                    hh = (o.size[1] / 2) * intr.fy / z * vy
+                    cv2.rectangle(view_o, (int(cu - hw), int(cv_ - hh)),
+                                  (int(cu + hw), int(cv_ + hh)), col, 2)
+                tags.append((cu, cv_, "{}번{}".format(
+                    o.track_id, " 추정" if o.estimated else ""), col))
+            view_o = put_labels(view_o, tags)
+            view_c = put_labels(view_c, tags)
 
             n_ok = sum(1 for o in objs if size_verdict(o)[1] == "잡을만")
-            lines = ["찾은 덩어리 {}개 — 잡을만한 크기 {}개".format(len(objs), n_ok),
+            lines = ["찾은 덩어리 {}개 — 잡을만한 크기 {}개  (번호는 양쪽 그림에 같이 찍힌다)"
+                     .format(len(objs), n_ok),
                      "초록=잡을만 / 빨강=큼 / 파랑=작음 / 노란 네모=거리값이 모자라 추정",
                      note]
             if stack_note:
                 lines.append(stack_note)
-            for o in objs[:4]:
+            for o in objs[:6]:
                 lines.append("  {}번 [{}] {:.1f}x{:.1f}x{:.1f} cm  {}{}".format(
                     o.track_id, size_verdict(o)[1], *(o.size * 100), o.source,
                     "  ← 추정" if o.estimated else ""))
