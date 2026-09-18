@@ -321,7 +321,7 @@ def estimate_from_mask(d, inside, intr, shape, depth_shape):
 
     돌려주는 것: `ObjectCloud`(`estimated=True` 로 표시된다). 못 하면 `None`.
     """
-    from segment_objects import GRASPABLE_MAX_M, MIN_SIZE_M, ObjectCloud
+    from segment_objects import ObjectCloud
 
     if len(inside) < FEW_POINTS_MIN or intr is None:
         return None
@@ -340,19 +340,6 @@ def estimate_from_mask(d, inside, intr, shape, depth_shape):
     cx = (uc / sx - float(intr.ppx)) * z_med / float(intr.fx)
     cy = (vc / sy - float(intr.ppy)) * z_med / float(intr.fy)
     d_m = max(float(zz.max() - zz.min()), ESTIMATE_MIN_DEPTH_M)
-
-    # 🛑 **잡을 수 있는 크기 안에서만 추정한다** (2026-09-18 사용자 발견:
-    #    *"의미없는 주변부까지 사각형까지 탐지해버린다"*).
-    #
-    #    추정은 **근거가 약한 값**이다 — 거리값 몇 개와 테두리뿐이다. 어차피 손에 안
-    #    들어오는 크기까지 지어내면 화면만 어지럽고 판단에 보탬이 안 된다. 그래서
-    #    덩어리로 잰 물체보다 **더 좁은 상한**(잡을 수 있는 크기)을 쓴다.
-    #
-    #    ⚠️ 여기서 물러나도 물체가 사라지지는 않는다 — 점으로 잰 덩어리가 있으면
-    #       그쪽이 쓰인다(`split_by_boxes`). 지어낸 값만 안 쓰는 것이다.
-    big = max(w_m, h_m)
-    if not (MIN_SIZE_M <= big <= GRASPABLE_MAX_M):
-        return None
 
     n = int(band.sum())
     return ObjectCloud(
@@ -439,16 +426,8 @@ def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
             continue
         o.source = "YOLO:{} {:.0%}".format(d.name, d.conf)      # 어디서 나왔는지 남긴다
         objs.append(o)
-
-        # 🛑 **크기에 쓴 점만 소비하면 한 물건이 둘로 세어진다** (2026-09-18 사용자 발견,
-        #    확신 기준을 70 % 로 올려도 남았다). 크기를 못 믿어 테두리로 계산한 경우,
-        #    테두리 안의 나머지 점이 그대로 남아 **모양 쪽이 같은 물건을 또 만든다.**
-        #    → 테두리 안에서 **이 물체와 같은 거리대의 점은 전부** 소비한다.
-        #    한참 뒤에 있는 점(배경)만 모양 쪽으로 넘긴다.
-        oz = o.points[:, 2]
-        same_thing = ((inside[:, 2] >= float(oz.min()) - ESTIMATE_BAND_M)
-                      & (inside[:, 2] <= float(oz.max()) + ESTIMATE_BAND_M))
-        used[idx_in[same_thing]] = True
+        # 박스 안 전체가 아니라 **쓴 점만** 소비 처리한다 — 나머지는 모양 쪽이 다시 본다
+        used[idx_in[o.index]] = True
 
     # 사람으로 잡힌 박스 안의 점은 **버린다** — 잡으러 가면 안 된다
     for d in dets:
@@ -456,44 +435,7 @@ def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
             continue
         used |= d.contains(px, py, shape)
 
-    _absorb_halo(objs, pts, used)
     return objs, pts[~used]
-
-
-#: 물체 테두리 **바로 바깥**의 점은 그 물체의 것으로 본다(m).
-#: ⚠️ 왜 필요한가: YOLO 테두리는 색 사진 기준이고 거리 사진은 절반 크기라, 물체
-#:    가장자리의 점 몇 줄이 테두리 밖으로 삐져나온다. 그 껍질이 따로 덩어리가 되어
-#:    **같은 물건이 "모양" 물체로 한 번 더 세어졌다**(2026-09-18).
-#:    1.5 cm 는 그 어긋남을 덮되 옆 물건까지 먹지는 않는 폭이다.
-ABSORB_M = 0.015
-
-
-def _absorb_halo(objs, pts, used):
-    """물체 **바로 옆에 남은 점**을 그 물체에 합친다. `used` 를 그 자리에서 고친다.
-
-    남은 점끼리 다시 덩어리를 만들기 **전에** 한다 — 안 그러면 같은 물건이 두 번 세어진다.
-    이미 다른 YOLO 물체로 잡힌 점은 대상이 아니므로, **나란히 놓인 컵 두 개는 안 합쳐진다.**
-    """
-    for o in objs:
-        free = np.flatnonzero(~used)
-        if len(free) == 0:
-            return
-        lo = o.points.min(axis=0) - ABSORB_M
-        hi = o.points.max(axis=0) + ABSORB_M
-        near = free[np.all((pts[free] >= lo) & (pts[free] <= hi), axis=1)]
-        if len(near) == 0:
-            continue
-        used[near] = True
-        grown = np.vstack([o.points, pts[near].astype(np.float32)])
-        o.points = grown
-        if o.estimated:
-            # 🛑 **추정 물체의 크기는 다시 계산하지 않는다.** 그 크기는 테두리에서 나온
-            #    것이고, 몇 개 안 되는 점으로 다시 재면 도로 작아진다. 점은 화면에
-            #    보이라고만 붙인다.
-            continue
-        o.center = grown.mean(axis=0).astype(np.float64)
-        o.size = (grown.max(axis=0) - grown.min(axis=0)).astype(np.float64)
-        o.n_points = len(grown)
 
 
 def find_objects_hybrid(points, pixel_xy, color_bgr, detector, near=None, far=None,
