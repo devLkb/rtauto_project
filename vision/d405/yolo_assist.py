@@ -22,31 +22,40 @@ YOLO 는 그 반대다. **붙어 있어도 하나씩 가르지만 배운 종류�
 잡는 것이다. YOLO 만 쓰면 배운 9종 밖에서는 아무것도 못 한다. 그래서 **YOLO 는 도우미**고,
 못 찾았을 때는 모양으로 나누는 쪽이 계속 답을 낸다.
 
-쓰는 모델 — 공식 **YOLO11-seg**
--------------------------------
-`vision/d405/weights/yolo11s-seg.pt` (없으면 자동으로 내려받는다, 약 20 MB).
-COCO 80종이라 우리에게 필요한 것이 다 있다: **cup · bottle · mouse · keyboard ·
-cell phone · person** …
+쓰는 모델 — **YOLOE** (글자로 찾을 것을 정한다)
+------------------------------------------------
+`vision/d405/weights/yoloe26-n-seg-ready.pt` (11.5 MB).
 
-**테두리를 따 주는 판(-seg)** 을 쓴다. 네모 박스가 아니라 **물체 모양 그대로** 잘라내므로
-뒤의 배경이 안 딸려온다.
+YOLOE 는 **"cup", "can" 같은 글자로 무엇을 찾을지** 알려 주는 방식이다. 정해진 80종에
+묶이지 않으므로 **우리 목적("처음 보는 물체")에 더 맞는다.** 새 물체가 생기면
+`PROMPT_WORDS` 에 한 줄 넣고 `make_ready.py` 를 다시 돌리면 끝이다.
 
-🛑 **처음엔 ZED 폴더의 `dg5f_target_objects_yolov8s.pt`(9종)를 썼는데 버렸다.**
-   우리 D405 사진에서 **확신 기준을 5 % 까지 낮춰도 거의 못 찾았다**(2026-09-18 실측).
-   같은 사진으로 견준 결과:
+⚠️ **이름이 맞는지는 중요하지 않다 — 테두리가 목적이다.** 실제로 캔이 `bottle` 로
+   불렸지만(77 %) 테두리는 정확했다(2026-09-18 실측). 우리는 점 덩어리를 잘라내려는
+   것이지 이름표를 붙이려는 게 아니다.
 
-   =================  ===========  =================
-   같은 사진            ZED 모델      **YOLO11s-seg**
-   =================  ===========  =================
-   컵                   10 %         **89~92 %**
-   마우스                못 찾음       **89~91 %**
-   사람                  못 찾음       **67 %**
-   테두리                없음          **있음**
-   =================  ===========  =================
+여기까지 온 과정 (전부 같은 사진으로 견줬다)
+--------------------------------------------
 
-   ZED 모델이 왜 못 하는지는 확정하지 않았다(색이 다른 카메라로 학습됐거나, 20 cm 코앞
-   장면이 학습 범위 밖이거나). **원인을 더 파지 않고 버렸다** — 공식 모델이 훨씬 잘하므로
-   파 볼 값어치가 없다.
+=====================  ==========  ==========  ==========  ============
+같은 사진               ZED 모델     YOLO11n     YOLO11s     **YOLOE26-n**
+=====================  ==========  ==========  ==========  ============
+흰 컵                    10 %        92 %        89 %        **89 %**
+캔                      못 찾음      못 찾음      못 찾음      **77 %**
+마우스                   못 찾음      83 %        91 %        **90 %**
+테두리                   없음         있음         있음         **있음**
+CPU 한 장                 —          41 ms       76 ms       **43 ms**
+=====================  ==========  ==========  ==========  ============
+
+- **ZED 모델은 버렸다.** 확신 5 % 까지 낮춰도 거의 못 찾았다. 원인은 더 파지 않았다
+  (공식 모델이 훨씬 잘하므로 파 볼 값어치가 없다).
+- **COCO 계열(YOLO11)은 캔을 원천적으로 못 찾는다** — `can` 이라는 종류가 아예 없다.
+- **l(큰 것)은 안 쓴다.** CPU 228 ms 로 5 배 느린데 결과가 같았다.
+  시연장엔 노트북만 가져가므로 n 이 맞다.
+
+⚠️ **242 MB 를 시연 노트북에 안 들이려고 "구워" 둔다.** YOLOE 는 글자를 이해하려고
+   별도 모델(`mobileclip2_b.ts`, 242 MB)이 필요한데, 그 일은 **미리 한 번만** 하면 된다.
+   `make_ready.py` 가 결과를 모델에 구워 11.5 MB 파일 하나로 만든다.
 
 ⚠️ **남은 문제는 YOLO 가 아니다.** YOLO 는 "여기 컵이 있다" 를 정확히 말하는데,
    **흰 종이컵은 거리가 안 잡혀 점 덩어리를 못 만든다**(적외선 무늬를 쏘는 장치가 없어
@@ -94,10 +103,25 @@ YOLO_CONF = 0.35
 #: 잡으러 가면 안 되는 것들. 사람은 물체가 아니고, 책상·의자·모니터는 손에 안 들어온다.
 NOT_OBJECT = ("person", "dining table", "chair", "couch", "bed", "tv", "refrigerator")
 
-#: 기본 가중치. 없으면 ultralytics 가 인터넷에서 자동으로 내려받는다(약 20 MB).
-#: n(작고 빠름) / s(조금 크고 정확) 중 **s** 를 쓴다 — 우리는 장면당 한 번만 보므로
-#: 속도보다 정확도가 낫다.
-DEFAULT_WEIGHTS = "yolo11s-seg.pt"
+#: 찾을 것들. **글자로 적으면 그대로 찾는다**(YOLOE) — 종류가 80개로 묶여 있지 않다.
+#: 우리 목적이 "처음 보는 물체" 라 이쪽이 더 맞는다. 새 물체가 생기면 여기 한 줄 추가하고
+#: `make_ready.py` 를 다시 돌리면 된다.
+#:
+#: ⚠️ **이름이 맞는지는 중요하지 않다.** 우리가 쓰는 것은 **테두리**다 — 실제로 캔이
+#:    `bottle` 로 불렸지만(77 %) 테두리는 정확했다(2026-09-18 실측). 이름이 아니라
+#:    잘라내기가 목적이다.
+PROMPT_WORDS = ("cup", "paper cup", "bottle", "can", "box", "computer mouse",
+                "keyboard", "pen", "cell phone", "book", "bowl", "person")
+
+#: 기본 가중치. **찾을 말이 이미 구워진** 파일을 쓴다.
+#: ⚠️ 구워 두는 이유: YOLOE 는 글자를 이해하려고 별도 모델(`mobileclip2_b.ts`, **242 MB**)
+#:    을 받는데, **미리 한 번만** 하면 되고 그 결과를 모델에 구워 두면 시연 노트북에서는
+#:    그 242 MB 가 필요 없다. 시연장엔 노트북과 로봇만 가져가므로 이게 중요하다.
+#:    만드는 법: `python vision/d405/make_ready.py`
+DEFAULT_WEIGHTS = "yoloe26-n-seg-ready.pt"
+
+#: 구운 파일이 없을 때 물러설 곳. 이건 COCO 80종 고정이라 **캔을 못 찾는다.**
+FALLBACK_WEIGHTS = "yolo11n-seg.pt"
 
 
 def model_path():
@@ -106,8 +130,12 @@ def model_path():
     if override:
         p = Path(override)
         return p if p.is_absolute() else (REPO_ROOT / p)
-    local = REPO_ROOT / "vision" / "d405" / "weights" / DEFAULT_WEIGHTS
-    return local if local.exists() else Path(DEFAULT_WEIGHTS)   # 없으면 자동 내려받기
+    here = REPO_ROOT / "vision" / "d405" / "weights"
+    if (here / DEFAULT_WEIGHTS).exists():
+        return here / DEFAULT_WEIGHTS
+    if (here / FALLBACK_WEIGHTS).exists():
+        return here / FALLBACK_WEIGHTS
+    return Path(FALLBACK_WEIGHTS)            # 없으면 자동 내려받기(COCO 80종)
 
 
 @dataclass
@@ -146,9 +174,14 @@ class Detector:
         self.model = None
         self.why = ""
         p = Path(path) if path else model_path()
+        self.path = p
         try:
-            from ultralytics import YOLO
-            self.model = YOLO(str(p))
+            # 구운 YOLOE 파일은 YOLOE 로 열어야 찾을 말이 살아난다
+            if "yoloe" in p.name.lower():
+                from ultralytics import YOLOE as _M
+            else:
+                from ultralytics import YOLO as _M
+            self.model = _M(str(p))
             self.names = self.model.names
         except Exception as e:                       # 없어도 전체가 멈추면 안 된다
             self.why = "YOLO 를 못 불러왔다: {}".format(e)
@@ -299,7 +332,8 @@ def main() -> int:
     det = Detector(args.weights, args.conf)
     print("=== YOLO + 모양 ===")
     if det.ready:
-        print("YOLO: {} 종 — {}".format(len(det.names), ", ".join(det.names.values())))
+        print("모델: {}".format(det.path.name))
+        print("찾는 것 {} 종 — {}".format(len(det.names), ", ".join(det.names.values())))
         print("확신 기준 {:.0%} 이상만 믿는다 (잠정값 — 이 모델 성적을 우리가 모른다)".format(
             args.conf))
     else:

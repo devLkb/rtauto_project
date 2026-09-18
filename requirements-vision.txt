@@ -25,3 +25,10 @@ cffi>=1.15.0
 
 # D405(RealSense) 실측·점 덩어리용. 2026-09-18 추가 — 카메라가 도착해 실제로 쓰기 시작했다.
 pyrealsense2==2.58.4.10922
+
+# 물체 찾기 (vision/d405/yolo_assist.py). YOLOE 는 글자로 찾을 것을 정하는 방식이라
+# 정해진 80종에 안 묶인다 — "처음 보는 물체" 목적에 맞는다.
+# ⚠️ 설치할 때 torch 를 갈아치우려 든다. **torch 는 위 핀을 유지할 것**
+#    (2026-09-18 에 2.1.1+cu121 -> 2.14.0+cpu 로 바뀌어 CUDA 가 꺼졌다. 되돌렸다)
+#    설치 후 확인: python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+ultralytics
