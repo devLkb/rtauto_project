@@ -80,6 +80,23 @@ PLANE_MIN_FRAC = 0.15
 #: 작으면 물체 하나가 여러 개로 쪼개지고, 크면 옆 물체와 붙는다.
 CLUSTER_CELL_M = 0.012
 
+#: 다시 쪼갤 때 칸을 얼마씩 줄일지, 그리고 어디까지 줄일지.
+#: ⚠️ **왜 다시 쪼개나 (2026-09-18, 사용자가 화면에서 발견).**
+#: *"큰 종이컵, 작은 종이컵이 나란히 있으면 둘을 한 물체로 식별한다"*
+#: 칸을 처음부터 작게 잡으면 컵 하나가 여러 조각으로 부서진다. 그래서 **일단 크게 묶고,
+#: 손보다 큰 덩어리만 더 촘촘한 칸으로 다시 묶어 본다.** 가는 다리부터 먼저 끊어지므로
+#: **붙은 것만 갈라지고 멀쩡한 물체는 안 부서진다.**
+#: (책상이 거의 안 보여 못 빼는 탓에 남은 드문 점이 물체 사이를 다리처럼 잇는다 —
+#:  그 다리가 바로 이 방법으로 끊긴다)
+SPLIT_SHRINK = 0.6
+SPLIT_MIN_CELL_M = 0.004
+
+#: 이보다 큰 덩어리는 **쪼개기를 시도한다**. 기준은 "손에 들어가는 크기" 여야 한다 —
+#: 처음에 물체 목록에서 걸러내는 한계(MAX_SIZE_M = 30 cm)로 잡았더니 25 cm 짜리 뭉치가
+#: 그대로 남았다(2026-09-18). 잡을 수 있는 크기를 넘으면 붙은 것으로 의심하는 게 맞다.
+#: 값의 근거는 `GRASPABLE_MAX_M` 과 같다(손보다 큰 것).
+SPLIT_ABOVE_M = 0.16
+
 #: 이보다 점이 적은 덩어리는 버린다(잡음).
 MIN_POINTS = 120
 
@@ -158,7 +175,10 @@ def remove_plane(points, colors=None):
     pts = np.asarray(points, dtype=np.float64)
     n, d, inl = fit_plane(pts)
     if n is None or not plane_ok(pts, inl):
-        return pts, colors, None, "평평한 면을 못 찾았다 — 배경을 그대로 둔다"
+        # 책상은 매끈한 단색이라 무늬가 없어 **거의 안 잡힌다**(2026-09-18 실측).
+        # 그래서 이 갈래로 빠지는 일이 흔하다. 물체를 통째로 지우는 것보다 낫지만,
+        # 남은 드문 점이 물체 사이를 잇는 다리가 되므로 cluster() 가 다시 쪼갠다.
+        return pts, colors, None, "평평한 면을 못 찾았다(책상이 거의 안 보임) — 배경을 둔다"
 
     signed = pts @ n + d
     # 점이 많은 쪽이 아니라 **평균이 어느 쪽인가** 로 앞뒤를 정한다
@@ -170,11 +190,8 @@ def remove_plane(points, colors=None):
     return pts[keep], (colors[keep] if colors is not None else None), (n, d), note
 
 
-def cluster(points, cell=CLUSTER_CELL_M, min_points=MIN_POINTS):
-    """서로 붙어 있는 점들을 **덩어리**로 묶는다.
-
-    칸 격자에 점을 넣고, 붙어 있는 칸끼리 이어 붙인다. 학습이 필요 없고 빠르다.
-    """
+def _raw_clusters(points, cell, min_points):
+    """칸 격자로 한 번 묶는다. 크기 판정 없이 **점 묶음**만 돌려준다."""
     from scipy import ndimage
 
     pts = np.asarray(points, dtype=np.float64)
@@ -184,24 +201,57 @@ def cluster(points, cell=CLUSTER_CELL_M, min_points=MIN_POINTS):
     idx = np.floor((pts - lo) / cell).astype(np.int64)
     shape = idx.max(axis=0) + 1
     if np.prod(shape.astype(np.float64)) > 4e7:      # 너무 크면 칸을 키운다
-        return cluster(points, cell * 2, min_points)
+        return _raw_clusters(points, cell * 2, min_points)
 
     grid = np.zeros(shape, dtype=bool)
     grid[idx[:, 0], idx[:, 1], idx[:, 2]] = True
     labels, n = ndimage.label(grid, structure=np.ones((3, 3, 3), dtype=int))
     per_point = labels[idx[:, 0], idx[:, 1], idx[:, 2]]
-
     out = []
     for k in range(1, n + 1):
         sel = per_point == k
-        if int(sel.sum()) < min_points:
-            continue
-        p = pts[sel]
-        size = p.max(axis=0) - p.min(axis=0)
-        if not (MIN_SIZE_M <= float(size.max()) <= MAX_SIZE_M):
-            continue
-        out.append(ObjectCloud(points=p.astype(np.float32),
-                               center=p.mean(axis=0), size=size, n_points=int(sel.sum())))
+        if int(sel.sum()) >= min_points:
+            out.append(pts[sel])
+    return out
+
+
+def _split_if_too_big(chunk, cell, min_points, depth=0):
+    """손보다 큰 묶음이면 **더 촘촘한 칸으로 다시 묶어 본다.**
+
+    쪼개지면 쪼갠 것을 쓰고, 더 못 쪼개면 그대로 둔다(억지로 자르지 않는다).
+    """
+    size = chunk.max(axis=0) - chunk.min(axis=0)
+    if float(size.max()) <= SPLIT_ABOVE_M or cell <= SPLIT_MIN_CELL_M or depth >= 6:
+        return [chunk]
+    smaller = cell * SPLIT_SHRINK
+    pieces = _raw_clusters(chunk, smaller, min_points)
+    if len(pieces) <= 1:
+        # 더 촘촘하게 해도 안 갈라진다 — 진짜 하나로 이어진 것이다
+        return [chunk] if not pieces else _split_if_too_big(
+            pieces[0], smaller, min_points, depth + 1)
+    out = []
+    for p in pieces:
+        out.extend(_split_if_too_big(p, smaller, min_points, depth + 1))
+    return out
+
+
+def cluster(points, cell=CLUSTER_CELL_M, min_points=MIN_POINTS):
+    """서로 붙어 있는 점들을 **덩어리**로 묶는다.
+
+    칸 격자에 점을 넣고, 붙어 있는 칸끼리 이어 붙인다. 학습이 필요 없고 빠르다.
+    그다음 **손보다 큰 덩어리만 더 촘촘한 칸으로 다시 쪼갠다**(위 SPLIT_* 주석 참고).
+    """
+    out = []
+    for chunk in _raw_clusters(points, cell, min_points):
+        for piece in _split_if_too_big(chunk, cell, min_points):
+            if len(piece) < min_points:
+                continue
+            size = piece.max(axis=0) - piece.min(axis=0)
+            if not (MIN_SIZE_M <= float(size.max()) <= MAX_SIZE_M):
+                continue
+            out.append(ObjectCloud(points=piece.astype(np.float32),
+                                   center=piece.mean(axis=0), size=size,
+                                   n_points=len(piece)))
     out.sort(key=lambda o: -o.n_points)
     return out
 
