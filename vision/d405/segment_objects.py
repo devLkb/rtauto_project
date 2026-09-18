@@ -321,23 +321,41 @@ class Tracker:
         self._tracks = {}          # id -> [가운데, 안 보인 장면 수, 본 장면 수]
 
     def update(self, objs: List[ObjectCloud]) -> List[ObjectCloud]:
-        used = set()
-        for o in objs:
-            best, best_d = None, self.max_move
+        """물체 목록에 번호를 매겨 돌려준다.
+
+        🛑 **가까운 짝부터 순서대로 맺는다 — 목록 순서에 휘둘리면 안 된다.**
+        전에는 목록 앞에 있는 물체가 먼저 골랐다. 목록은 점 개수 순으로 정렬되는데
+        그 순서가 장면마다 뒤바뀌므로, 가까이 있는 두 물체가 **번호를 서로 맞바꿔**
+        화면에서 "14번 17번" 이 번갈아 나왔다(2026-09-18 사용자 발견).
+        모든 짝의 거리를 먼저 다 재고 **가장 가까운 짝부터** 맺으면 순서와 무관해진다.
+        """
+        pairs = []
+        for i, o in enumerate(objs):
             for tid, (center, _missing, _seen) in self._tracks.items():
-                if tid in used:
-                    continue
-                d = float(np.linalg.norm(o.center - center))
-                if d < best_d:
-                    best, best_d = tid, d
-            if best is None:
-                best = self._next_id
+                dist = float(np.linalg.norm(o.center - center))
+                if dist < self.max_move:
+                    pairs.append((dist, i, tid))
+        pairs.sort(key=lambda p: p[0])
+
+        taken_obj, taken_tid, match = set(), set(), {}
+        for _dist, i, tid in pairs:
+            if i in taken_obj or tid in taken_tid:
+                continue
+            taken_obj.add(i)
+            taken_tid.add(tid)
+            match[i] = tid
+
+        used = set(match.values())
+        for i, o in enumerate(objs):
+            tid = match.get(i)
+            if tid is None:                       # 처음 보는 물체 — 새 번호를 준다
+                tid = self._next_id
                 self._next_id += 1
-                self._tracks[best] = [o.center.copy(), 0, 0]
-            used.add(best)
-            seen = self._tracks[best][2] + 1
-            self._tracks[best] = [o.center.copy(), 0, seen]
-            o.track_id = best
+                self._tracks[tid] = [o.center.copy(), 0, 0]
+                used.add(tid)
+            seen = self._tracks[tid][2] + 1
+            self._tracks[tid] = [o.center.copy(), 0, seen]
+            o.track_id = tid
             o.seen_frames = seen
 
         for tid in list(self._tracks):

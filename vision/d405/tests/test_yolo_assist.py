@@ -353,5 +353,55 @@ class TestNoDoubleCounting(unittest.TestCase):
         self.assertGreaterEqual(len(rest), len(other) * 0.9,
                                 "옆에 있는 다른 물건까지 먹어 치웠다")
 
+class TestNoJunkRectangles(unittest.TestCase):
+    """**말도 안 되는 크기는 물체로 내지 않는다** (2026-09-18 사용자 발견:
+    *"의미없는 주변부까지 사각형까지 탐지해버린다"*).
+
+    덩어리로 잰 물체에는 2~30 cm 라는 상식 검사가 처음부터 있었는데, 테두리로 추정하는
+    쪽에는 빠져 있었다. 그래서 큰 테두리(헛 검출)가 그대로 큰 물체가 됐다.
+    """
+
+    def test_a_huge_outline_makes_no_object(self):
+        # 화면을 거의 다 덮는 테두리 — 0.25 m 에서 40 cm 가 넘는다
+        det = _cup_detection(20, 20, 620, 460, conf=0.4, name="tv remote")
+        pts, pix = _points_on_rect(30, 30, 60, 60, z=0.25, step=3)   # 거리값은 구석에만
+
+        objs, _ = split_by_boxes(pts, pix, [det], COLOR_SHAPE,
+                                 depth_shape=DEPTH_SHAPE, intr=_Intr)
+
+        for o in objs:
+            self.assertFalse(o.estimated,
+                             "손에 안 들어오는 크기를 추정으로 만들어 냈다")
+
+
+class TestTrackNumbersAreStable(unittest.TestCase):
+    """**번호가 물체를 따라다녀야** 한다 — 목록 순서가 바뀌어도.
+
+    2026-09-18 사용자 발견: *"14번 17번 이런식으로 번갈아서 나온다"*. 목록은 점 개수
+    순으로 정렬되는데 그 순서가 장면마다 뒤바뀌어 가까운 두 물체가 번호를 맞바꿨다.
+    """
+
+    def _obj(self, x):
+        from segment_objects import ObjectCloud
+        c = np.array([x, 0.0, 0.25])
+        return ObjectCloud(points=np.array([c], dtype=np.float32), center=c,
+                           size=np.array([0.05, 0.05, 0.05]), n_points=1)
+
+    def test_order_does_not_swap_numbers(self):
+        from segment_objects import Tracker
+
+        tracker = Tracker()
+        a, b = self._obj(0.00), self._obj(0.04)      # 4 cm 떨어진 두 물체
+        tracker.update([a, b])
+        first = (a.track_id, b.track_id)
+        self.assertNotEqual(*first)
+
+        # 다음 장면에서 **목록 순서가 뒤집혀 들어온다** (점 개수가 뒤바뀐 경우)
+        a2, b2 = self._obj(0.002), self._obj(0.042)
+        tracker.update([b2, a2])
+
+        self.assertEqual(a2.track_id, first[0], "같은 물체인데 번호가 바뀌었다")
+        self.assertEqual(b2.track_id, first[1], "같은 물체인데 번호가 바뀌었다")
+
 if __name__ == "__main__":
     unittest.main()

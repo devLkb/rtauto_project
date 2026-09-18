@@ -321,7 +321,7 @@ def estimate_from_mask(d, inside, intr, shape, depth_shape):
 
     돌려주는 것: `ObjectCloud`(`estimated=True` 로 표시된다). 못 하면 `None`.
     """
-    from segment_objects import ObjectCloud
+    from segment_objects import GRASPABLE_MAX_M, MIN_SIZE_M, ObjectCloud
 
     if len(inside) < FEW_POINTS_MIN or intr is None:
         return None
@@ -340,6 +340,19 @@ def estimate_from_mask(d, inside, intr, shape, depth_shape):
     cx = (uc / sx - float(intr.ppx)) * z_med / float(intr.fx)
     cy = (vc / sy - float(intr.ppy)) * z_med / float(intr.fy)
     d_m = max(float(zz.max() - zz.min()), ESTIMATE_MIN_DEPTH_M)
+
+    # 🛑 **잡을 수 있는 크기 안에서만 추정한다** (2026-09-18 사용자 발견:
+    #    *"의미없는 주변부까지 사각형까지 탐지해버린다"*).
+    #
+    #    추정은 **근거가 약한 값**이다 — 거리값 몇 개와 테두리뿐이다. 어차피 손에 안
+    #    들어오는 크기까지 지어내면 화면만 어지럽고 판단에 보탬이 안 된다. 그래서
+    #    덩어리로 잰 물체보다 **더 좁은 상한**(잡을 수 있는 크기)을 쓴다.
+    #
+    #    ⚠️ 여기서 물러나도 물체가 사라지지는 않는다 — 점으로 잰 덩어리가 있으면
+    #       그쪽이 쓰인다(`split_by_boxes`). 지어낸 값만 안 쓰는 것이다.
+    big = max(w_m, h_m)
+    if not (MIN_SIZE_M <= big <= GRASPABLE_MAX_M):
+        return None
 
     n = int(band.sum())
     return ObjectCloud(
