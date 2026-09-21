@@ -117,10 +117,30 @@ def main(argv) -> int:
               avg < 90, "< 90% (다 같으면 배울 게 없다)")
     print()
 
-    # --- 5. 좌표 기준이 적혀 있는가 ---------------------------------------
-    print("5. 좌표 기준")
+    # --- 5. 좌표 기준이 "실물 D405로도 낼 수 있는" 것인가 -------------------
+    # 🛑 2026-09-21 코드 리뷰로 발견: 이 검사가 예전엔 정반대였다 — `frame == "object"`
+    #    (물체 기준)이면 **통과**로 쳤다. 그런데 "물체 기준"은 시뮬레이터가 아는
+    #    물체의 정답 위치(`env.block.get_root_transform()`)가 있어야만 계산할 수
+    #    있다. 실물 D405는 바로 그 정답 위치를 몰라서 이 문제를 푸는 것이므로,
+    #    "물체 기준"으로 맞춘 입력은 정답을 미리 알고 문제를 푼 것과 같다
+    #    (sim-to-real 입력 누수). 입력 배열에 물체 이름이 안 보인다고 해서 안전한 게
+    #    아니다 — 좌표값 자체가 이미 정답으로 정렬돼 있으면 그것도 누수다.
+    #    카메라가 스스로 아는 기준(camera)이나 로봇 밑동 기준(base)만 실물에서도
+    #    똑같이 만들 수 있다. 설계 원칙: docs/FESTA_PREGRASP_PLAN.md 재검토 필요.
+    print("5. 좌표 기준 — 실물 D405 추론 때도 똑같이 만들 수 있는가")
+    LEAKY_FRAMES = {"object"}                    # 시뮬레이터 정답이 있어야만 나옴
+    REPRODUCIBLE_FRAMES = {"camera", "base"}      # 카메라/로봇이 스스로 아는 기준
     frame = str(data["frame"]) if "frame" in keys else "(없음)"
-    check("점 덩어리와 자세가 같은 기준", frame, frame == "object", "object")
+    check("좌표 기준이 시뮬레이터 정답 없이도 나오는가", frame,
+          frame in REPRODUCIBLE_FRAMES,
+          "camera 또는 base — 'object'는 실물 추론 때 못 만든다(정답을 몰라서 풀려는 "
+          "문제이므로 순환)")
+    if frame in LEAKY_FRAMES:
+        print("     ⚠️ 이 데이터셋은 물체의 '정답' 자세(시뮬레이터만 아는 값)로 점 구름과")
+        print("        자세를 맞춰 정렬했다 — 실물 D405 추론 때는 그 정답을 몰라서 같은")
+        print("        방식으로 입력을 못 만든다. build_pose_dataset.py의 좌표 기준을")
+        print("        camera 또는 base로 다시 설계해야 한다(2026-09-21 코드 리뷰,")
+        print("        재설계는 아직 안 됨 — 이 시험이 그걸 넘어가지 못하게 막는다).")
 
     print()
     print("=" * 62)

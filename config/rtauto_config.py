@@ -269,6 +269,13 @@ DG5F_FRAME_TIMEOUT_S = float(_env("RTAUTO_DG5F_FRAME_TIMEOUT_S", "0.5"))
 GRASP_LIFT_HEIGHT_M = float(_env("RTAUTO_GRASP_LIFT_HEIGHT_M", "0.05"))
 GRASP_LIFT_SPEED_MPS = float(_env("RTAUTO_GRASP_LIFT_SPEED_MPS", "0.02"))
 
+#: 접근 시작 지점(pre-approach)에서 최종 파지 직전 자세까지 **마지막 직선 구간**의
+#: 속도(m/s). `arm/prepose_to_joints.py`의 `ArmMover.move_to()`가 이 구간만 moveL로
+#: 움직인다(P1-4, 2026-09-21) — 물체에 가까워지는 구간이라 GRASP_LIFT_SPEED_MPS와
+#: 비슷하게 느리게 잡는다. 접근 시작 지점까지 가는 구간(moveJ)은 이 값과 무관하게
+#: 기존 UR_MAX_DEG_PER_SEC(관절 속도)를 쓴다 — 그 구간은 물체 근처가 아니다.
+APPROACH_SPEED_MPS = float(_env("RTAUTO_APPROACH_SPEED_MPS", "0.05"))
+
 #: 들어올린 뒤 **일부러 조금 더 조여 보는** 각도(deg). 이것이 "집어보기"다.
 #: ⚠️ 왜 필요한가: 닿은 관절은 목표를 그 자리에 세워 두므로, 물체가 빠져도 손가락이
 #:    거의 안 움직인다(0.5도 수준). 그래서 "손가락이 더 닫혔나" 만 보면 놓친 것을

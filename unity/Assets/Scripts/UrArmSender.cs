@@ -55,6 +55,10 @@ public class UrArmSender : MonoBehaviour
 
     /// 실제 송신 포트. Inspector의 bridgePort는 .env가 없을 때의 기본값이다.
     public int ActivePort { get; private set; }
+    /// 실제 송신 IP. Inspector의 bridgeIp는 .env가 없을 때의 기본값이다 — UI는 이 값을
+    /// 봐야 한다(2026-09-21 코드 리뷰로 발견: 대기 중 표시가 Inspector 기본값을 그대로
+    /// 보여줘서 .env로 IP를 바꿔도 화면과 실제 송신 대상이 달라 보였다).
+    public string ActiveIp { get; private set; }
 
     ArticulationBody[] _joints;         // UrArmJointNames.Names 순서
     readonly float[] _deg = new float[ChannelCount];
@@ -68,7 +72,8 @@ public class UrArmSender : MonoBehaviour
     void Start()
     {
         ActivePort = RtautoConfig.GetInt("RTAUTO_PORT_UR_ARM_BRIDGE", bridgePort);
-        string ip = RtautoConfig.GetString("RTAUTO_UR_ARM_BRIDGE_IP", bridgeIp);
+        ActiveIp = RtautoConfig.GetString("RTAUTO_UR_ARM_BRIDGE_IP", bridgeIp);
+        string ip = ActiveIp;
 
         var bodies = GetComponentsInChildren<ArticulationBody>(true);
         _joints = new ArticulationBody[ChannelCount];
@@ -135,7 +140,10 @@ public class UrArmSender : MonoBehaviour
             sendEnabled = next;
             Debug.Log($"[UrArmSender] 송신 {(sendEnabled ? "ON" : "OFF")}");
         }
-        GUILayout.Label(sendEnabled ? _status : $"대기 — {bridgeIp}:{ActivePort}");
+        // ActiveIp(.env에서 읽은 실제 대상)를 본다 — bridgeIp는 .env가 없을 때의
+        // Inspector 기본값일 뿐이라, 그걸 그대로 보여주면 .env로 IP를 바꿔도 화면이
+        // 안 바뀌어서 실제 송신 대상과 어긋나 보인다(2026-09-21 수정).
+        GUILayout.Label(sendEnabled ? _status : $"대기 — {ActiveIp}:{ActivePort}");
         GUILayout.EndArea();
     }
 

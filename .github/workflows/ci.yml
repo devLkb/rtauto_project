@@ -50,3 +50,20 @@ jobs:
         run: |
           python -m unittest vision.d405.tests.test_segment_objects -v
           python -m unittest vision.d405.tests.test_yolo_assist -v
+
+  superdex-python-tests:
+    name: SuperDex 순수 로직 시험 (Python 3.12, 물리·GPU 없이)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 최소 의존성 설치 (requirements-ci-superdex.txt — superdex/lab/ray/torch 전체는 안 올림)
+        run: pip install -r requirements-ci-superdex.txt
+      - name: superdex/ 문법 검사 (의존성 설치 없이도 되지만 같은 잡에서 한 번 더)
+        run: python -m compileall -q superdex -x '(^|/)(\.venv|vendor|__pycache__|results|assets|policies)(/|$)'
+      - name: 데이터셋 좌표 기준 게이트 — object 프레임(시뮬레이터 정답 필요)을 거절하는지
+        run: python -m unittest superdex.tests.test_pose_dataset_frame_gate -v
+      - name: 예측기 입력 변환 — torch 없이 도는 _features()/load_pairs() 순수 로직
+        run: python -m unittest superdex.tests.test_train_pose_predictor_features -v

@@ -1,0 +1,7 @@
+# CI 전용 — superdex/ 쪽 순수 로직 시험만 돌리기 위한 최소 의존성 (Python 3.12).
+# requirements-superdex.txt(superdex-lab, ray[rllib], torch 등 물리·강화학습 스택
+# 전체)는 CI에 올리지 않는다 — GPU도 없고, 이 시험들은 애초에 그 스택을 쓰지 않는다
+# (superdex/scripts/train_pose_predictor.py는 torch를 모듈 최상단에서 import하지
+# 않고 make_model(torch, nn)처럼 인자로 받는 구조라 torch 없이도 _features()/
+# load_pairs()를 시험할 수 있다). 2026-09-21, 코드 리뷰 우선순위 P2-4.
+numpy

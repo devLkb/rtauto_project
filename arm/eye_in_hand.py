@@ -53,6 +53,10 @@ import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "config"))
+# tool0_pose_from_joints()가 arm.prepose_to_joints를 "arm 패키지" 경로로 지역
+# 임포트한다(원칙 1 — URDF 기구학 정본을 여기서 다시 만들지 않는다) — 그러려면
+# 리포 루트 자체가 sys.path에 있어야 한다(위 config/ 추가와는 별개).
+sys.path.insert(0, str(REPO_ROOT))
 
 import rtauto_config as cfg  # noqa: E402  (장착값의 유일한 출처 — 원칙 1)
 
@@ -93,6 +97,12 @@ def pose_to_matrix(pose6: Sequence[float]) -> np.ndarray:
     return out
 
 
+#: `CameraMount.parent_link`으로 지금 계산이 지원하는 값. `camera_to_base()`가
+#: tool0 자세를 직접 요구하므로(아래 함수 docstring 참고) 다른 링크는 아직 지원하지
+#: 않는다 — 조용히 틀리느니 명시적으로 거절한다(2026-09-21 코드 리뷰).
+SUPPORTED_MOUNT_PARENTS = ("tool0",)
+
+
 @dataclass(frozen=True)
 class CameraMount:
     """카메라가 팔 끝의 어디에 어떤 방향으로 붙었나.
@@ -127,27 +137,62 @@ class CameraMount:
                 "RTAUTO_D405_MOUNT_RPY_DEG 를 실측값으로 채울 것.")
 
 
-def camera_to_base(tcp_pose6: Sequence[float],
+def camera_to_base(tool0_pose6: Sequence[float],
                    mount: Optional[CameraMount] = None) -> np.ndarray:
     """**카메라 기준 → 로봇 바닥 기준** 변환 4x4.
 
-    `tcp_pose6` 는 팔이 알려 주는 지금 팔 끝 자세 (x, y, z, rx, ry, rz).
+    `tool0_pose6` 는 **tool0** 자세(x, y, z, rx, ry, rz)여야 한다 — `mount.parent_link`
+    가 `"tool0"` 이기 때문이다(장착값을 그 기준으로 쟀다는 뜻).
+
+    🛑 **`RTDEReceiveInterface.getActualTCPPose()`를 그대로 넣지 마라 (2026-09-21
+    코드 리뷰로 발견한 실제 버그).** 그 값은 tool0가 아니라 **컨트롤러에 지금 설정된
+    활성 TCP**(DG5F 손끝 TCP 등일 수 있다) 자세다. 둘이 다르면 카메라 좌표가 활성
+    TCP 오프셋만큼 조용히 어긋난다. 관절각(`getActualQ()`)에서 직접 계산하려면
+    `tool0_pose_from_joints()`를 쓴다 — 활성 TCP 설정이 뭐든 상관없다.
     """
     mount = mount or CameraMount.from_config()
-    return pose_to_matrix(tcp_pose6) @ mount.matrix()
+    if mount.parent_link not in SUPPORTED_MOUNT_PARENTS:
+        raise ValueError(
+            "카메라 장착 기준 링크 '{}'는 아직 지원하지 않는다(지원: {}) — "
+            "RTAUTO_D405_MOUNT_PARENT를 확인하라. 조용히 틀린 계산을 하느니 "
+            "여기서 멈춘다.".format(mount.parent_link, ", ".join(SUPPORTED_MOUNT_PARENTS))
+        )
+    return pose_to_matrix(tool0_pose6) @ mount.matrix()
 
 
-def points_to_base(points_cam, tcp_pose6, mount=None):
+def points_to_base(points_cam, tool0_pose6, mount=None):
     """카메라가 본 점들(카메라 기준, m)을 **로봇 바닥 기준**으로 옮긴다.
+
+    `tool0_pose6` 에 대한 주의사항은 `camera_to_base()` 참고 — 활성 TCP 자세를
+    그대로 넣으면 안 된다.
 
     돌려주는 것: `(옮긴 점들, 경고 문구 또는 None)`. 경고를 **일부러 함께 돌려준다** —
     안 잰 장착값으로 나온 좌표가 조용히 쓰이면 안 되기 때문이다.
     """
     mount = mount or CameraMount.from_config()
     pts = np.asarray(points_cam, dtype=float).reshape(-1, 3)
-    t = camera_to_base(tcp_pose6, mount)
+    t = camera_to_base(tool0_pose6, mount)
     moved = pts @ t[:3, :3].T + t[:3, 3]
     return moved, mount.warning()
+
+
+def tool0_pose_from_joints(q6: Sequence[float]) -> Tuple[float, float, float, float, float, float]:
+    """팔 관절각(rad) 6개로 **tool0** 자세를 직접 계산한다 — 활성 TCP 설정과 무관하다.
+
+    `RTDEReceiveInterface.getActualTCPPose()`는 컨트롤러에 지금 설정된 활성 TCP
+    기준이라 카메라 장착값(tool0 기준)과 섞어 쓰면 안 된다(위 `camera_to_base()`
+    경고 참고). 관절각에서 직접 순기구학으로 계산하면 활성 TCP가 뭐든 상관없다 —
+    URDF가 좌표계의 유일한 정본이라는 이 리포의 원칙과도 맞는다.
+
+    `getActualQ()`만 있으면 되고 컨트롤 연결(Remote Control)은 필요 없다.
+    """
+    # arm.prepose_to_joints가 URDF 기구학의 정본을 이미 갖고 있다 — 여기서 다시
+    # 만들지 않는다(원칙 1). 무거운 top-level 의존을 피하려고 지역 임포트로 둔다.
+    from arm.prepose_to_joints import RobotChain, baselink_transform_to_ur_pose
+
+    chain = RobotChain()
+    pose = baselink_transform_to_ur_pose(chain.forward_kinematics(q6), chain)
+    return tuple(float(v) for v in pose)
 
 
 def intrinsics(width: int, height: int):
@@ -227,13 +272,23 @@ def _check(ip: Optional[str]) -> int:
     print("팔에 연결: {}".format(target))
     recv = rtde_receive.RTDEReceiveInterface(target)
     try:
-        pose = list(recv.getActualTCPPose())
+        active_tcp_pose = list(recv.getActualTCPPose())
+        q6 = list(recv.getActualQ())
     finally:
         recv.disconnect()
-    print("지금 팔 끝 자세: ({:+.4f}, {:+.4f}, {:+.4f}) m".format(*pose[:3]))
+    tool0_pose = tool0_pose_from_joints(q6)
+    print("지금 팔 끝(tool0) 자세      : ({:+.4f}, {:+.4f}, {:+.4f}) m — 카메라 계산은 이 값을 쓴다".format(
+        *tool0_pose[:3]))
+    print("지금 컨트롤러 활성 TCP 자세 : ({:+.4f}, {:+.4f}, {:+.4f}) m — getActualTCPPose(), 참고용".format(
+        *active_tcp_pose[:3]))
+    gap_mm = math.dist(tool0_pose[:3], active_tcp_pose[:3]) * 1000.0
+    if gap_mm > 1.0:
+        print("  ⚠️ 활성 TCP가 tool0에서 {:.1f} mm 떨어져 있다 — 컨트롤러에 손끝 TCP가 "
+              "따로 설정돼 있다는 뜻이다(정상일 수 있다, DG5F 등). 카메라 계산에는 "
+              "위 tool0 자세만 쓴다.".format(gap_mm))
 
     # 카메라 바로 앞 10 cm 에 점이 하나 있다고 치고 로봇 좌표로 옮겨 본다
-    moved, _ = points_to_base([[0.0, 0.0, 0.10]], pose, mount)
+    moved, _ = points_to_base([[0.0, 0.0, 0.10]], tool0_pose, mount)
     print("카메라 앞 10 cm 의 점 → 로봇 기준 ({:+.4f}, {:+.4f}, {:+.4f}) m".format(
         *moved[0]))
     if not mount.measured:
