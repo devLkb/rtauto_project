@@ -24,7 +24,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import depth_stack                                     # noqa: E402
-from yolo_assist import Detection, split_by_boxes, ESTIMATE_BAND_M   # noqa: E402
+from yolo_assist import (Detection, split_by_boxes, ESTIMATE_BAND_M,   # noqa: E402
+                         find_objects_hybrid)
 import rtauto_config as cfg                            # noqa: E402  (yolo_assist가 먼저 sys.path를 잡아 둔다)
 
 
@@ -180,6 +181,69 @@ class TestOwnership(unittest.TestCase):
 
         self.assertEqual(objs, [], "사람 영역에서 잡을 물체를 만들었다")
         self.assertEqual(len(rest), 0, "사람 영역의 점이 geometry fallback 후보로 남았다")
+
+
+class TestGeometryFallbackToggle(unittest.TestCase):
+    """`find_objects_hybrid(geometry_fallback=...)` — 2026-09-21 사용자 결정으로
+    `yolo_assist.py` 의 기본값은 꺼짐(`False`)이지만, 함수 자체의 기본값은 켜짐
+    (`True`, 기존 호출부·시험과 호환)이다. 여기서는 둘 다 명시적으로 확인한다.
+
+    `segment_objects.find_objects()`(평면 제거 + RANSAC 군집화)는 다른 시험에서
+    이미 검증돼 있다 — 여기서는 **그걸 다시 재현하지 않고**, "꺼져 있으면 아예 안
+    부른다 / 켜져 있으면 결과를 합친다"는 `find_objects_hybrid()` 자체의 분기만
+    가짜(`find_objects`)로 갈아끼워 확인한다.
+    """
+
+    def _scene_with_one_yolo_object(self):
+        det = _cup_detection(280, 190, 360, 290, conf=0.9, name="cup")
+        pts, pix = _points_on_rect(280, 190, 360, 290, z=0.25)
+        return pts, pix, det
+
+    def test_fallback_on_calls_geometry_and_merges_its_result(self):
+        import unittest.mock as mock
+
+        import segment_objects
+
+        pts, pix, det = self._scene_with_one_yolo_object()
+        fake_shape_obj = segment_objects.ObjectCloud(
+            points=np.zeros((10, 3), np.float32), center=np.array([1.0, 1.0, 0.9]),
+            size=np.array([0.05, 0.05, 0.05]), n_points=10)
+        with mock.patch("segment_objects.find_objects",
+                        return_value=([fake_shape_obj], np.zeros((0, 3)), "가짜 설명")) as m:
+            objs, note, dets = find_objects_hybrid(
+                pts, pix, np.zeros((*COLOR_SHAPE, 3), np.uint8), None,
+                depth_shape=DEPTH_SHAPE, intr=_Intr, dets=[det], geometry_fallback=True)
+        m.assert_called_once()
+        self.assertEqual(len(objs), 2, "안전망을 켰는데 가짜 모양 물체가 안 섞였다")
+        self.assertIn("모양으로 추가 1개", note)
+
+    def test_fallback_off_never_calls_geometry(self):
+        import unittest.mock as mock
+
+        import segment_objects
+
+        pts, pix, det = self._scene_with_one_yolo_object()
+        with mock.patch("segment_objects.find_objects") as m:
+            objs, note, dets = find_objects_hybrid(
+                pts, pix, np.zeros((*COLOR_SHAPE, 3), np.uint8), None,
+                depth_shape=DEPTH_SHAPE, intr=_Intr, dets=[det], geometry_fallback=False)
+        m.assert_not_called()
+        self.assertEqual(len(objs), 1, "안전망을 껐는데 물체 수가 달라졌다")
+        self.assertEqual(objs[0].source, "YOLO:cup 90%")
+        self.assertIn("안전망 꺼짐", note)
+
+    def test_default_keeps_old_behavior_for_existing_callers(self):
+        """함수 차원의 기본값은 `True` — 기존 호출부·시험을 깨면 안 된다."""
+        import unittest.mock as mock
+
+        import segment_objects
+
+        pts, pix, det = self._scene_with_one_yolo_object()
+        with mock.patch("segment_objects.find_objects") as m:
+            m.return_value = ([], np.zeros((0, 3)), "가짜 설명")
+            find_objects_hybrid(pts, pix, np.zeros((*COLOR_SHAPE, 3), np.uint8), None,
+                                depth_shape=DEPTH_SHAPE, intr=_Intr, dets=[det])
+        m.assert_called_once()
 
 
 class TestOutOfRangeNoise(unittest.TestCase):

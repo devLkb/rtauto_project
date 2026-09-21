@@ -1,8 +1,22 @@
 # -*- coding: utf-8 -*-
-"""**배운 물체는 YOLO 로 가르고, 못 찾은 곳은 모양으로 나눈다** — 둘을 같이 쓴다.
+"""**배운 물체는 YOLO 로 찾는다.** 모양(geometry) 안전망은 옵션으로 켤 수 있다.
 
-왜 둘을 같이 쓰나
------------------
+🛑 **2026-09-21 사용자 결정 — 모양(geometry) 안전망은 기본이 꺼져 있다.**
+이전 판은 "모양만 보고" 나누는 안전망을 항상 같이 돌렸다. 그런데:
+
+- **지금(페스타 2026-11-13까지) 목표는 "상식적인 범위"의 물건을 YOLO 로 확실히
+  인식하는 것**이지, 진짜 이름 없는 미지의 형상까지 잡는 것이 아니다(사용자 확인,
+  `ai_festa_plan.md` §8-2). 그건 **페스타 이후 별도 과제**다.
+- 잡으러 갈 후보는 이미 YOLO 만 신뢰한다(`segment_objects.is_grasp_candidate()`),
+  그래서 안전망이 켜져 있어도 실제 행동에는 안 쓰인다 — 화면만 복잡해진다.
+- 안전망은 반사되는 물체(페트병 등)에서 거리값이 끊겨 **한 물체를 여러 조각으로
+  쪼개는 원인**이 됐다(2026-09-21 실측) — 꺼 두면 이 혼란이 사라진다.
+
+**필요하면 언제든 `--geometry-fallback` 로 켤 수 있다** — 코드는 그대로 남아 있다.
+아래는 **켰을 때**의 설계 배경이다(꺼도 유효한 설명이니 지우지 않는다).
+
+왜 둘을 같이 쓰는 모드가 있나 (`--geometry-fallback`)
+------------------------------------------------------
 `segment_objects.py` 는 **모양만 보고** 나눈다. 처음 보는 물체에도 되는 것이 장점인데,
 **붙어 있으면 못 가른다** — 사용자가 화면에서 찾았다(2026-09-18):
 
@@ -18,9 +32,9 @@ YOLO 는 그 반대다. **붙어 있어도 하나씩 가르지만 배운 종류�
 붙어 있는 물체 가르기     ❌ 못 가른다                 ✅ 가른다
 ======================  ==========================  ==========================
 
-🛑 **YOLO 로 갈아타는 것이 아니다.** `CLAUDE.md` 프로젝트 목적은 **처음 보는 물체**를
-잡는 것이다. YOLO 만 쓰면 배운 9종 밖에서는 아무것도 못 한다. 그래서 **YOLO 는 도우미**고,
-못 찾았을 때는 모양으로 나누는 쪽이 계속 답을 낸다.
+🛑 **YOLO 로 완전히 갈아탄 것도 아니다.** `--geometry-fallback` 을 켜면 YOLO 가
+못 찾은 나머지도 화면에 **참고용**으로 보여준다(잡으러 갈 후보에는 여전히 안 쓴다).
+진짜 미지 형상 일반화 작업을 다시 시작하면 이 옵션부터 켤 것.
 
 쓰는 모델 — **YOLOE** (글자로 찾을 것을 정한다)
 ------------------------------------------------
@@ -88,6 +102,10 @@ YOLO 는 "여기 컵이 있다" 를 정확히 말하는데, **흰 종이컵은 �
 
     vision/.vision/Scripts/Activate.ps1
     python vision/d405/yolo_assist.py --live
+
+모양(geometry) 안전망도 참고로 보고 싶을 때:
+
+    python vision/d405/yolo_assist.py --live --geometry-fallback
 
 한 장만 찍어 보기:
 
@@ -478,11 +496,16 @@ def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
 
 
 def find_objects_hybrid(points, pixel_xy, color_bgr, detector, near=None, far=None,
-                        depth_shape=None, intr=None, dets=None):
-    """**YOLO 로 먼저 가르고, 남은 곳은 모양으로 나눈다.**
+                        depth_shape=None, intr=None, dets=None, geometry_fallback=True):
+    """**YOLO 로 먼저 가르고**, `geometry_fallback=True` 면 **남은 곳은 모양으로도 나눈다.**
 
     `depth_shape` 와 `intr` 를 주면 **거리값이 듬성듬성한 물체도** 위치·크기를 낸다.
     `dets` 를 미리 주면 YOLO 를 **다시 돌리지 않는다**(화면에도 그려야 하므로 한 번만 돈다).
+
+    🛑 **`geometry_fallback` 기본은 함수 차원에서는 `True`** (기존 호출부·시험과
+    호환 유지). 하지만 `yolo_assist.py` 의 대화형 도구(`main()`)는 **기본을 꺼서
+    부른다**(2026-09-21 사용자 결정) — 자세한 이유는 `main()`의 `--geometry-fallback`
+    플래그 설명 참고.
 
     돌려주는 것: `(물체 목록, 설명 문구, YOLO 가 찾은 것들)`
     """
@@ -494,11 +517,23 @@ def find_objects_hybrid(points, pixel_xy, color_bgr, detector, near=None, far=No
                                  depth_shape=depth_shape, intr=intr,
                                  near=near, far=far)
 
+    found = ", ".join("{} {:.0%}".format(d.name, d.conf) for d in dets) or "없음"
+
+    if not geometry_fallback:
+        # 평면 제거·군집화 자체를 **안 돈다** — 꺼 둔 상태에서 결과만 버리는 게
+        # 아니라 계산도 안 하는 것이 목적이다(계산 자체가 낭비이기도 하고, 화면에
+        # 안 쓸 결과를 만드느라 시간을 쓸 이유가 없다).
+        objs = list(boxed)
+        objs.sort(key=lambda o: -o.n_points)
+        guess = sum(1 for o in objs if o.estimated)
+        extra = " / 거리값이 모자라 추정한 것 {}개".format(guess) if guess else ""
+        return objs, "YOLO: {} / 모양 안전망 꺼짐(--geometry-fallback 로 켤 수 있다){}".format(
+            found, extra), dets
+
     shape_objs, _, note = find_objects(rest, near=near, far=far)
 
     objs = boxed + shape_objs
     objs.sort(key=lambda o: -o.n_points)
-    found = ", ".join("{} {:.0%}".format(d.name, d.conf) for d in dets) or "없음"
     guess = sum(1 for o in objs if o.estimated)
     extra = " / 거리값이 모자라 추정한 것 {}개".format(guess) if guess else ""
     return objs, "YOLO: {} / 모양으로 추가 {}개 ({}){}".format(
@@ -528,6 +563,14 @@ def main() -> int:
                     help="거리 사진 몇 장을 합칠지. **흰 종이컵처럼 값이 깜빡이는 물체**를 "
                          "건지는 수단이다(지어내지 않는다). 기본: 한 장 찍기는 {}장, "
                          "실시간은 1장".format(depth_stack.DEFAULT_FRAMES))
+    ap.add_argument("--geometry-fallback", action="store_true",
+                    help="YOLO가 못 찾은 나머지를 모양(geometry)으로도 잡아 화면에 "
+                         "회색 '참고용'으로 보여준다. **기본은 꺼져 있다**(2026-09-21 "
+                         "사용자 결정 — 지금 목표는 '상식적 범위'를 YOLO로 확실히 "
+                         "인식하는 것이고, 진짜 미지 형상 일반화는 페스타 이후 별도 "
+                         "과제다: ai_festa_plan.md §8-2). 켜면 잡으러 갈 후보에는 "
+                         "여전히 안 쓰인다(is_grasp_candidate가 YOLO만 신뢰) — 화면 "
+                         "참고·디버깅용으로만 켤 것")
     args = ap.parse_args()
 
     if not (args.live or args.save):
@@ -555,8 +598,16 @@ def main() -> int:
         print("확신 기준 {:.0%} 이상만 믿는다 (잠정값 — 이 모델 성적을 우리가 모른다)".format(
             args.conf))
     else:
-        print("⚠️ YOLO 를 못 쓴다 ({}) — **모양으로 나누기만 돈다**".format(det.why))
-    print("🛑 YOLO 로 갈아타는 것이 아니다. 배운 9종 밖은 모양 쪽이 계속 답을 낸다.")
+        print("⚠️ YOLO 를 못 쓴다 ({})".format(det.why))
+        if not args.geometry_fallback:
+            print("🛑 모양(geometry) 안전망도 꺼져 있다 — **이 상태로는 물체를 하나도 "
+                  "못 찾는다.** --geometry-fallback 를 주거나 YOLO 모델을 고칠 것.")
+    if args.geometry_fallback:
+        print("모양(geometry) 안전망 켜짐 — YOLO가 못 찾은 나머지도 화면에 참고용으로 "
+              "보여준다(잡으러 갈 후보에는 안 쓰인다).")
+    else:
+        print("🛑 모양(geometry) 안전망 꺼짐(기본값) — 지금 목표(상식적 범위)는 YOLO로 "
+              "충분하다는 2026-09-21 결정. 켜려면 --geometry-fallback.")
     if n_frames > 1:
         print("거리 사진 {}장을 합친다 — 깜빡이는 화소를 건진다(없는 값은 안 지어낸다). "
               "⚠️ 카메라가 멈춰 있을 때만 맞다.".format(n_frames))
@@ -591,7 +642,8 @@ def main() -> int:
             pts, pix = _to_points(depth_m, intr)
             objs, note, dets = find_objects_hybrid(
                 pts, pix, color, det, near, far,
-                depth_shape=depth_m.shape, intr=intr)
+                depth_shape=depth_m.shape, intr=intr,
+                geometry_fallback=args.geometry_fallback)
             objs = tracker.update(objs)
 
             paint = colorize(depth_m, near, far)
