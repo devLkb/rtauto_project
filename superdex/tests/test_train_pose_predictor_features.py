@@ -31,6 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "config"))
 sys.path.insert(0, str(REPO_ROOT / "superdex" / "scripts"))
 
+from dataset_contract import DatasetContractError  # noqa: E402
 from train_pose_predictor import (  # noqa: E402
     BAD_RATE, GOOD_RATE, _features, load_pairs,
 )
@@ -58,7 +59,7 @@ class TestFeatures(unittest.TestCase):
         np.testing.assert_allclose(cloud_f[0], [0.0, 0.0, 0.0], atol=1e-5)
 
 
-def _write_dataset(path: Path) -> None:
+def _write_dataset(path: Path, frame="camera", include_frame=True) -> None:
     """물체 2종(a, b), 자세 5개(좋음/나쁨/애매 섞임) — load_pairs()가 애매한 것을
     빼고 물체별로 점 구름을 제대로 짝짓는지 보는 최소 데이터셋."""
     rng = np.random.default_rng(1)
@@ -77,12 +78,14 @@ def _write_dataset(path: Path) -> None:
     pose_tilt = np.array([1.0, 999.0, 1.0, 1.0, 999.0], dtype=np.float32)
     pose_object = np.array(["a", "a", "a", "b", "b"], dtype=object)
 
-    np.savez_compressed(
-        path, points=points, cloud_start=cloud_start, cloud_object=cloud_object,
+    kwargs = dict(
+        points=points, cloud_start=cloud_start, cloud_object=cloud_object,
         pose_pos=pose_pos, pose_quat=pose_quat, pose_rate=pose_rate,
-        pose_tilt=pose_tilt, pose_object=pose_object,
-        frame=np.asarray("camera"), made_from=np.asarray("test"),
+        pose_tilt=pose_tilt, pose_object=pose_object, made_from=np.asarray("test"),
     )
+    if include_frame:
+        kwargs["frame"] = np.asarray(frame)
+    np.savez_compressed(path, **kwargs)
 
 
 class TestLoadPairs(unittest.TestCase):
@@ -131,6 +134,53 @@ class TestLoadPairs(unittest.TestCase):
             samples, _ = load_pairs(str(path))
         labels = {s[4]: s[2] for s in samples}
         self.assertEqual(labels[0], 0.0, "성공률은 좋지만 기울기가 나쁜 자세가 좋은 것으로 잘못 라벨링됨")
+
+
+class TestLoadPairsFrameGate(unittest.TestCase):
+    """`load_pairs()` 자체가 좌표 기준(frame)을 거절/허용하는지(P1-6).
+
+    `test_pose_dataset.py`(검사 스크립트)가 거절해도 `train_pose_predictor.py`
+    (실제 학습 진입점)가 따로 안 보면 새는 게 그대로였다 — 이 시험은 검사 스크립트가
+    아니라 `load_pairs()` 를 직접 불러서 확인한다.
+    """
+
+    def test_object_frame_is_rejected_by_load_pairs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "leaky.npz"
+            _write_dataset(path, frame="object")
+            with self.assertRaises(DatasetContractError):
+                load_pairs(str(path))
+
+    def test_camera_frame_is_accepted_by_load_pairs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "camera.npz"
+            _write_dataset(path, frame="camera")
+            samples, objects = load_pairs(str(path))
+        self.assertTrue(samples)
+        self.assertEqual(sorted(objects), ["a", "b"])
+
+    def test_base_frame_is_accepted_by_load_pairs(self):
+        """base(로봇 밑동) 기준도 설계상 실물에서 재현 가능하므로 허용돼야 한다."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "base.npz"
+            _write_dataset(path, frame="base")
+            samples, objects = load_pairs(str(path))
+        self.assertTrue(samples)
+        self.assertEqual(sorted(objects), ["a", "b"])
+
+    def test_missing_frame_metadata_is_rejected_by_load_pairs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "no_frame.npz"
+            _write_dataset(path, include_frame=False)
+            with self.assertRaises(ValueError):
+                load_pairs(str(path))
+
+    def test_unknown_frame_is_rejected_by_load_pairs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "unknown.npz"
+            _write_dataset(path, frame="world")
+            with self.assertRaises(DatasetContractError):
+                load_pairs(str(path))
 
 
 if __name__ == "__main__":

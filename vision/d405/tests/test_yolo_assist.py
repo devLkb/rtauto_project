@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import depth_stack                                     # noqa: E402
 from yolo_assist import Detection, split_by_boxes      # noqa: E402
+import rtauto_config as cfg                            # noqa: E402  (yolo_assist가 먼저 sys.path를 잡아 둔다)
 
 
 class _Intr:
@@ -122,6 +123,50 @@ class TestSparseDepth(unittest.TestCase):
 
         self.assertEqual(objs, [], "거리값이 없는데 물체를 지어냈다")
         self.assertEqual(len(rest), len(far_pts))
+
+
+class TestOutOfRangeNoise(unittest.TestCase):
+    """D405 가 못 믿는 거리(너무 가깝거나 먼)의 잡음이 진짜 물체를 밀어내면 안 된다.
+
+    2026-09-21 코드 리뷰로 발견: `split_by_boxes()`가 `near`/`far` 검사를 전혀 안 해서,
+    렌즈 코앞 반사 같은 잡음이 YOLO 박스 안에 섞이면 `_merge_pieces()`가 "가장 가까운
+    조각"을 고르는 로직 때문에 그 잡음을 물체로 내고 진짜 물체는 사라졌다.
+    """
+
+    def test_near_camera_noise_does_not_replace_the_real_object(self):
+        det = _cup_detection(280, 190, 360, 290)
+        real, real_pix = _points_on_rect(280, 190, 360, 290, z=0.25)
+        # D405_NEAR_M(기본 0.07m)보다 훨씬 가까운 잡음 — 렌즈 반사 등으로 흔히 생긴다.
+        noise_z = cfg.D405_NEAR_M / 2.0
+        noise, noise_pix = _points_on_rect(280, 190, 360, 290, z=noise_z)
+
+        pts = np.vstack([real, noise])
+        pix = (np.concatenate([real_pix[0], noise_pix[0]]),
+              np.concatenate([real_pix[1], noise_pix[1]]))
+
+        objs, _ = split_by_boxes(pts, pix, [det], COLOR_SHAPE,
+                                 depth_shape=DEPTH_SHAPE, intr=_Intr)
+
+        self.assertEqual(len(objs), 1, "잡음과 실제 물체가 하나로 합쳐지거나 사라졌다")
+        self.assertAlmostEqual(objs[0].distance_m, 0.25, delta=0.01,
+                               msg="믿을 수 없는 거리의 잡음이 실제 물체 대신 뽑혔다")
+
+    def test_far_background_noise_is_dropped_too(self):
+        det = _cup_detection(280, 190, 360, 290)
+        real, real_pix = _points_on_rect(280, 190, 360, 290, z=0.25)
+        # D405_FAR_M(기본 0.50m)보다 훨씬 먼 점 — 잘 안 잡히는 먼 배경.
+        far_z = cfg.D405_FAR_M * 2.0
+        far, far_pix = _points_on_rect(280, 190, 360, 290, z=far_z)
+
+        pts = np.vstack([real, far])
+        pix = (np.concatenate([real_pix[0], far_pix[0]]),
+              np.concatenate([real_pix[1], far_pix[1]]))
+
+        objs, _ = split_by_boxes(pts, pix, [det], COLOR_SHAPE,
+                                 depth_shape=DEPTH_SHAPE, intr=_Intr)
+
+        self.assertEqual(len(objs), 1)
+        self.assertAlmostEqual(objs[0].distance_m, 0.25, delta=0.01)
 
 
 class TestDepthStack(unittest.TestCase):

@@ -59,6 +59,12 @@ public class UrArmSender : MonoBehaviour
     /// 봐야 한다(2026-09-21 코드 리뷰로 발견: 대기 중 표시가 Inspector 기본값을 그대로
     /// 보여줘서 .env로 IP를 바꿔도 화면과 실제 송신 대상이 달라 보였다).
     public string ActiveIp { get; private set; }
+    /// 관절 6개가 **전부** 매핑됐는가. false면 어떤 경우에도 송신하지 않는다(fail-closed,
+    /// 2026-09-21 코드 리뷰 P1-3) — 예전에는 못 찾은 관절 채널에 0도를 채워서 나머지
+    /// 5개가 정상이어도 그대로 6채널 패킷을 실물에 보냈다. 관절 하나를 못 찾았다는 것은
+    /// 씬 구성이 예상과 다르다는 뜻이라, "일부라도 보내는" 것보다 "아예 안 보내는" 쪽이
+    /// 훨씬 안전하다.
+    public bool MappingComplete => _foundJoints == ChannelCount;
 
     ArticulationBody[] _joints;         // UrArmJointNames.Names 순서
     readonly float[] _deg = new float[ChannelCount];
@@ -85,6 +91,19 @@ public class UrArmSender : MonoBehaviour
             else Debug.LogError($"[UrArmSender] 관절 못 찾음: {name}");
         }
 
+        if (!MappingComplete && sendEnabled)
+        {
+            // fail-closed(P1-3, 2026-09-21) — 관절이 다 안 잡혔는데 송신이 켜진 채로
+            // 시작하면, 없는 관절 채널에 0도를 채워 실물/URSim에 보내게 된다. 자동으로
+            // 다시 켜지 않는다 — 씬 구성을 고친 뒤 사람이 직접 다시 켜야 한다.
+            sendEnabled = false;
+            Debug.LogError(
+                $"[UrArmSender] 관절 매핑이 {_foundJoints}/{ChannelCount}개뿐이라 "
+                + "송신을 강제로 껐다(fail-closed). 없는 관절에 0도를 채워 보내면 "
+                + "실물이 엉뚱하게 움직일 수 있다 — 씬의 ArticulationBody 이름을 "
+                + "UrArmJointNames.Names와 대조해 고친 뒤 다시 켤 것.", this);
+        }
+
         try
         {
             _client = new UdpClient();
@@ -105,13 +124,25 @@ public class UrArmSender : MonoBehaviour
     void FixedUpdate()
     {
         if (!sendEnabled || _client == null || _joints == null) return;
+        // 안전망(P1-3) — Start()가 관절 매핑 불완전을 이미 걸렀지만, 인스펙터에서
+        // sendEnabled를 나중에 다시 켜는 경로(OnGUI 토글 등)까지 전부 여기서 한 번 더
+        // 막는다. 없는 관절에 0도를 채워 보내지 않는다 — 아예 패킷을 안 보낸다.
+        if (!MappingComplete)
+        {
+            if (Time.time - _lastSend >= 1f)  // 콘솔 도배 방지 — 1초에 한 번만 경고
+            {
+                _lastSend = Time.time;
+                _status = $"송신 차단됨 — 관절 매핑 {_foundJoints}/{ChannelCount}개뿐";
+                Debug.LogWarning("[UrArmSender] " + _status);
+            }
+            return;
+        }
         if (Time.time - _lastSend < 1f / Mathf.Max(1f, sendHz)) return;
         _lastSend = Time.time;
 
         for (int i = 0; i < ChannelCount; i++)
         {
             var ab = _joints[i];
-            if (ab == null) { _deg[i] = 0f; continue; }
             _deg[i] = sendCommandedAngle
                 ? ab.xDrive.target
                 : (ab.dofCount > 0 ? ab.jointPosition[0] * Mathf.Rad2Deg : 0f);
@@ -137,13 +168,31 @@ public class UrArmSender : MonoBehaviour
         bool next = GUILayout.Toggle(sendEnabled, sendEnabled ? " UR 송신 ON" : " UR 송신 OFF");
         if (next != sendEnabled)
         {
-            sendEnabled = next;
-            Debug.Log($"[UrArmSender] 송신 {(sendEnabled ? "ON" : "OFF")}");
+            // fail-closed(P1-3) — 관절 매핑이 불완전하면 사용자가 토글을 눌러도 실제로는
+            // 켜지지 않는다. 왜 안 켜지는지 로그로 남긴다(조용히 무시하지 않는다).
+            if (next && !MappingComplete)
+            {
+                Debug.LogWarning(
+                    $"[UrArmSender] 관절 매핑이 {_foundJoints}/{ChannelCount}개뿐이라 "
+                    + "송신을 켤 수 없다 — 씬의 ArticulationBody 구성을 먼저 고칠 것.", this);
+            }
+            else
+            {
+                sendEnabled = next;
+                Debug.Log($"[UrArmSender] 송신 {(sendEnabled ? "ON" : "OFF")}");
+            }
         }
         // ActiveIp(.env에서 읽은 실제 대상)를 본다 — bridgeIp는 .env가 없을 때의
         // Inspector 기본값일 뿐이라, 그걸 그대로 보여주면 .env로 IP를 바꿔도 화면이
         // 안 바뀌어서 실제 송신 대상과 어긋나 보인다(2026-09-21 수정).
-        GUILayout.Label(sendEnabled ? _status : $"대기 — {ActiveIp}:{ActivePort}");
+        string status;
+        if (!MappingComplete)
+            status = $"⚠ 송신 차단됨 — 관절 매핑 {_foundJoints}/{ChannelCount}개뿐";
+        else if (sendEnabled)
+            status = _status;
+        else
+            status = $"대기 — {ActiveIp}:{ActivePort}";
+        GUILayout.Label(status);
         GUILayout.EndArea();
     }
 

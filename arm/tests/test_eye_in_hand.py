@@ -20,16 +20,18 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from arm.eye_in_hand import (  # noqa: E402
-    CameraMount, camera_to_base, depth_to_points_cam, intrinsics, points_to_base,
-    pose_to_matrix, rotvec_to_matrix, rpy_to_matrix, tool0_pose_from_joints,
+    CameraMount, MountNotValidatedError, camera_to_base, depth_to_points_cam,
+    intrinsics, points_to_base, pose_to_matrix,
+    require_validated_mount_for_physical_move, rotvec_to_matrix, rpy_to_matrix,
+    tool0_pose_from_joints,
 )
 from arm.prepose_to_joints import (  # noqa: E402
     RobotChain, baselink_transform_to_ur_pose, tool0_pose_to_active_tcp_pose,
 )
 
 
-def mount(xyz=(0.0, 0.0, 0.0), rpy=(0.0, 0.0, 0.0), measured=True):
-    return CameraMount("tool0", tuple(xyz), tuple(rpy), measured)
+def mount(xyz=(0.0, 0.0, 0.0), rpy=(0.0, 0.0, 0.0), measured=True, validated=False):
+    return CameraMount("tool0", tuple(xyz), tuple(rpy), measured, validated)
 
 
 class RotationTests(unittest.TestCase):
@@ -114,6 +116,48 @@ class UnmeasuredTests(unittest.TestCase):
         got, _ = points_to_base([[0, 0, 0.2]], [0, 0, 0, 0, 0, 0], mount(measured=False))
         self.assertEqual(got.shape, (1, 3))
         self.assertTrue(np.isfinite(got).all())
+
+
+class PhysicalMoveValidationGateTests(unittest.TestCase):
+    """P1-5 — "값이 들어있다"(measured)와 "실물로 검증했다"(validated)는 다르다.
+
+    좌표 계산·시각화(`points_to_base()`/`camera_to_base()`)는 미검증 mount도 그대로
+    허용해야 한다(원칙 2, 기존 개발 흐름을 안 깬다) — 실물 자동 이동 관문
+    (`require_validated_mount_for_physical_move()`)만 막는다.
+    """
+
+    def test_measured_but_not_validated_is_rejected_for_physical_move(self):
+        """장착값을 채워 넣었어도(measured=True) 실물로 검증(validated) 안 했으면 거절."""
+        m = mount(xyz=(0.05, 0, 0), measured=True, validated=False)
+        with self.assertRaises(MountNotValidatedError) as ctx:
+            require_validated_mount_for_physical_move(m)
+        self.assertIn("검증", str(ctx.exception))
+
+    def test_unmeasured_is_also_rejected_for_physical_move(self):
+        m = mount(measured=False, validated=False)
+        with self.assertRaises(MountNotValidatedError):
+            require_validated_mount_for_physical_move(m)
+
+    def test_validated_mount_passes_the_gate(self):
+        """사람이 실물 검증 후 .env에서 직접 1로 바꾼 상태를 흉내낸다."""
+        m = mount(xyz=(0.05, 0, 0), measured=True, validated=True)
+        got = require_validated_mount_for_physical_move(m)
+        self.assertIs(got, m)
+
+    def test_calc_and_viz_are_unaffected_by_validated_flag(self):
+        """실물 이동 관문과 무관하게, 좌표 계산 자체는 검증 여부를 안 본다."""
+        unvalidated = mount(xyz=(0.05, 0, 0), validated=False)
+        validated = mount(xyz=(0.05, 0, 0), validated=True)
+        p1, w1 = points_to_base([[0, 0, 0.2]], [0, 0, 0, 0, 0, 0], unvalidated)
+        p2, w2 = points_to_base([[0, 0, 0.2]], [0, 0, 0, 0, 0, 0], validated)
+        np.testing.assert_allclose(p1, p2)
+        self.assertIsNone(w1)  # measured=True(기본)라 경고 없음 — validated와 무관
+        self.assertIsNone(w2)
+
+    def test_config_default_is_not_validated(self):
+        """기본값은 반드시 미검증이다 — 새 머신에서 설치만 하고 실물 이동이 열리면 안 된다."""
+        import rtauto_config as cfg
+        self.assertFalse(cfg.d405_mount_validated())
 
 
 class ActiveTcpVsTool0Tests(unittest.TestCase):

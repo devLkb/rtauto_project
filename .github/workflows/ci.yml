@@ -67,3 +67,7 @@ jobs:
         run: python -m unittest superdex.tests.test_pose_dataset_frame_gate -v
       - name: 예측기 입력 변환 — torch 없이 도는 _features()/load_pairs() 순수 로직
         run: python -m unittest superdex.tests.test_train_pose_predictor_features -v
+      - name: 후보 자세 생성기 — 실물 D405에서도 낼 수 있는 방식으로 후보를 만드는가 (P1-8)
+        run: python -m unittest superdex.tests.test_candidate_pose_generator -v
+      - name: 카메라 시점 변환 — 물리적으로 같은 자세는 시점이 달라도 손바닥 기준 특징이 같은가 (P1-9)
+        run: python -m unittest superdex.tests.test_camera_frame_transform -v

@@ -67,6 +67,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config.rtauto_config import (  # noqa: E402
     APPROACH_SPEED_MPS,
     ARM_HAND_URDF,
+    ARRIVAL_TOLERANCE_DEG,
     MAX_POSE_AGE_SEC,
     UR_MAX_DEG_PER_SEC,
     dg5f_link_prefix,
@@ -459,10 +460,35 @@ def active_tcp_pose_to_tool0_pose(
 # ---------------------------------------------------------------------------
 @dataclass
 class MoveResult:
-    """움직였는지, 안 움직였으면 왜 안 움직였는지."""
+    """계획·실행·도착 세 단계 중 어디까지 갔는지 (P1-2, 2026-09-21 재설계).
+
+    🛑 **왜 세 단계로 나눴나.** 예전에는 `moved` 하나가 "계산상 갈 수 있다"
+    (`plan()`)와 "실제로 도착했다"(`move_to()`)를 동시에 나타냈다 — `plan()`이
+    실제로는 팔을 전혀 안 움직이는데도 `moved=True`를 돌려줘서, "계획 성공"과
+    "실제 도착"이 호출부에서 구분되지 않았다. `A-3`(BACKLOG)가 요구하는
+    "명령 전송 완료가 아니라 실제 도착을 확인한 뒤 다음 단계로" 는 이 구분이
+    없으면 지킬 수 없다.
+
+    ==============  ===================================================
+    `feasible`       계산상 갈 수 있는가(안전검사+IK 통과). `plan()`도 채운다 —
+                     **실제로 움직였다는 뜻이 아니다.**
+    `executed`       `move_to()`가 실제로 `moveJ`/`moveL` 명령을 로봇에 보냈고,
+                     RTDE가 성공(bool True)을 돌려줬으며 예외가 없었는가.
+    `arrived`        실행 뒤 `RTDEReceiveInterface`로 실제 관절각을 읽어 목표와
+                     대조했을 때 허용 오차(`ARRIVAL_TOLERANCE_DEG`) 안인가.
+                     **다음 단계로 넘어가도 되는지는 이 값 하나만 본다.**
+    `moved`          호환용 별칭 — 항상 `arrived`와 같은 값이다(과거 코드가
+                     `.moved`만 보던 자리를 더 엄격한 뜻으로 자동 승격시킨다).
+    ==============  ===================================================
+    """
 
     moved: bool
     reason: str
+    feasible: bool = False
+    executed: bool = False
+    arrived: bool = False
+    #: 실제 도착 오차[deg] — 관절마다의 최대 절대오차. 확인 안 했으면 None.
+    arrival_error_deg: Optional[float] = None
     #: 최종 파지 직전 자세 — **tool0** 자세(사람이 읽는 값, 활성 TCP와 무관하다).
     tcp_pose: Optional[Tuple[float, ...]] = None
     #: 최종 자세의 관절각.
@@ -478,7 +504,14 @@ class MoveResult:
     active_tcp_pose: Optional[Tuple[float, ...]] = None
 
     def describe(self) -> str:
-        head = "이동함" if self.moved else "움직이지 않음"
+        if self.arrived:
+            head = "도착 확인됨"
+        elif self.executed:
+            head = "명령은 보냈지만 도착 미확인"
+        elif self.feasible:
+            head = "갈 수 있음(계산만, 실행 안 함)"
+        else:
+            head = "움직이지 않음"
         return "{} — {}".format(head, self.reason)
 
 
@@ -669,9 +702,12 @@ class ArmMover:
                 pre_tcp_pose=tuple(pre_tcp_pose),
                 pre_joints=tuple(pre_joints),
             )
+        # ⚠️ feasible=True 일 뿐 moved(=arrived)는 여전히 False다 — plan()은 계산만
+        # 하고 팔을 전혀 안 움직인다. 실제로 움직였는지는 move_to()만 안다(P1-2).
         return MoveResult(
-            True,
-            "갈 수 있다 — 접근 시작 지점을 거쳐 최종 자세까지.",
+            False,
+            "갈 수 있다 — 접근 시작 지점을 거쳐 최종 자세까지 (계산만, 아직 안 움직였다).",
+            feasible=True,
             tcp_pose=tuple(tcp_pose),
             joints=tuple(final_joints),
             pre_tcp_pose=tuple(pre_tcp_pose),
@@ -768,23 +804,75 @@ class ArmMover:
             )
 
         plan = self.plan(pose)
-        if not plan.moved or plan.joints is None:
+        if not plan.feasible or plan.joints is None:
             return plan
 
-        if plan.pre_joints is not None and plan.active_tcp_pose is not None:
-            speed_mps = (
-                APPROACH_SPEED_MPS if approach_speed_mps is None else approach_speed_mps
+        # ⚠️ 이 밑부터는 **실제로 로봇에 명령을 보낸다.** moveJ/moveL은 둘 다 bool을
+        # 돌려준다(ur_rtde 1.6.5 확인) — 반환값을 버리면 "명령이 거부됐는데도 성공한
+        # 것처럼 보이는" 상태가 된다(2026-09-21 코드 리뷰로 발견). RTDE 예외도 마찬가지로
+        # 성공으로 남으면 안 된다 — 전부 여기서 막는다.
+        def _fail(reason: str) -> MoveResult:
+            # 실행이 중간에 끊긴 상태다 — 적극적으로 감속 정지시킨다(정상 완료된
+            # blocking move 뒤에는 이미 멈춰 있으므로 이 호출이 따로 필요 없다).
+            try:
+                self._control.stopJ(acceleration)
+            except Exception:
+                pass
+            return MoveResult(
+                False, reason, feasible=True, executed=False,
+                tcp_pose=plan.tcp_pose, joints=plan.joints,
+                pre_tcp_pose=plan.pre_tcp_pose, pre_joints=plan.pre_joints,
+                active_tcp_pose=plan.active_tcp_pose,
             )
-            self._control.moveJ(list(plan.pre_joints), self.speed, acceleration)
-            self._control.moveL(list(plan.active_tcp_pose), speed_mps, acceleration)
-            reason = "접근 시작 지점을 거쳐 최종 자세까지 이동하고 멈췄다."
-        else:
-            self._control.moveJ(list(plan.joints), self.speed, acceleration)
-            reason = "자세까지 이동하고 멈췄다."
-        self._control.stopJ(acceleration)
+
+        try:
+            if plan.pre_joints is not None and plan.active_tcp_pose is not None:
+                speed_mps = (
+                    APPROACH_SPEED_MPS if approach_speed_mps is None else approach_speed_mps
+                )
+                if not self._control.moveJ(list(plan.pre_joints), self.speed, acceleration):
+                    return _fail("접근 시작 지점으로 가는 moveJ가 실패했다(로봇이 명령을 "
+                                "거부했거나 중단됐다) — moveL은 시도하지 않았다.")
+                if not self._control.moveL(list(plan.active_tcp_pose), speed_mps, acceleration):
+                    return _fail("접근 시작 지점까지는 갔지만, 최종 자세로 가는 moveL이 "
+                                "실패했다 — 팔이 접근 시작 지점 근처에 멈춰 있을 수 있다.")
+                reason = "접근 시작 지점을 거쳐 최종 자세까지 명령을 보냈다."
+            else:
+                if not self._control.moveJ(list(plan.joints), self.speed, acceleration):
+                    return _fail("최종 자세로 가는 moveJ가 실패했다.")
+                reason = "최종 자세로 명령을 보냈다."
+        except Exception as exc:
+            return _fail("이동 중 RTDE 예외로 중단됐다: {}".format(exc))
+
+        # 명령이 (거부 없이) 끝났다 — 이제 **실제로 거기 도착했는지** 관절각을 다시
+        # 읽어 확인한다. "성공"은 이 확인을 통과해야만 붙는다(A-3, P1-2).
+        try:
+            actual_q = self._receive.getActualQ() if self._receive is not None else None
+        except Exception:
+            actual_q = None
+        if actual_q is None:
+            return MoveResult(
+                False,
+                "명령은 보냈지만 실제 관절각을 읽지 못해 도착을 확인할 수 없다.",
+                feasible=True, executed=True,
+                tcp_pose=plan.tcp_pose, joints=plan.joints,
+                pre_tcp_pose=plan.pre_tcp_pose, pre_joints=plan.pre_joints,
+                active_tcp_pose=plan.active_tcp_pose,
+            )
+        err_deg = max(
+            abs(math.degrees(a) - math.degrees(t)) for a, t in zip(actual_q, plan.joints)
+        )
+        arrived = err_deg <= ARRIVAL_TOLERANCE_DEG
         return MoveResult(
-            True, reason, plan.tcp_pose, plan.joints,
-            plan.pre_tcp_pose, plan.pre_joints, plan.active_tcp_pose,
+            arrived,
+            (reason + " 실제 도착 확인함(최대 관절 오차 {:.3f}°).".format(err_deg))
+            if arrived else
+            (reason + " 그러나 실제 도착 오차 {:.3f}°가 허용치 {:.3f}°를 넘는다 — "
+             "성공으로 보지 않는다.".format(err_deg, ARRIVAL_TOLERANCE_DEG)),
+            feasible=True, executed=True, arrived=arrived, arrival_error_deg=err_deg,
+            tcp_pose=plan.tcp_pose, joints=plan.joints,
+            pre_tcp_pose=plan.pre_tcp_pose, pre_joints=plan.pre_joints,
+            active_tcp_pose=plan.active_tcp_pose,
         )
 
 
@@ -917,7 +1005,17 @@ def main(argv=None) -> int:
         print("팔 관절 목표  : {} rad".format(_fmt(result.joints)))
         print("              : {} deg".format(_fmt([math.degrees(v) for v in result.joints], 2)))
     print("결과          : {}".format(result.describe()))
-    return 0 if (result.moved or ip is None or args.plan_only) else 1
+    # 세 모드가 "성공"의 뜻이 다르다(P1-2, 2026-09-21):
+    #   ip 없음(순수 계산)  — 연결 자체가 없어 feasible을 못 정한다. 좌표가 나왔으면 성공.
+    #   --plan-only        — 연결은 했지만 실행은 안 함. IK/안전검사 통과(feasible)가 성공.
+    #   실제로 움직이려던 모드 — 명령만 보내고 끝나면 안 된다. 도착 확인(arrived)까지 성공.
+    if ip is None:
+        ok = result.tcp_pose is not None
+    elif args.plan_only:
+        ok = result.feasible
+    else:
+        ok = result.arrived
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

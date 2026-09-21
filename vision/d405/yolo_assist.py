@@ -351,7 +351,7 @@ def estimate_from_mask(d, inside, intr, shape, depth_shape):
 
 
 def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
-                   min_points=CLUSTER_MIN_POINTS):
+                   min_points=CLUSTER_MIN_POINTS, near=None, far=None):
     """**YOLO 가 찾은 것들의 점을 따로 떼어낸다.**
 
     테두리(mask)가 있으면 그것으로, 없으면 네모 박스로 가른다.
@@ -363,6 +363,8 @@ def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
     `shape`          **색 사진** 크기 `(세로, 가로)` — 박스·테두리가 사는 좌표
     `depth_shape`    **깊이 사진** 크기 `(세로, 가로)`. 안 주면 색 사진과 같다고 본다
     `intr`           깊이 사진 기준 초점거리·중심. 있으면 **듬성듬성해도 추정**한다
+    `near`/`far`     D405 가 믿을 수 있는 거리 범위(m). 안 주면 설정값(`D405_NEAR_M`/
+                     `D405_FAR_M`) 을 쓴다
     ==============  =====================================================
 
     돌려주는 것: `(박스별 물체 목록, 어느 박스에도 안 든 점)`
@@ -374,8 +376,18 @@ def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
        (640x480 → 320x240), 전에는 깊이 화소 번호를 **환산 없이** 테두리에 대고 있었다.
        그러면 화면 가운데 있는 컵의 점이 테두리 밖으로 밀려나 **통째로 버려진다**
        (2026-09-18 발견). 여기서 한 번에 환산한다.
+
+    🛑 **믿을 수 없는 거리도 제일 먼저 뺀다** (2026-09-21 코드 리뷰로 발견).
+       `find_objects()`(모양 전용 경로)는 `near`/`far` 밖의 점을 맨 처음에 버리는데,
+       이 함수는 그 검사가 없었다 — YOLO 박스/테두리 안에 렌즈 코앞 반사 같은 잡음이
+       섞이면, `_merge_pieces()`가 "가장 가까운 조각"을 고르는 로직 때문에 **그 잡음이
+       진짜 물체 대신 뽑히고 진짜 물체는 통째로 사라질 수 있었다**(재현·확인함).
+       그래서 여기서도 클러스터링 전에 먼저 범위를 벗어난 점을 뺀다.
     """
     from segment_objects import cluster
+
+    near = cfg.D405_NEAR_M if near is None else near
+    far = cfg.D405_FAR_M if far is None else far
 
     pts = np.asarray(points, dtype=np.float64)
     depth_shape = tuple(shape) if depth_shape is None else tuple(depth_shape)
@@ -383,6 +395,11 @@ def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
     sy = shape[0] / float(depth_shape[0])
     px = np.asarray(pixel_xy[0], dtype=float) * sx      # 색 사진 좌표로 환산
     py = np.asarray(pixel_xy[1], dtype=float) * sy
+
+    # 믿을 수 없는 거리(너무 가깝거나 먼)는 클러스터링에 들어가기 전에 뺀다 —
+    # find_objects()(모양 전용 경로)와 같은 순서.
+    in_range = (pts[:, 2] >= near) & (pts[:, 2] <= far)
+    pts, px, py = pts[in_range], px[in_range], py[in_range]
 
     owner = np.full(len(pts), -1, dtype=np.int64)
     best_conf = np.zeros(len(pts))
@@ -452,7 +469,8 @@ def find_objects_hybrid(points, pixel_xy, color_bgr, detector, near=None, far=No
     if dets is None:
         dets = detector.detect(color_bgr) if (detector and detector.ready) else []
     boxed, rest = split_by_boxes(points, pixel_xy, dets, color_bgr.shape[:2],
-                                 depth_shape=depth_shape, intr=intr)
+                                 depth_shape=depth_shape, intr=intr,
+                                 near=near, far=far)
 
     shape_objs, _, note = find_objects(rest, near=near, far=far)
 

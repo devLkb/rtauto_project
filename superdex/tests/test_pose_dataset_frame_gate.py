@@ -35,7 +35,14 @@ from pathlib import Path
 import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-_SCRIPT_PATH = REPO_ROOT / "superdex" / "scripts" / "test_pose_dataset.py"
+_SCRIPTS_DIR = REPO_ROOT / "superdex" / "scripts"
+_SCRIPT_PATH = _SCRIPTS_DIR / "test_pose_dataset.py"
+
+# test_pose_dataset.py가 같은 폴더의 dataset_contract.py를 plain import하므로
+# (P1-6, 2026-09-21) 그 폴더를 sys.path에 넣어 둬야 한다 — 직접
+# `python superdex/scripts/test_pose_dataset.py`로 실행할 때는 파이썬이 스크립트
+# 자신의 폴더를 자동으로 넣어 주지만, 아래처럼 파일 경로로 직접 불러올 때는 안 된다.
+sys.path.insert(0, str(_SCRIPTS_DIR))
 
 # `superdex/scripts/test_pose_dataset.py` 는 패키지가 아니라 CLI 스크립트라
 # 일반적인 import 경로가 없다 — 파일 경로로 직접 불러온다.

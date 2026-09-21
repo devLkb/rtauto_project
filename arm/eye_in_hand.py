@@ -108,19 +108,28 @@ class CameraMount:
     """카메라가 팔 끝의 어디에 어떤 방향으로 붙었나.
 
     `measured` 가 False 면 **아직 안 잰 값**이다 — 돌아는 가지만 믿으면 안 된다.
+
+    🛑 **`measured`와 `validated`는 다른 질문이다** (P1-5, 2026-09-21 코드 리뷰).
+    `measured`는 "0이 아닌 값이 들어있다"만 본다 — 사람이 어림값을 넣어도 True가
+    된다. `validated`는 "hand-eye 검증(Q2/Q3)을 실물로 실제로 끝내고 사람이 직접
+    `.env`에서 1로 바꿨다"는 뜻이다. **좌표 계산·시각화는 `measured`만 있어도
+    동작하지만, 실물 자동 이동은 `validated`가 있어야만 연다**
+    (`require_validated_mount_for_physical_move` 참고).
     """
 
     parent_link: str
     xyz_m: Tuple[float, float, float]
     rpy_deg: Tuple[float, float, float]
     measured: bool
+    validated: bool = False
 
     @classmethod
     def from_config(cls) -> "CameraMount":
         return cls(parent_link=cfg.D405_MOUNT_PARENT,
                    xyz_m=tuple(cfg.D405_MOUNT_XYZ_M),
                    rpy_deg=tuple(cfg.D405_MOUNT_RPY_DEG),
-                   measured=cfg.d405_mount_measured())
+                   measured=cfg.d405_mount_measured(),
+                   validated=cfg.d405_mount_validated())
 
     def matrix(self) -> np.ndarray:
         """팔 끝 기준 카메라 자세 4x4."""
@@ -135,6 +144,37 @@ class CameraMount:
         return ("🛑 손목 카메라 장착값을 **아직 안 쟀다**(전부 0). 계산은 돌지만 "
                 "결과는 실제와 다르다. .env 의 RTAUTO_D405_MOUNT_XYZ_M / "
                 "RTAUTO_D405_MOUNT_RPY_DEG 를 실측값으로 채울 것.")
+
+
+class MountNotValidatedError(RuntimeError):
+    """손목 카메라 장착값이 실물로 검증되지 않은 채로 자동 이동에 쓰이려 할 때."""
+
+
+def require_validated_mount_for_physical_move(
+    mount: Optional[CameraMount] = None,
+) -> CameraMount:
+    """**실물 자동 이동** 경로가 D405 좌표를 쓰기 전 반드시 통과해야 하는 관문
+    (P1-5, 2026-09-21 코드 리뷰).
+
+    좌표 계산·시각화·디버깅(`--check`, 시험)에서는 미검증 mount도 허용한다 —
+    `camera_to_base()`/`points_to_base()`는 그대로 쓰면 된다. 하지만 **로봇을
+    실제로 움직이는 경로**(D405 → GraspPrePose → `ArmMover.move_to()`, 아직 구현
+    전)는 이 함수를 먼저 불러야 한다. `mount.validated`가 아니면 조용히 넘어가지
+    않고 예외를 낸다 — hand-eye 검증(BACKLOG Q2/Q3)이 끝나 사람이 `.env`의
+    `RTAUTO_D405_MOUNT_VALIDATED=1`로 직접 바꾸기 전까지는 실물 자동 이동을 열지
+    않는다는 정책을 코드로 강제한다.
+    """
+    mount = mount or CameraMount.from_config()
+    if not mount.validated:
+        raise MountNotValidatedError(
+            "손목 카메라 장착값이 아직 실물로 검증되지 않았다"
+            "(RTAUTO_D405_MOUNT_VALIDATED=0) — 실물 자동 이동에는 쓸 수 없다. "
+            "hand-eye 검증(BACKLOG Q2/Q3, docs/FESTA_PREGRASP_PLAN.md §7-2) 후 "
+            "사람이 직접 .env에서 1로 바꿔야 한다. 좌표 계산·시각화만 필요하면 "
+            "camera_to_base()/points_to_base()를 그대로 쓸 것 — 이 함수는 실물 "
+            "이동 경로 전용이다."
+        )
+    return mount
 
 
 def camera_to_base(tool0_pose6: Sequence[float],
@@ -257,6 +297,14 @@ def _check(ip: Optional[str]) -> int:
     else:
         print("장착값이 채워져 있다.")
         print()
+
+    if mount.validated:
+        print("✅ 실물로 검증됨(RTAUTO_D405_MOUNT_VALIDATED=1) — 실물 자동 이동에 쓸 수 있다.")
+    else:
+        print("🛑 실물로 아직 검증 안 됨(RTAUTO_D405_MOUNT_VALIDATED=0) — 값이 채워져 "
+              "있어도 실물 자동 이동에는 못 쓴다. hand-eye 검증(BACKLOG Q2/Q3) 후 "
+              "사람이 직접 1로 바꿔야 한다.")
+    print()
 
     if ip is None:
         print("팔에 붙여 확인하려면 --ip 를 준다 (가짜 팔 URSim 도 된다).")
