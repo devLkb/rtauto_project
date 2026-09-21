@@ -74,10 +74,32 @@ def reset_device(rs, wait_s=30.0):
 
 
 class DepthFilters:
-    """깊이 다듬기 묶음. **지어내지 않는 것들만** 기본으로 켠다."""
+    """깊이 다듬기 묶음. **지어내지 않는 것들만** 기본으로 켠다.
+
+    시간 다듬기(temporal filter)의 과거 프레임 문제 — **왜 reset 이 필요한가**
+    -----------------------------------------------------------------------
+    `rs.temporal_filter()` 는 만들 때 "Holes Fill"(persistency mode) 옵션의
+    **기본값이 3 = "Valid in 2/last 4"** 다(2026-09-21, 이 컴퓨터에 설치된
+    pyrealsense2 2.58.4 로 직접 확인 — 추측 아님). 즉 **꺼져 있는(0=Disabled) 것이
+    아니라 항상 얼마간의 과거를 들고 있다**: 어떤 화소가 최근 4개 프레임 중 2개
+    이상에서 값이 있었다면, 지금 프레임에서 그 화소가 안 보여도 필터가 **과거 값을
+    이어서 내놓는다.** (참고로 8=Always on 은 무한 지속이라 더 심하고, 0=Disabled 는
+    지속을 아예 안 쓴다 — 우리는 기본값 3을 그대로 쓴다. 정지 상태에서는 이 지속이
+    깜빡이는 화소를 메워 주는 **장점**이기도 하다.)
+
+    eye-in-hand 에서는 이게 문제가 된다: 팔이 위치 A 에서 B 로 이동한 직후에도
+    필터 내부에 위치 A 의 값이 몇 프레임 남아 있을 수 있다 — **`reset_temporal_history()`
+    없이 정지 직후 바로 찍으면 위치 A 의 흔적이 위치 B 관측에 섞여 나올 수 있다.**
+
+    pyrealsense2 필터 객체에는 "내부 상태만 지우는" API 가 없다(`temporal_filter`
+    가 가진 메서드는 `get_option`/`set_option`/`process` 뿐 — 2026-09-21 확인).
+    그래서 유일한 방법은 **새 필터 객체로 바꿔치기**하는 것이다 — 새 객체는 과거
+    프레임을 하나도 안 가지고 있으므로 그 자체로 초기화 효과를 낸다.
+    """
 
     def __init__(self, rs, decimate=2, fill_holes=False):
         self.rs = rs
+        self.decimate = decimate
         self.dec = rs.decimation_filter(decimate) if decimate > 1 else None
         self.to_disp = rs.disparity_transform(True)    # 다듬기는 시차 쪽이 낫다
         self.spatial = rs.spatial_filter()
@@ -87,6 +109,21 @@ class DepthFilters:
         if fill_holes:
             print("⚠️ 구멍 메우기를 켰다 — **없는 값을 지어낸다.** 파지 판단에 쓰지 마라.")
             self.hole = rs.hole_filling_filter(1)
+
+    def reset_temporal_history(self):
+        """**시간 다듬기가 들고 있던 과거 프레임을 버린다.**
+
+        팔이 움직여 관측 위치가 바뀔 때 부른다 — 그러지 않으면 이전 위치의 깊이가
+        새 위치의 첫 몇 프레임에 섞여 나올 수 있다(위 클래스 설명 참고).
+
+        쓰는 법 (eye-in-hand)::
+
+            팔 이동 시작
+            → 팔 정지
+            → stream.reset_temporal_history()   # 과거 위치의 흔적을 버린다
+            → stream.frames(count=1, warmup=WARMUP_FRAMES)  # 새 자리에서 다시 데운다
+        """
+        self.temporal = self.rs.temporal_filter()
 
     def process(self, depth_frame):
         f = depth_frame
@@ -112,6 +149,15 @@ class DepthStream:
         self.has_color = color
         self.scale = profile.get_device().first_depth_sensor().get_depth_scale()
         self._align = rs.align(rs.stream.color) if color else None
+
+    def reset_temporal_history(self):
+        """**팔이 움직여 관측 위치가 바뀌었을 때** 부른다 — 이전 위치의 시간 다듬기
+        흔적을 버린다. 필터를 안 쓰면(`filters=None`) 아무 일도 안 한다.
+
+        자세한 이유는 `DepthFilters.reset_temporal_history()` 참고.
+        """
+        if self.filters is not None:
+            self.filters.reset_temporal_history()
 
     @property
     def intrinsics(self):

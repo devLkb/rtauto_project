@@ -50,6 +50,8 @@ jobs:
         run: |
           python -m unittest vision.d405.tests.test_segment_objects -v
           python -m unittest vision.d405.tests.test_yolo_assist -v
+          python -m unittest vision.d405.tests.test_exposure_sweep -v
+          python -m unittest vision.d405.tests.test_d405_stream -v
 
   superdex-python-tests:
     name: SuperDex 순수 로직 시험 (Python 3.12, 물리·GPU 없이)

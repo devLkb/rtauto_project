@@ -24,7 +24,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import depth_stack                                     # noqa: E402
-from yolo_assist import Detection, split_by_boxes      # noqa: E402
+from yolo_assist import Detection, split_by_boxes, ESTIMATE_BAND_M   # noqa: E402
 import rtauto_config as cfg                            # noqa: E402  (yolo_assist가 먼저 sys.path를 잡아 둔다)
 
 
@@ -123,6 +123,63 @@ class TestSparseDepth(unittest.TestCase):
 
         self.assertEqual(objs, [], "거리값이 없는데 물체를 지어냈다")
         self.assertEqual(len(rest), len(far_pts))
+
+
+class TestOwnership(unittest.TestCase):
+    """**소유(ownership)와 계측(measurement)은 다르다** — 마스크 안의 점은 크기 계산에
+    실제로 썼는지와 무관하게 전부 이 YOLO 물체가 소유하며, 다른 후보(geometry 쪽)로
+    다시 넘어가면 안 된다 (2026-09-21, 바깥 조언자 진단 — 세션 18 §B의 재발 방지 시험).
+    """
+
+    def test_owned_but_unmeasured_points_do_not_leak_to_geometry_fallback(self):
+        """마스크 안에 거리 차가 큰 두 무리가 있으면 `_merge_pieces()`가 **가까운 무리만**
+        계측에 쓴다. 예전에는 나머지(먼 무리)가 "쓰지 않은 점"으로 남에게 넘어가
+        모양 쪽에서 **같은 물체를 또 만들었다.** 지금은 둘 다 이 detection의 소유라서
+        `rest` 로 새어 나가면 안 된다."""
+        det = _cup_detection(280, 190, 360, 290)
+        near, near_pix = _points_on_rect(280, 190, 360, 290, z=0.20)
+        # ESTIMATE_BAND_M(0.05m) 보다 훨씬 먼 무리 — 같은 마스크 안이지만 병합 대상이 아니다.
+        far, far_pix = _points_on_rect(280, 190, 360, 290, z=0.20 + 10 * ESTIMATE_BAND_M)
+
+        pts = np.vstack([near, far])
+        pix = (np.concatenate([near_pix[0], far_pix[0]]),
+              np.concatenate([near_pix[1], far_pix[1]]))
+
+        objs, rest = split_by_boxes(pts, pix, [det], COLOR_SHAPE,
+                                    depth_shape=DEPTH_SHAPE, intr=_Intr)
+
+        self.assertEqual(len(objs), 1, "가까운 무리로 물체 하나는 나와야 한다")
+        self.assertAlmostEqual(objs[0].distance_m, 0.20, delta=0.01,
+                               msg="계측은 여전히 가까운 무리를 써야 한다")
+        self.assertEqual(len(rest), 0,
+                         "계측에 안 쓴(먼 무리) 점이 geometry fallback으로 새어 나갔다 — "
+                         "같은 물체가 또 생길 수 있다")
+
+    def test_higher_confidence_detection_owns_fully_overlapping_mask(self):
+        """두 YOLO 마스크가 **완전히 겹치면**, 확신이 높은 쪽 하나만 소유하고 물체도
+        하나만 나와야 한다 — 겹친 점이 양쪽에서 각각 물체를 만들면 안 된다."""
+        det_low = _cup_detection(280, 190, 360, 290, conf=0.4, name="a")
+        det_high = _cup_detection(280, 190, 360, 290, conf=0.9, name="b")
+        pts, pix = _points_on_rect(280, 190, 360, 290, z=0.25)
+
+        objs, rest = split_by_boxes(pts, pix, [det_low, det_high], COLOR_SHAPE,
+                                    depth_shape=DEPTH_SHAPE, intr=_Intr)
+
+        self.assertEqual(len(objs), 1, "완전히 겹친 마스크에서 물체가 두 번 나왔다")
+        self.assertIn("b 90%", objs[0].source, "확신이 낮은 쪽이 소유한 것으로 나왔다")
+        self.assertEqual(len(rest), 0)
+
+    def test_not_object_points_never_become_a_grasp_candidate(self):
+        """사람(`person`) 같은 `NOT_OBJECT` 안의 점은 물체로도, geometry fallback
+        후보로도 다시 나오면 안 된다."""
+        det = _cup_detection(280, 190, 360, 290, conf=0.9, name="person")
+        pts, pix = _points_on_rect(280, 190, 360, 290, z=0.25)
+
+        objs, rest = split_by_boxes(pts, pix, [det], COLOR_SHAPE,
+                                    depth_shape=DEPTH_SHAPE, intr=_Intr)
+
+        self.assertEqual(objs, [], "사람 영역에서 잡을 물체를 만들었다")
+        self.assertEqual(len(rest), 0, "사람 영역의 점이 geometry fallback 후보로 남았다")
 
 
 class TestOutOfRangeNoise(unittest.TestCase):

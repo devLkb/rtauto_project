@@ -128,8 +128,14 @@ NOT_OBJECT = ("person", "dining table", "chair", "couch", "bed", "tv", "refriger
 #: ⚠️ **이름이 맞는지는 중요하지 않다.** 우리가 쓰는 것은 **테두리**다 — 실제로 캔이
 #:    `bottle` 로 불렸지만(77 %) 테두리는 정확했다(2026-09-18 실측). 이름이 아니라
 #:    잘라내기가 목적이다.
+#: 🛑 **2026-09-21 사용자 결정 — "처음 보는 물체 일반화"는 이 목록을 무한히 늘리라는
+#:    뜻이 아니다.** 진짜 미지의(이름조차 없는) 형상까지 잡는 것은 **페스타(2026-11-13)
+#:    이후 별도 과제**다. 지금은 **전시에서 실제로 나올 법한 "상식적인 범위"의 물건을
+#:    확실히 인식**하는 것이 목표라서, 그 범위 안에서 목록을 채운다
+#:    (`ai_festa_plan.md` §8-2 참고). 공구는 이 상식적 범위에 들어간다고 보고 추가함.
 PROMPT_WORDS = ("cup", "paper cup", "bottle", "can", "box", "computer mouse",
-                "keyboard", "pen", "cell phone", "book", "bowl", "person")
+                "keyboard", "pen", "cell phone", "book", "bowl", "person",
+                "screwdriver", "wrench", "hammer", "pliers", "tape measure", "scissors")
 
 #: 기본 가중치. **찾을 말이 이미 구워진** 파일을 쓴다.
 #: ⚠️ 구워 두는 이유: YOLOE 는 글자를 이해하려고 별도 모델(`mobileclip2_b.ts`, **242 MB**)
@@ -424,6 +430,22 @@ def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
             continue
         inside = pts[sel]
 
+        # 🛑 **소유(ownership)와 계측(measurement)은 다른 질문이다** (2026-09-21,
+        #    바깥 조언자 진단 — `claudeDocs/daily/2026-09-18.md` 세션 18 §B).
+        #    이 마스크 안의 점은 **전부 이 YOLO 물체가 소유한다** — 그중 몇 개만
+        #    크기·중심 계산에 실제로 썼는지와는 무관하다. 예전에는 "계산에 안 쓴 점"을
+        #    바로 아래 `used[idx_in[o.index]]`처럼 **계산에 쓴 점만** 소비 처리했다.
+        #    그러면 계산에 안 쓴 나머지가 "주인 없는 점"으로 되돌아가 `pts[~used]`를
+        #    거쳐 모양(geometry) 쪽으로 넘어갔고, 같은 물체가 **또 하나 생겼다**
+        #    ("크기 계산에 안 썼다" 와 "다른 물체의 점이다" 가 같은 뜻으로 처리되던
+        #    버그). 그래서 소유는 여기서 **먼저, 무조건** 확정하고, 계측은 아래에서
+        #    별도로(신뢰도 높은 subset만) 계산한다.
+        #
+        #    🛑 **마스크 바깥 점까지 소유하는 것은 아니다** — `sel = owner == i` 가
+        #    이미 마스크(또는 박스) 안으로 한정했고, 다른 detection이 더 높은 확신으로
+        #    같은 점을 먼저 차지했으면 `owner` 배정 단계에서 이미 걸러졌다.
+        used[idx_in] = True
+
         # ⚠️ **네모 박스는 그 방향의 배경까지 전부 긁어온다.** 처음엔 박스 안의 점을
         #    통째로 한 물체로 썼더니 텀블러가 **324x344x598 cm** 로 나왔다(2026-09-18) —
         #    뒤의 벽·모니터가 같이 들어온 것이다. 테두리(mask)를 쓰면서 대부분 해결됐지만,
@@ -440,11 +462,11 @@ def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
             if guess is not None:
                 o = guess
         if o is None:
+            # 이 detection이 소유한 점은 (위에서 이미) 계속 소유한 채로 남는다 —
+            # 계측에 실패했다고 해서 모양 쪽에 다시 넘기지 않는다.
             continue
         o.source = "YOLO:{} {:.0%}".format(d.name, d.conf)      # 어디서 나왔는지 남긴다
         objs.append(o)
-        # 박스 안 전체가 아니라 **쓴 점만** 소비 처리한다 — 나머지는 모양 쪽이 다시 본다
-        used[idx_in[o.index]] = True
 
     # 사람으로 잡힌 박스 안의 점은 **버린다** — 잡으러 가면 안 된다
     for d in dets:
@@ -514,7 +536,7 @@ def main() -> int:
 
     import cv2
     from d405_stream import open_depth
-    from segment_objects import Tracker, size_verdict
+    from segment_objects import Tracker, size_verdict, is_grasp_candidate
     from view_d405 import colorize, put_labels, put_lines
 
     n_frames = args.frames
@@ -555,10 +577,17 @@ def main() -> int:
             depth_m, color = got[-1]
             if color is None:
                 continue
-            stack_note = ""
+            # ⚠️ **`--live` 기본은 1장, `--save` 기본은 5장이다** — 지금까지 화면으로
+            #    평가한 대부분은 `--live`(1장)였고, 여러 장 합치기의 효과를 실제로 본
+            #    적이 없었다(2026-09-18 세션 18, 바깥 조언자 지적). 몇 장을 합치는지가
+            #    화면에 안 보이면 이 사실을 매번 잊는다 — 그래서 **장 수를 항상 표시**한다.
             if len(got) > 1:
                 depth_m, st = depth_stack.stack([d for d, _ in got])
                 stack_note = st["message"]
+            else:
+                single_valid = float((depth_m > 0).mean())
+                stack_note = "1장만 사용 — 값 있는 화소 {:.0%} (여러 장 합치려면 --frames 5)".format(
+                    single_valid)
             pts, pix = _to_points(depth_m, intr)
             objs, note, dets = find_objects_hybrid(
                 pts, pix, color, det, near, far,
@@ -601,29 +630,43 @@ def main() -> int:
                 cv_ = (o.center[1] * intr.fy / z + intr.ppy) * vy
                 # 번호는 **흰색**으로 쓴다. 덩어리 색(초록/빨강/파랑)과 같은 색으로 쓰면
                 # 그 위에서 안 읽힌다 — 크기 판정은 덩어리 색이 이미 말해 준다.
-                col = (255, 255, 255)
-                if o.estimated:
+                #
+                # ⚠️ **소유(누가 찾았나)와 후보(잡으러 갈 만한가)는 다른 질문이다**
+                #    (2026-09-21 사용자 결정). "모양"(geometry) 안전망은 화면에 계속
+                #    보여주되, 아직 잡으러 가는 후보로는 **믿지 않는다** — 그래서
+                #    회색으로 흐리게 표시해 "참고용" 임을 구분한다. `estimated` 는
+                #    YOLO 경로에서만 나오므로(거리값이 모자라 테두리로 추정한 경우)
+                #    이 구분과 겹치지 않는다.
+                if not is_grasp_candidate(o):
+                    col = (150, 150, 150)            # 회색 — 참고용, 후보 아님
+                elif o.estimated:
                     col = (0, 255, 255)              # 노랑 — 거리값이 모자라 추정한 것
                     hw = (o.size[0] / 2) * intr.fx / z * vx
                     hh = (o.size[1] / 2) * intr.fy / z * vy
                     cv2.rectangle(view_o, (int(cu - hw), int(cv_ - hh)),
                                   (int(cu + hw), int(cv_ + hh)), col, 2)
-                tags.append((cu, cv_, "{}번{}".format(
-                    o.track_id, " 추정" if o.estimated else ""), col))
+                else:
+                    col = (255, 255, 255)
+                tags.append((cu, cv_, "{}번{}{}".format(
+                    o.track_id, " 추정" if o.estimated else "",
+                    " 참고" if not is_grasp_candidate(o) else ""), col))
             view_o = put_labels(view_o, tags)
             view_c = put_labels(view_c, tags)
 
             n_ok = sum(1 for o in objs if size_verdict(o)[1] == "잡을만")
-            lines = ["찾은 덩어리 {}개 — 잡을만한 크기 {}개  (번호는 양쪽 그림에 같이 찍힌다)"
-                     .format(len(objs), n_ok),
-                     "초록=잡을만 / 빨강=큼 / 파랑=작음 / 노란 네모=거리값이 모자라 추정",
+            n_cand = sum(1 for o in objs if is_grasp_candidate(o))
+            lines = ["찾은 덩어리 {}개 — 잡을만한 크기 {}개 / 잡으러 갈 후보(YOLO 인식) {}개"
+                     .format(len(objs), n_ok, n_cand),
+                     "초록=잡을만 / 빨강=큼 / 파랑=작음 / 노란 네모=거리값이 모자라 추정 / "
+                     "회색 번호=모양으로만 잡힘(참고용, 후보 아님)",
                      note]
             if stack_note:
                 lines.append(stack_note)
             for o in objs[:6]:
-                lines.append("  {}번 [{}] {:.1f}x{:.1f}x{:.1f} cm  {}{}".format(
+                lines.append("  {}번 [{}] {:.1f}x{:.1f}x{:.1f} cm  {}{}{}".format(
                     o.track_id, size_verdict(o)[1], *(o.size * 100), o.source,
-                    "  ← 추정" if o.estimated else ""))
+                    "  ← 추정" if o.estimated else "",
+                    "  ⚠️ 참고용(후보 아님)" if not is_grasp_candidate(o) else ""))
             view_o = put_lines(view_o, lines)
             both = np.hstack([view_c, view_o])
 
@@ -634,10 +677,13 @@ def main() -> int:
                 if stack_note:
                     print(stack_note)
                 print(note)
+                print("잡으러 갈 후보(YOLO 인식) {}개 / 화면 참고용(모양) {}개".format(
+                    n_cand, len(objs) - n_cand))
                 for o in objs[:8]:
-                    print("  {}번 [{}] {:.1f}x{:.1f}x{:.1f} cm  거리 {:.2f} m  {}".format(
+                    print("  {}번 [{}] {:.1f}x{:.1f}x{:.1f} cm  거리 {:.2f} m  {}{}".format(
                         o.track_id, size_verdict(o)[1], *(o.size * 100),
-                        o.distance_m, o.source))
+                        o.distance_m, o.source,
+                        "  ⚠️ 참고용(후보 아님)" if not is_grasp_candidate(o) else ""))
                     if o.estimated:
                         print("        ⚠️ {}".format(o.why))
                 print("저장: {}".format(RESULTS_DIR / "yolo_{}.png".format(stamp)))

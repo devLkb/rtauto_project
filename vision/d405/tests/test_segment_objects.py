@@ -102,5 +102,67 @@ class TestRemovePlaneCameraSide(unittest.TestCase):
         self.assertEqual(len(kept), len(pts))
 
 
+def _obj(cx, cy, cz, n=200):
+    return so.ObjectCloud(
+        points=np.zeros((n, 3), dtype=np.float32),
+        center=np.array([cx, cy, cz], dtype=np.float64),
+        size=np.array([0.06, 0.06, 0.06], dtype=np.float64),
+        n_points=n)
+
+
+class TestTrackerReset(unittest.TestCase):
+    """eye-in-hand 이동 중 번호가 잘못 이어 붙지 않도록 하는 `Tracker.reset()`."""
+
+    def test_same_scene_keeps_the_same_id(self):
+        """정상 상태(카메라 가만히, 물체도 가만히) — 흔들림 정도는 번호가 유지돼야 한다."""
+        t = so.Tracker()
+        first = t.update([_obj(0.10, 0.02, 0.20)])
+        self.assertEqual(first[0].track_id, 1)
+        second = t.update([_obj(0.101, 0.021, 0.199)])   # 미세한 흔들림
+        self.assertEqual(second[0].track_id, 1)
+
+    def test_reset_clears_old_tracks_so_ids_start_a_new_session(self):
+        """`reset()` 뒤에는 예전 위치와 가까워도 **다시 잇지 않는다** — 새 세션이다."""
+        t = so.Tracker()
+        first = t.update([_obj(0.10, 0.02, 0.20)])
+        self.assertEqual(first[0].track_id, 1)
+
+        t.reset()
+        # 이동 뒤 카메라 기준으로는 물체가 전혀 다른 자리에 있는 것처럼 보일 수 있다.
+        moved = t.update([_obj(-0.30, 0.15, 0.40)])
+        self.assertNotEqual(moved[0].track_id, 1,
+                             "reset() 뒤에도 이전 track과 이어붙었다 — 세션이 안 끊겼다")
+
+    def test_reset_does_not_reuse_ids(self):
+        """번호를 재사용하면 "3번"이 다른 두 물체를 가리켜 화면에서 헷갈린다."""
+        t = so.Tracker()
+        first = t.update([_obj(0.10, 0.02, 0.20)])
+        first_id = first[0].track_id
+        t.reset()
+        second = t.update([_obj(0.10, 0.02, 0.20)])   # 같은 자리라도
+        self.assertGreater(second[0].track_id, first_id)
+
+
+class TestGraspCandidate(unittest.TestCase):
+    """`is_grasp_candidate()` — 2026-09-21 사용자 결정: "모양" 안전망은 화면엔 계속
+    보여주되, 잡으러 가는 후보로는 YOLO 가 확실히 인식한 것만 믿는다.
+    """
+
+    def test_yolo_sourced_object_is_a_candidate(self):
+        o = _obj(0.1, 0.0, 0.25)
+        o.source = "YOLO:bottle 63%"
+        self.assertTrue(so.is_grasp_candidate(o))
+
+    def test_geometry_only_object_is_not_a_candidate(self):
+        o = _obj(0.1, 0.0, 0.25)
+        o.source = "모양"                    # ObjectCloud 기본값과 같다
+        self.assertFalse(so.is_grasp_candidate(o))
+
+    def test_default_source_is_not_a_candidate(self):
+        """소유자를 아예 안 정한 물체(기본값)는 안전하게 "후보 아님" 쪽으로 떨어져야 한다."""
+        o = _obj(0.1, 0.0, 0.25)
+        self.assertFalse(so.is_grasp_candidate(o))
+
+
 if __name__ == "__main__":
     unittest.main()
