@@ -238,7 +238,20 @@ class Detector:
     def detect(self, bgr) -> List[Detection]:
         if not self.ready:
             return []
-        res = self.model.predict(bgr, conf=self.conf, verbose=False)[0]
+        # ⚠️ agnostic_nms=True — 같은 자리에 **다른 class** 로 겹쳐 나온 것들 사이에도
+        #    표준 NMS(IoU 기준)를 적용한다. 기본(꺼짐)은 class 별로 따로 NMS를 해서,
+        #    겹치는 박스가 서로 다른 class 로 잡히면 NMS 가 둘 다 살려 둔다.
+        #    🛑 **이것만으로 다 안 잡힌다 — 같은 class 끼리도 마찬가지다**(2026-09-21
+        #    실측: `cup 86%, cup 63%, cup 38%` 가 한 병 위에 동시에 3번). IoU 는
+        #    "겹친 넓이 ÷ 합친 넓이"라서, 작은 detection(예: 병 뚜껑만 잡은 부분)이
+        #    큰 detection(예: 병 전체) 안에 통째로 들어가 있으면 **합친 넓이가 커서
+        #    IoU가 낮게 나와 NMS 를 통과한다** — class 가 같든 다르든 이 계산은
+        #    똑같다. 그래서 `suppress_cross_class_duplicates()` 를
+        #    Intersection-over-Smaller 기준으로 따로 둔다(2026-09-21, class 이름
+        #    일치 여부는 안 본다).
+        #    iou 임계값은 **일부러 안 낮춘다** — 낮추면 진짜로 가까이 붙은 서로 다른
+        #    물체(컵 옆에 병)까지 하나로 지워질 위험이 있다.
+        res = self.model.predict(bgr, conf=self.conf, agnostic_nms=True, verbose=False)[0]
         masks = None
         if getattr(res, "masks", None) is not None:
             masks = res.masks.data.cpu().numpy()      # (물체수, 높이, 너비)
@@ -282,6 +295,160 @@ MASK_COVER_MIN = 0.6
 #: 추정 물체의 앞뒤 두께를 최소 이만큼으로 본다(m). 한 면만 보이므로 0 이 나올 수 있는데,
 #: 0 이면 크기 판정이 이상해진다.
 ESTIMATE_MIN_DEPTH_M = 0.005
+
+# --------------------------------------------------------------------------
+# YOLO 중복 detection — 같은 물체가 detection 여러 개로 겹쳐 잡힘
+# --------------------------------------------------------------------------
+# 🛑 **D-9(YOLO+모양 안전망 사이의 중복)와 다른 문제다.** 여기는 YOLO **내부**에서
+#    같은 물리적 물체가 detection 여러 개로 동시에 나오는 경우다. 반드시 YOLO
+#    ownership 배정(아래 `split_by_boxes`) **이전에** 정리한다.
+#
+#    2026-09-21 실측 ① — 서로 다른 class 이름표(`cup 73%` 와 `bottle 44%`)로 나옴
+#    (병을 45도 이상 위에서 내려다볼 때 재현됨).
+#    2026-09-21 실측 ② — **class 이름이 같아도 똑같이 생긴다**(`cup 86%, cup 63%,
+#    cup 38%` 가 한 병 위에 동시에 3번). `agnostic_nms=True` 를 켠 YOLO 자체 NMS
+#    로도 못 거른다 — 작은 detection 이 큰 detection 안에 포함된 경우 IoU 가
+#    낮게 나오는 건 class 가 같든 다르든 똑같기 때문. 그래서 **class 이름 일치
+#    여부는 판단 기준에서 뺐다** — 포함 관계(2D)와 거리(3D)만 본다.
+
+#: **Intersection over Smaller**(작은 쪽 면적 대비 겹친 비율) 기준. 단순 IoU(합집합
+#: 대비 겹침)는 두 detection 의 크기 차가 크면(컵 뚜껑 부분만 vs 병 전체) 낮게 나와
+#: 포함 관계를 못 잡는다 — 그래서 "작은 쪽이 큰 쪽 안에 거의 다 들어가는가"를 본다.
+CROSS_CLASS_CONTAINMENT_MIN = 0.80
+
+#: 두 detection 의 대표 거리(중앙값) 차이가 이 안이면 "같은 물체" 후보로 본다(m).
+CROSS_CLASS_DEPTH_TOL_M = 0.03
+
+#: 대표 거리를 낼 때 최소 이만큼의 유효 거리점이 있어야 한다. 모자라면 **중복
+#: 판정을 하지 않는다**(거리값 부족한 상태에서 2D 겹침만 보고 지우지 않는다).
+CROSS_CLASS_MIN_DEPTH_POINTS = FEW_POINTS_MIN
+
+#: 남길 쪽을 고를 때 "더 넓게 측정한 쪽(점이 많은 쪽)을 남긴다"는 규칙이 통하는
+#: 물리적 크기 상한(m, 3D 퍼짐 기준). 이보다 크면 배경까지 먹었을 가능성이 크므로
+#: **크다고 무조건 남기지 않는다** — 그때는 거꾸로 더 작은(보수적인) 쪽을 남긴다.
+CROSS_CLASS_MAX_PLAUSIBLE_SIZE_M = 0.35
+
+
+def _cross_class_area_and_overlap(a, b, shape):
+    """두 detection 의 2D 겹침. **mask 있으면 mask, 없으면 박스**(계획서 §6).
+
+    같은 `detect()` 호출에서 나온 마스크는 전부 같은 해상도라, 마스크가 둘 다
+    있으면 그 화소끼리 바로 겹쳐 셀 수 있다. 하나라도 없으면 박스 사각형으로
+    물러선다. 돌려주는 값은 전부 **색 사진 화소 기준**으로 맞춰서, 마스크 쓴
+    경우와 박스만 쓴 경우가 같은 자로 비교되게 한다.
+    """
+    if (a.mask is not None and b.mask is not None
+            and a.mask.shape == b.mask.shape):
+        ma, mb = a.mask > 0.5, b.mask > 0.5
+        scale = (shape[0] * shape[1]) / float(a.mask.shape[0] * a.mask.shape[1])
+        return (float(np.count_nonzero(ma)) * scale,
+                float(np.count_nonzero(mb)) * scale,
+                float(np.count_nonzero(ma & mb)) * scale)
+    ax1, ay1, ax2, ay2 = a.box
+    bx1, by1, bx2, by2 = b.box
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    return area_a, area_b, inter
+
+
+def _representative_depth_and_extent(det, pts, px, py, shape,
+                                     min_points=CROSS_CLASS_MIN_DEPTH_POINTS):
+    """이 detection 영역 안 점들의 **대표 거리(중앙값)** 와 **점 개수·3D 퍼짐**.
+
+    돌려주는 것: `(대표 거리 또는 None, 점 개수, 3D 최대 퍼짐 또는 None)`.
+    거리값이 `min_points` 보다 적으면 `(None, 점 개수, None)` — **확신 없이
+    중복 판정에 쓰지 않으려는 것**(계획서 §3 — "duplicate suppression을
+    보수적으로 적용하지 않는다").
+    """
+    inside = det.contains(px, py, shape)
+    n = int(inside.sum())
+    if n < min_points:
+        return None, n, None
+    region = pts[inside]
+    depth = float(np.median(region[:, 2]))
+    extent = float((region.max(axis=0) - region.min(axis=0)).max())
+    return depth, n, extent
+
+
+def suppress_cross_class_duplicates(dets, pts, px, py, shape, debug=False):
+    """**같은 물체가 여러 detection 으로 겹쳐 잡히는 것**을 하나로 줄인다.
+
+    2026-09-21 실측 ①: 페트병 하나가 `cup 73%` + `bottle 44%` 로 동시에 잡혔다
+    (약 45도 이상 위에서 내려다볼 때 재현). `cup`은 병의 윗부분만, `bottle`은
+    병 전체를 덮고 있었다 — **확신(confidence)이 높은 쪽이 더 좋은 영역이라는
+    보장이 없다.**
+
+    🛑 **2026-09-21 실측 ② — class 이름이 같아도 똑같이 생긴다.** 처음에는 "같은
+    class 끼리는 YOLO 자체 NMS(`agnostic_nms=True`)가 정리한다"고 보고 건드리지
+    않았다. 그런데 실물에서 **`cup 86%, cup 63%, cup 38%`처럼 같은 class 가 한
+    물체 위에 3번**(뚜껑/몸통 번갈아) 나오는 것을 사용자가 재현했다 — NMS 는
+    IoU(합친 넓이 대비 겹침) 기준이라, **작은 detection 이 큰 detection 안에
+    포함된 경우**엔 class 가 같든 다르든 **똑같이 통과해 버린다.** 그래서
+    **class 이름 일치 여부는 더 이상 판단 기준에 안 쓴다** — 포함 관계와 거리만
+    본다. "진짜로 다른, 나란히 놓인 같은 class 물체 2개"는 겹치는 부분이
+    적어(포함 비율이 낮아) 이 기준에 안 걸리므로 계속 안전하게 분리된다.
+
+    판단 기준(**전부** 만족해야 중복으로 본다, confidence·class 이름은 안 쓴다):
+
+    1. 2D 포함 — Intersection over Smaller >= `CROSS_CLASS_CONTAINMENT_MIN`
+    2. 거리 일치 — 대표 거리 차이 <= `CROSS_CLASS_DEPTH_TOL_M`,
+       **거리값이 모자란 쪽이 하나라도 있으면 중복으로 보지 않는다**
+
+    남길 쪽 — **점이 많은(더 넓게 실제로 측정한) 쪽을 남긴다.** 단 그 detection의
+    3D 퍼짐이 `CROSS_CLASS_MAX_PLAUSIBLE_SIZE_M` 을 넘으면 배경을 먹었을 수
+    있으므로 거꾸로 작은 쪽을 남긴다.
+
+    돌려주는 것: `(살아남은 detections, 디버그 문자열 목록)`
+    """
+    n = len(dets)
+    alive = [True] * n
+    debug_lines = []
+    info = [_representative_depth_and_extent(d, pts, px, py, shape) for d in dets]
+
+    for i in range(n):
+        if not dets[i].is_object or not alive[i]:
+            continue
+        for j in range(i + 1, n):
+            if not dets[j].is_object or not alive[j]:
+                continue
+
+            depth_i, n_i, extent_i = info[i]
+            depth_j, n_j, extent_j = info[j]
+            if depth_i is None or depth_j is None:
+                continue                      # 거리값 부족 — 보수적으로 그냥 둔다
+
+            area_i, area_j, inter = _cross_class_area_and_overlap(dets[i], dets[j], shape)
+            smaller = min(area_i, area_j)
+            containment = inter / smaller if smaller > 1e-9 else 0.0
+            depth_diff = abs(depth_i - depth_j)
+            if containment < CROSS_CLASS_CONTAINMENT_MIN or depth_diff > CROSS_CLASS_DEPTH_TOL_M:
+                continue
+
+            i_too_big = extent_i is not None and extent_i > CROSS_CLASS_MAX_PLAUSIBLE_SIZE_M
+            j_too_big = extent_j is not None and extent_j > CROSS_CLASS_MAX_PLAUSIBLE_SIZE_M
+            if i_too_big and not j_too_big:
+                keep, drop, reason = j, i, "큰 쪽이 배경까지 먹었을 수 있어 작은 쪽을 남김"
+            elif j_too_big and not i_too_big:
+                keep, drop, reason = i, j, "큰 쪽이 배경까지 먹었을 수 있어 작은 쪽을 남김"
+            elif n_i >= n_j:
+                keep, drop, reason = i, j, "더 넓게 측정한 쪽(점 {}개 vs {}개)".format(n_i, n_j)
+            else:
+                keep, drop, reason = j, i, "더 넓게 측정한 쪽(점 {}개 vs {}개)".format(n_j, n_i)
+
+            alive[drop] = False
+            if debug:
+                debug_lines.append(
+                    "duplicate: {} {:.0%} <-> {} {:.0%}  containment={:.2f} "
+                    "depth_diff={:.3f}m  keep={} {:.0%}  reason={}".format(
+                        dets[i].name, dets[i].conf, dets[j].name, dets[j].conf,
+                        containment, depth_diff, dets[keep].name, dets[keep].conf, reason))
+            if drop == i:
+                break
+
+    return [d for d, a in zip(dets, alive) if a], debug_lines
 
 
 def _mask_extent(d, shape):
@@ -375,7 +542,8 @@ def estimate_from_mask(d, inside, intr, shape, depth_shape):
 
 
 def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
-                   min_points=CLUSTER_MIN_POINTS, near=None, far=None):
+                   min_points=CLUSTER_MIN_POINTS, near=None, far=None,
+                   debug=False, debug_lines=None, dets_out=None):
     """**YOLO 가 찾은 것들의 점을 따로 떼어낸다.**
 
     테두리(mask)가 있으면 그것으로, 없으면 네모 박스로 가른다.
@@ -389,6 +557,12 @@ def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
     `intr`           깊이 사진 기준 초점거리·중심. 있으면 **듬성듬성해도 추정**한다
     `near`/`far`     D405 가 믿을 수 있는 거리 범위(m). 안 주면 설정값(`D405_NEAR_M`/
                      `D405_FAR_M`) 을 쓴다
+    `debug_lines`    리스트를 주면 **class 간 중복 판정 내역**(`suppress_cross_class_
+                     duplicates` 참고)을 그 리스트에 이어 붙인다. 반환값 형태를 안
+                     바꾸려고 out-parameter 로 뺐다
+    `dets_out`       리스트를 주면 **class 간 중복을 정리한 뒤의 detections** 를
+                     그 리스트에 채운다(화면에 박스를 그릴 때 중복 없는 목록이
+                     필요한 호출부용) — 마찬가지로 out-parameter
     ==============  =====================================================
 
     돌려주는 것: `(박스별 물체 목록, 어느 박스에도 안 든 점)`
@@ -424,6 +598,16 @@ def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
     # find_objects()(모양 전용 경로)와 같은 순서.
     in_range = (pts[:, 2] >= near) & (pts[:, 2] <= far)
     pts, px, py = pts[in_range], px[in_range], py[in_range]
+
+    # 🛑 **class 간 중복부터 정리하고 나서 소유권을 배정한다** — 같은 물체가
+    # `cup`/`bottle` 처럼 서로 다른 class 이름으로 동시에 나오면, 아래 owner 배정은
+    # class 를 구분하지 않으므로 **둘 다 살아남아 물체가 두 번 생긴다.** D-9(YOLO+
+    # 모양 안전망 사이의 중복)와는 다른 문제라서 별도 함수로 뺐다.
+    dets, cc_debug = suppress_cross_class_duplicates(dets, pts, px, py, shape, debug=debug)
+    if debug_lines is not None:
+        debug_lines.extend(cc_debug)
+    if dets_out is not None:
+        dets_out[:] = dets
 
     owner = np.full(len(pts), -1, dtype=np.int64)
     best_conf = np.zeros(len(pts))
@@ -496,7 +680,8 @@ def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
 
 
 def find_objects_hybrid(points, pixel_xy, color_bgr, detector, near=None, far=None,
-                        depth_shape=None, intr=None, dets=None, geometry_fallback=True):
+                        depth_shape=None, intr=None, dets=None, geometry_fallback=True,
+                        debug=False, debug_lines=None):
     """**YOLO 로 먼저 가르고**, `geometry_fallback=True` 면 **남은 곳은 모양으로도 나눈다.**
 
     `depth_shape` 와 `intr` 를 주면 **거리값이 듬성듬성한 물체도** 위치·크기를 낸다.
@@ -507,15 +692,25 @@ def find_objects_hybrid(points, pixel_xy, color_bgr, detector, near=None, far=No
     부른다**(2026-09-21 사용자 결정) — 자세한 이유는 `main()`의 `--geometry-fallback`
     플래그 설명 참고.
 
-    돌려주는 것: `(물체 목록, 설명 문구, YOLO 가 찾은 것들)`
+    `debug=True` 면 class 간 중복 판정 내역을 `debug_lines`(리스트를 주면 그 리스트에
+    채운다)로 돌려준다 — `suppress_cross_class_duplicates` 참고.
+
+    🛑 **돌려주는 `dets` 는 class 간 중복을 정리한 뒤의 목록이다** — 화면에 그리는
+    박스와 실제로 물체가 된 개수가 서로 다르게 보이지 않도록, 지워진 detection은
+    여기서도 빠진다.
+
+    돌려주는 것: `(물체 목록, 설명 문구, YOLO 가 찾은 것들 — 중복 정리됨)`
     """
     from segment_objects import find_objects
 
     if dets is None:
         dets = detector.detect(color_bgr) if (detector and detector.ready) else []
+    deduped_dets = []
     boxed, rest = split_by_boxes(points, pixel_xy, dets, color_bgr.shape[:2],
                                  depth_shape=depth_shape, intr=intr,
-                                 near=near, far=far)
+                                 near=near, far=far, debug=debug,
+                                 debug_lines=debug_lines, dets_out=deduped_dets)
+    dets = deduped_dets
 
     found = ", ".join("{} {:.0%}".format(d.name, d.conf) for d in dets) or "없음"
 
@@ -571,6 +766,11 @@ def main() -> int:
                          "과제다: ai_festa_plan.md §8-2). 켜면 잡으러 갈 후보에는 "
                          "여전히 안 쓰인다(is_grasp_candidate가 YOLO만 신뢰) — 화면 "
                          "참고·디버깅용으로만 켤 것")
+    ap.add_argument("--debug", action="store_true",
+                    help="class 간 중복 판정 내역을 화면·로그에 자세히 찍는다 — 예: "
+                         "'cup 73% <-> bottle 44%  containment=0.91 depth_diff=0.012m "
+                         "keep=bottle 44% reason=...'. 기본 화면이 복잡해지는 것을 "
+                         "막기 위해 평소엔 꺼 둔다")
     args = ap.parse_args()
 
     if not (args.live or args.save):
@@ -640,10 +840,15 @@ def main() -> int:
                 stack_note = "1장만 사용 — 값 있는 화소 {:.0%} (여러 장 합치려면 --frames 5)".format(
                     single_valid)
             pts, pix = _to_points(depth_m, intr)
+            cross_class_debug = [] if args.debug else None
             objs, note, dets = find_objects_hybrid(
                 pts, pix, color, det, near, far,
                 depth_shape=depth_m.shape, intr=intr,
-                geometry_fallback=args.geometry_fallback)
+                geometry_fallback=args.geometry_fallback,
+                debug=args.debug, debug_lines=cross_class_debug)
+            if cross_class_debug:
+                for line in cross_class_debug:
+                    print(line)
             objs = tracker.update(objs)
 
             paint = colorize(depth_m, near, far)
