@@ -8,6 +8,14 @@ Unity 안의 로봇 팔과 **실물 UR16e / URSim(가상 컨트롤박스)** 를 
 - **출력**: RTDE `servoJ` 명령(rad) → URSim/실물 UR16e
 - **역방향(선택)**: RTDE `getActualQ()`로 읽은 **실제 6관절각** → UDP → Unity `UrArmReceiver`
 
+🛑 **IP가 두 개고, 서로 다른 질문에 답한다** (2026-09-21 코드 리뷰로 분리).
+`RTAUTO_UR_ARM_BRIDGE_IP`("Unity가 이 파이썬 브리지를 어디서 찾는가")와
+`RTAUTO_UR_IP`("브리지가 URSim/실물 컨트롤박스를 어디서 찾는가")는 **다른 값이다.**
+URSim 환경에서는 둘 다 `127.0.0.1`이라 우연히 같아 보이지만, 실물로 전환할 때는
+`RTAUTO_UR_IP`만 컨트롤박스 IP로 바꾸고 `RTAUTO_UR_ARM_BRIDGE_IP`는 그대로 둔다(브리지가
+도는 PC는 안 바뀌므로). 둘을 헷갈리면 Unity의 UDP 패킷이 브리지가 아니라 컨트롤박스로
+직접 날아간다.
+
 ## 목차
 
 1. [무엇을 위한 폴더인가](#1-무엇을-위한-폴더인가)
@@ -98,13 +106,33 @@ python arm/ur_rtde_bridge.py [--ip [주소]] [--listen 5009] [--hz 10]
 | 이름 | 값 | 의미 |
 |---|---|---|
 | `N_JOINTS` | 6 | 팔 관절 수 |
-| `MIN_PACKET_BYTES` | 24 (= 4×6) | 이보다 짧은 UDP 패킷은 무시 |
+| `PACKET_BYTES` (= `MIN_PACKET_BYTES`) | 24 (= 4×6) | UDP 패킷은 **정확히** 이 길이여야 함 — 짧거나 길면 버림 |
+| `UR_JOINT_LIMIT_DEG` | 360 | 이 값을 벗어나는 관절각은 손상/조작된 패킷으로 보고 버림(URDF 소프트웨어 한계 ±2π와 동일) |
 | `JOINT_NAMES` | `["shoulder_pan","shoulder_lift","elbow","wrist_1","wrist_2","wrist_3"]` | 패킷 순서의 정본 |
 | `CONTROL_RETRY_SEC` | 2.0 | 제어 링크 재접속 간격[초] |
 | `STALE_AFTER_SEC` | 1.0 | 마지막 수신 후 이 시간이 지나면 "패킷 끊김"으로 판정 |
 
 패킷은 **float32 little-endian × 6, 단위 deg**다. Unity `UrArmSender.cs` / `UrArmReceiver.cs`가
 같은 형식을 쓴다.
+
+### 4-2-1. 실물 제어 입력 검증 (`validate_packet`, 2026-09-21 추가)
+
+UDP는 누구나 쏠 수 있고 실물 관절을 직접 움직이는 입력이므로, `servoJ`로 넘기기 전에
+`validate_packet()`이 세 가지를 확인한다 — 하나라도 실패하면 **패킷을 통째로 버리고
+`last_rx_t`(수신 시각)와 `last_cmd`(슬루 기준점) 둘 다 건드리지 않는다**:
+
+1. **길이가 정확히 24바이트인가** (`len(data) != PACKET_BYTES`이면 거절)
+2. **여섯 값이 전부 유한한가** (`math.isfinite` — NaN/Inf 거절)
+3. **여섯 값이 전부 ±360° 안인가** (`UR_JOINT_LIMIT_DEG`)
+
+거절 로그(`[거부] 비정상 패킷 — …`)는 `invalid_warned` 래치로 한 번만 찍는다(연속 거절 시
+콘솔 도배 방지, `stale_warned`와 같은 관례). `--expect-from <IP>`를 주면 그 IP가 아닌
+발신자의 패킷도 같은 방식으로 버린다(기본은 검증 안 함 — 누구든 보낼 수 있음, 기존 동작 유지).
+
+⚠️ **여기서 거른 것은 "터무니없는 값"이지 로봇의 실제 안전 한계가 아니다.** 정식 안전 한계
+검사(`isJointsWithinSafetyLimits`)는 IK 경로(`prepose_to_joints.py`)가 이미 쓰고 있고, 이
+브리지는 원시 관절 목표를 그대로 흘려보내는 저수준 경로라 그 검사를 통과하지 않는다 — 슬루
+리밋(`--max-deg-per-sec`)이 실질적인 안전판이라는 점은 이전과 같다.
 
 ### 4-3. 핵심 함수 — 왜 이렇게 되어 있나
 

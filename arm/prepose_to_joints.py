@@ -66,6 +66,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config.rtauto_config import (  # noqa: E402
     ARM_HAND_URDF,
+    MAX_POSE_AGE_SEC,
     UR_MAX_DEG_PER_SEC,
     dg5f_link_prefix,
     resolve_ur_ip,
@@ -614,8 +615,23 @@ class ArmMover:
         )
         return ok, report
 
-    def move_to(self, pose: GraspPrePose, acceleration: float = 0.5) -> MoveResult:
-        """계산한 자세로 움직이고 **멈춘다.** 갈 수 없으면 움직이기 전에 거절한다."""
+    def move_to(self, pose: GraspPrePose, acceleration: float = 0.5,
+                max_age_sec: Optional[float] = None) -> MoveResult:
+        """계산한 자세로 움직이고 **멈춘다.** 갈 수 없거나 관측이 오래됐으면 움직이기 전에 거절한다.
+
+        `max_age_sec`를 안 주면 `.env`의 `RTAUTO_MAX_POSE_AGE_SEC`(기본 2초)를 쓴다.
+        **실제 이동 직전(여기)에서만 나이를 강제한다** — `plan()`은 계산만 하고 움직이지
+        않으므로 저장된 자세 분석·재현 작업을 방해하지 않게 그대로 둔다(P4).
+        """
+        age_limit = MAX_POSE_AGE_SEC if max_age_sec is None else max_age_sec
+        age = time.time() - pose.stamp_capture
+        if age > age_limit:
+            return MoveResult(
+                False,
+                "관측이 너무 오래됐다({:.2f}초 지남, 허용 {:.2f}초) — 그 사이 물체가 "
+                "옮겨갔을 수 있어 움직이지 않는다.".format(age, age_limit),
+            )
+
         plan = self.plan(pose)
         if not plan.moved or plan.joints is None:
             return plan

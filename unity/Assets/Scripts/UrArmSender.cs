@@ -15,6 +15,13 @@
 //
 // 포트의 유일한 출처는 config/rtauto_config.py(PORT_UR_ARM_BRIDGE) = 레포 루트 .env의
 // RTAUTO_PORT_UR_ARM_BRIDGE이고, 이 스크립트도 RtautoConfig로 같은 파일을 읽는다 (원칙 1).
+//
+// 🛑 송신 대상 IP는 RTAUTO_UR_ARM_BRIDGE_IP다 — RTAUTO_UR_IP가 아니다 (2026-09-21 수정).
+// RTAUTO_UR_IP는 "arm/ur_rtde_bridge.py가 URSim/실물 컨트롤박스를 어디서 찾는가"이고,
+// 이 값은 "Unity가 그 파이썬 브리지 자체를 어디서 찾는가"다. URSim 환경(둘 다 127.0.0.1)
+// 에서는 두 값이 같아 보여 예전 코드가 RTAUTO_UR_IP를 그대로 재사용했지만, 실물 전환 때
+// RTAUTO_UR_IP를 컨트롤박스 IP로 바꾸면 이 UDP 패킷이 파이썬 브리지가 아니라 컨트롤박스로
+// 직접 날아가는 사고가 난다 — DG5F 쪽(RTAUTO_DG5F_BRIDGE_IP)과 같은 구조로 분리했다.
 
 using System;
 using System.Linq;
@@ -61,7 +68,7 @@ public class UrArmSender : MonoBehaviour
     void Start()
     {
         ActivePort = RtautoConfig.GetInt("RTAUTO_PORT_UR_ARM_BRIDGE", bridgePort);
-        string ip = RtautoConfig.GetString("RTAUTO_UR_IP", bridgeIp);
+        string ip = RtautoConfig.GetString("RTAUTO_UR_ARM_BRIDGE_IP", bridgeIp);
 
         var bodies = GetComponentsInChildren<ArticulationBody>(true);
         _joints = new ArticulationBody[ChannelCount];

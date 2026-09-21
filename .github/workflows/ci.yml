@@ -1,0 +1,52 @@
+name: CI
+
+# 하드웨어(D405 카메라, DG-5F 그리퍼, UR16e 팔) 없이 돌아가는 시험만 여기서 돈다.
+# 실물이 필요한 시험은 일부러 억지로 넣지 않는다 — 사람이 장비 앞에서 직접 확인한다
+# (CLAUDE.md 원칙 6). 2026-09-21 코드 리뷰 우선순위 7로 추가.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  syntax-smoke:
+    name: Python 문법 검사 (전 리포, 의존성 설치 없이)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10.11"
+      - name: 문법만 검사 — 실행/임포트는 안 함 (superdex/는 파이썬 3.12 전용이라 제외)
+        run: |
+          python -m compileall -q \
+            arm config contracts hand tools urdf vision training \
+            -x '(^|/)(superdex|vendor|__pycache__|\.vision)(/|$)'
+
+  python-tests:
+    name: Python 단위 시험 (하드웨어 없이)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10.11"
+      - name: 최소 의존성 설치 (requirements-ci.txt — requirements-vision.txt의 부분집합)
+        run: pip install -r requirements-ci.txt
+      - name: 임포트 스모크 — 설정 레지스트리와 계약이 새 체크아웃(.env 없음)에서 바로 뜨는가
+        run: |
+          python -c "from config import rtauto_config as cfg; print('config ok:', cfg.UR_ARM_BRIDGE_IP, cfg.UR_IP)"
+          python -c "from contracts.grasp_prepose import GraspPrePose; print('contracts ok')"
+      - name: contracts — 파지 직전 자세 계약
+        run: python -m unittest contracts.tests.test_grasp_prepose_contract -v
+      - name: arm — 팔 좌표계·손목 카메라 계산 (URSim/실물 연결 없음)
+        run: |
+          python -m unittest arm.tests.test_prepose_to_joints -v
+          python -m unittest arm.tests.test_eye_in_hand -v
+      - name: hand — 접촉 판단 순서도 (그리퍼 연결 없음)
+        run: python -m unittest hand.tests.test_grasp_contact -v
+      - name: vision/d405 — 점 구름 순수 알고리즘 (카메라 연결 없음)
+        run: |
+          python -m unittest vision.d405.tests.test_segment_objects -v
+          python -m unittest vision.d405.tests.test_yolo_assist -v

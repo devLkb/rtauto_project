@@ -45,8 +45,34 @@ from config.rtauto_config import (
 )
 
 N_JOINTS = 6
-MIN_PACKET_BYTES = 4 * N_JOINTS
+PACKET_BYTES = 4 * N_JOINTS   # float32 x 6 — 정확히 이 길이여야 한다(우리 프로토콜은 단일 버전, DG5F처럼 상위 버전으로 늘어나지 않는다)
+MIN_PACKET_BYTES = PACKET_BYTES  # 기존 이름 유지 — arm/README.md·다른 스크립트가 이 이름을 참조
 JOINT_NAMES = ["shoulder_pan", "shoulder_lift", "elbow", "wrist_1", "wrist_2", "wrist_3"]
+
+# 관절각 정신머리 검사 — URDF(urdf/ur16e_dg5f_right_build/ur16e_dg5f_right.urdf)의
+# 팔 관절 6개가 전부 <limit lower="-2π" upper="2π"/>다(연속 회전 관절 소프트웨어 한계).
+# 이보다 벗어난 값은 손상된/조작된 패킷이지 정상 목표가 아니다 — servoJ로 넘기지 않고 버린다.
+# ⚠️ 이 검사는 URDF 소프트웨어 한계와 같은 값일 뿐, UR 컨트롤러 자신의 실제 안전 한계
+#    (isJointsWithinSafetyLimits, arm/prepose_to_joints.py가 IK 경로에서 이미 쓴다)를
+#    대신하지 않는다 — 여기서는 "터무니없는 값" 만 걸러낸다.
+UR_JOINT_LIMIT_DEG = 360.0
+
+
+def validate_packet(data):
+    """수신 UDP 패킷이 믿을 만한 6관절 목표인지 검사.
+
+    반환: (target_deg_6개_또는_None, 거절_이유_또는_None).
+    통과해야 last_rx_t/last_cmd를 갱신하고 servoJ로 넘긴다 — 실물 제어 입력이므로
+    아래 세 가지를 전부 통과하지 못하면 **조용히 버린다** (예외로 브리지를 죽이지 않는다).
+    """
+    if len(data) != PACKET_BYTES:
+        return None, "패킷 길이 {}바이트 (정확히 {}바이트여야 함)".format(len(data), PACKET_BYTES)
+    target = list(struct.unpack_from(f"<{N_JOINTS}f", data))
+    if not all(math.isfinite(v) for v in target):
+        return None, "숫자가 아닌 값(NaN/Inf) 포함: {}".format(target)
+    if not all(abs(v) <= UR_JOINT_LIMIT_DEG for v in target):
+        return None, "관절각이 ±{:g}° 범위를 벗어남: {}".format(UR_JOINT_LIMIT_DEG, target)
+    return target, None
 
 
 def deg_to_rad(deg6):
@@ -106,6 +132,9 @@ def main():
                          "--ip만 주면 .env의 RTAUTO_UR_IP를 쓴다 (기본 127.0.0.1=URSim 로컬)")
     ap.add_argument("--listen", type=int, default=PORT_UR_ARM_BRIDGE,
                     help=f"UDP 수신 포트 (Unity UrArmSender와 동일해야 함, 기본 {PORT_UR_ARM_BRIDGE})")
+    ap.add_argument("--expect-from", default=None, metavar="IP",
+                    help="이 IP에서 온 패킷만 받는다 — 기본은 검증 안 함(누구든). 실물 제어를 "
+                         "고정된 PC 한 대에서만 보내게 하려면 그 PC의 IP를 지정한다")
     ap.add_argument("--hz", type=float, default=10.0,
                     help="servoJ 송신 상한 Hz (기본 10 — docs/SIM2REAL_ROADMAP.md §5-5 계획값)")
     ap.add_argument("--max-deg-per-sec", type=float, default=UR_MAX_DEG_PER_SEC,
@@ -204,6 +233,11 @@ def main():
     # "끊김"이 아니라 정상 상태다.
     STALE_AFTER_SEC = 1.0
     last_rx_t = None
+    # 비정상 패킷(길이·NaN/Inf·범위 밖) 경고 래치 — stale_warned와 같은 이유로 한 번만 찍는다.
+    # 매 틱 찍으면 콘솔이 도배돼 "[제어]"처럼 정말 중요한 로그가 묻힌다.
+    invalid_warned = False
+    # 발신자 IP 래치 — --expect-from을 안 줘도 "누가 보내는지"는 첫 패킷에서 한 번 알려준다.
+    sender_warned = False
 
     def echo_if_due(now):
         # echo는 Unity로부터의 수신 여부와 무관하게 독립된 타이머로 돈다 — 그래야 펜던트로
@@ -265,8 +299,14 @@ def main():
     try:
         while True:
             try:
-                data, _ = sock.recvfrom(4096)
-                last_rx_t = time.time()
+                data, addr = sock.recvfrom(4096)
+                if args.expect_from is not None and addr[0] != args.expect_from:
+                    if not sender_warned:
+                        print(f"[보안] 예상하지 않은 발신자 {addr[0]} (기대: {args.expect_from}) — "
+                              "패킷을 버립니다. 계속되면 콘솔에 반복하지 않습니다.")
+                        sender_warned = True
+                    continue
+                sender_warned = False
                 if stale_warned:
                     print("[recv] Unity 패킷 재개")
                     stale_warned = False
@@ -288,10 +328,18 @@ def main():
                 # 훨씬 간단하고 안전하다). Linux에는 없는 문제라 실제로 겪기 전까지 안 보인다.
                 continue
 
-            if len(data) < MIN_PACKET_BYTES:
+            target, reason = validate_packet(data)
+            if target is None:
+                # 비정상 패킷 — last_rx_t/last_cmd 둘 다 갱신하지 않는다. last_rx_t를 건드리면
+                # "패킷이 계속 온다"는 거짓 신호가 되어 [hold] 경고가 못 뜨고, last_cmd를
+                # 건드리면 슬루 기준점이 오염된 값으로 오염된다 — servoJ까지 절대 안 간다.
+                if not invalid_warned:
+                    print(f"[거부] 비정상 패킷 — {reason}. 계속되면 콘솔에 반복하지 않습니다.")
+                    invalid_warned = True
                 echo_if_due(time.time())
                 continue
-            target = list(struct.unpack_from(f"<{N_JOINTS}f", data))
+            invalid_warned = False
+            last_rx_t = time.time()
 
             now = time.time()
             if now - last_sent_t < period:

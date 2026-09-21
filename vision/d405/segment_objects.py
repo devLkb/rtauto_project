@@ -176,10 +176,23 @@ def plane_ok(points, inliers, min_frac=PLANE_MIN_FRAC):
 
 
 def remove_plane(points, colors=None):
-    """책상 면과 **그 뒤쪽(더 먼 쪽)** 을 뺀다.
+    """책상 면과 **그 뒤쪽(카메라에서 먼 쪽)** 을 뺀다.
 
-    면만 빼면 책상 아래·뒤의 점이 남는다. 물체는 책상 **앞쪽(카메라 쪽)** 에 있으므로
-    면보다 카메라 쪽에 있는 점만 남긴다.
+    면만 빼면 책상 아래·뒤의 점이 남는다. 물체는 책상보다 **카메라에 가까운 쪽**에
+    있으므로, 카메라 쪽에 있는 점만 남긴다.
+
+    ⚠️ **카메라 쪽을 어떻게 정하는가 (2026-09-21 코드 리뷰로 수정).** 예전에는 "점이 더
+    많이 붙은 쪽"을 카메라 쪽으로 가정했다 — 하지만 `fit_plane()`이 뽑는 법선(`n`)의
+    방향은 임의라서(3점을 어떤 순서로 뽑았느냐에 따라 뒤집힐 수 있다), "점이 많은 쪽 =
+    카메라 쪽"이라는 보장이 없다. 예를 들어 물체가 책상보다 화면을 더 많이 채우면
+    점 개수만으로는 반대쪽(책상 아래·뒤)을 카메라 쪽으로 잘못 고를 수 있다.
+
+    이 점 구름은 **카메라 기준 좌표계**다(`_to_points()`가 그렇게 만든다) — 즉 카메라
+    원점은 언제나 `(0, 0, 0)`이다. 평면 방정식 `n·p + d = 0`에 원점을 넣으면 가리키는
+    값은 그냥 `d`이므로, **카메라 쪽은 부호가 `d`와 같은 쪽**이다(점 개수와 무관하게
+    법선 방향만으로 정해지는 사실이다). 팔목에 달린 카메라(eye-in-hand)가 움직여도
+    "카메라 원점 = (0,0,0)"이라는 좌표계 정의 자체가 매 프레임 다시 성립하므로 이
+    판정은 그대로 쓸 수 있다.
     """
     pts = np.asarray(points, dtype=np.float64)
     n, d, inl = fit_plane(pts)
@@ -190,10 +203,9 @@ def remove_plane(points, colors=None):
         return pts, colors, None, "평평한 면을 못 찾았다(책상이 거의 안 보임) — 배경을 둔다"
 
     signed = pts @ n + d
-    # 점이 많은 쪽이 아니라 **평균이 어느 쪽인가** 로 앞뒤를 정한다
-    front = signed > PLANE_TOL_M
-    back = signed < -PLANE_TOL_M
-    keep = front if front.sum() >= back.sum() else back
+    # 카메라 원점(0,0,0)에서의 부호 = d 그 자체. 그 부호와 같은 쪽이 카메라 쪽이다.
+    camera_side = signed > PLANE_TOL_M if d > 0 else signed < -PLANE_TOL_M
+    keep = camera_side
     note = "평평한 면 제거 — 붙은 점 {:.0%}, 남긴 점 {:.0%}".format(
         float(inl.mean()), float(keep.mean()))
     return pts[keep], (colors[keep] if colors is not None else None), (n, d), note

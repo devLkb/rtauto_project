@@ -72,6 +72,20 @@ DG5F_BRIDGE_IP = _env("RTAUTO_DG5F_BRIDGE_IP", "127.0.0.1")
 # 기본값 없음: 머신·배선마다 다르고, 틀린 IP로 조용히 시도하면 원인 파악이 어렵다.
 DG5F_IP = _env("RTAUTO_DG5F_IP", "")
 
+# Unity(Assets/Scripts/UrArmSender.cs)가 팔 관절 목표를 UDP로 쏠 때의 대상 IP —
+# arm/ur_rtde_bridge.py(파이썬 브리지)가 도는 PC의 주소다. DG5F_BRIDGE_IP와 정확히
+# 같은 구조(Unity가 "브리지가 어디 있나"를 묻는 것)이고, 아래 UR_IP(브리지가 "URSim/실물
+# 컨트롤박스가 어디 있나"를 묻는 것)와는 **별개의 질문**이다.
+#
+# 🛑 **왜 UR_IP와 분리했는가 (2026-09-21 코드 리뷰로 발견).** UrArmSender.cs가 예전에는
+# 이 값 대신 RTAUTO_UR_IP를 그대로 읽었다. URSim 환경(둘 다 127.0.0.1)에서는 우연히
+# 문제가 없었지만, 실물 전환 때 RTAUTO_UR_IP를 실제 컨트롤박스 IP(192.168.x.x 등)로
+# 바꾸면 **Unity의 UDP 패킷이 파이썬 브리지가 아니라 UR16e 컨트롤박스로 직접 날아간다**
+# — 컨트롤박스는 이 포트를 서보 명령으로 해석하지 않으므로 겉보기엔 "아무 반응 없음"
+# 이지만, 신뢰할 수 없는 경로로 실물에 UDP를 쏘는 것 자체가 위험하다. 보통 Unity와
+# 브리지를 같은 PC에서 돌리므로 기본값은 로컬이다.
+UR_ARM_BRIDGE_IP = _env("RTAUTO_UR_ARM_BRIDGE_IP", "127.0.0.1")
+
 
 def resolve_gripper_ip(value):
     """브리지 스크립트들의 `--ip` 인자 해석 — 세 브리지가 같은 규칙을 공유한다.
@@ -413,6 +427,17 @@ def d405_mount_measured():
 #:    다른 해상도로 물어보면 그 비율만큼 **자동으로 환산한다**(arm/eye_in_hand.py).
 #:    안 그러면 640x480 으로 물었는데 1280x720 값이 그대로 나가 **2배 틀린다.**
 #:    2026-09-18 에 시험이 이 버그를 잡았다.
+# ---------------- 파지 직전 자세의 유효 시간 (P4 — 오래된 관측으로 움직이지 않기) ----------------
+# 카메라가 찍은 시각(GraspPrePose.stamp_capture)부터 실제로 팔이 그 자세로 움직이기
+# 시작하는 시각까지가 이보다 길면 **움직이지 않고 거절한다.** 그 사이 물체가 옮겨갔거나
+# 사람이 손을 뻗었을 수 있는데, 오래된 관측으로 그대로 움직이면 위험하다.
+#
+# ⚠️ **이 검사는 arm/prepose_to_joints.py의 실제 이동 직전(ArmMover.move_to)에서만
+# 강제한다.** --plan-only 계산이나 저장된 자세 파일 분석(ArmMover.plan 단독 호출)은
+# "그 자세로 지금 팔을 움직일 것"이 아니므로 막지 않는다 — 나이 검사가 분석·재현
+# 작업을 방해하면 안 된다.
+MAX_POSE_AGE_SEC = float(_env("RTAUTO_MAX_POSE_AGE_SEC", "2.0"))
+
 D405_CALIB_WIDTH = int(_env("RTAUTO_D405_CALIB_WIDTH", "1280"))
 D405_CALIB_HEIGHT = int(_env("RTAUTO_D405_CALIB_HEIGHT", "720"))
 D405_FX = float(_env("RTAUTO_D405_FX", "0"))

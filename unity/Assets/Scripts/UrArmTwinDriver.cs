@@ -96,7 +96,9 @@ public class UrArmTwinDriver : MonoBehaviour
             driveEnabled = next;
             Debug.Log($"[UrArmTwinDriver] 구동 {(driveEnabled ? "ON" : "OFF")}");
         }
-        GUILayout.Label(receiver != null && receiver.HasData ? "수신중" : "대기중");
+        // IsFresh(HasData && 끊긴 지 오래 안 됨)를 본다 — HasData만 보면 브리지가 죽은
+        // 뒤에도 "수신중"으로 계속 표시된다(2026-09-21 수정).
+        GUILayout.Label(receiver != null && receiver.IsFresh ? "수신중" : "대기중");
         GUILayout.EndArea();
     }
 }

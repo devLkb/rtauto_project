@@ -1,0 +1,11 @@
+# CI 전용 — 하드웨어 없이 도는 순수 로직 시험만 돌리기 위한 최소 의존성.
+# requirements-vision.txt 전체(mediapipe/pyrealsense2/ultralytics/torch/ur_rtde 등)는
+# 실물 카메라·그리퍼·팔 SDK용이라 CI에 올리지 않는다 — 설치만 몇 분이 걸리고, 이 시험들은
+# 애초에 그 값을 쓰지 않는다(2026-09-21, 코드 리뷰 우선순위 7).
+#
+# 버전은 requirements-vision.txt의 핀을 그대로 따른다 — 이 파일이 정본은 아니다.
+# requirements-vision.txt를 올리면 여기도 같이 올릴 것(안 그러면 "CI는 통과하는데 실제
+# venv에서는 다르게 동작한다"가 생길 수 있다).
+numpy==1.23.5
+scipy==1.10.1
+opencv-contrib-python==4.8.1.78

@@ -242,7 +242,9 @@ namespace KDT.PicknPlaceTraining
             }
             GUILayout.EndScrollView();
 
-            GUI.enabled = urReceiver != null && urReceiver.HasData;
+            // IsFresh(HasData && 끊긴 지 오래 안 됨)를 본다 — HasData만 보면 브리지가 죽은
+            // 뒤에도 버튼이 계속 눌려서 얼어붙은 값을 그대로 끌어온다(2026-09-21 수정).
+            GUI.enabled = urReceiver != null && urReceiver.IsFresh;
             if (GUILayout.Button("URSim 실제각으로 맞추기")) PullFromUrsim();
             GUI.enabled = true;
             if (GUILayout.Button("초기화 (전체 리셋)")) FullReset();
@@ -267,8 +269,10 @@ namespace KDT.PicknPlaceTraining
 
             // "브리지가 도는지"를 화면에서 바로 알 수 있게 한다 — 콘솔을 열지 않아도
             // 원인이 파이썬 미실행인지 방향 설정인지 구분된다(손 트래킹 상태 표시와 같은 취지).
-            bool live = urReceiver != null && urReceiver.HasData
-                        && urReceiver.secondsSinceLastPacket < 0.5f;
+            // IsFresh 하나로 통일한다(2026-09-21) — 예전에는 여기서 HasData +
+            // secondsSinceLastPacket을 따로 재본떠 임계값(0.5s)이 UrArmReceiver 자신의
+            // 판정과 어긋날 수 있었다.
+            bool live = urReceiver != null && urReceiver.IsFresh;
             Color previous = GUI.color;
             GUI.color = live ? Color.green : new Color(1f, 0.65f, 0f);
             GUILayout.Label(live

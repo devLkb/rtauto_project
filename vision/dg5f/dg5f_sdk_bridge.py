@@ -35,6 +35,7 @@ JOINT_SIGN 전 채널 +1, JOINT_OFFSET_DEG 0, JOINT_CLAMP는 채널별 실제 �
 """
 import argparse
 import ctypes
+import math
 import os
 import socket
 import struct
@@ -572,6 +573,7 @@ def main():
                   f"(엄지 {last_cmd[0]:.1f}/{last_cmd[1]:.1f}°) — 여기서부터 서서히 이동합니다.")
     last_print = 0.0
     stale_warned = False
+    invalid_warned = False  # 비정상(NaN/Inf) 패킷 경고 래치 — stale_warned와 같은 이유
     teach_on = False        # Unity 제어 패킷으로 켜고 끈다 (real→sim 모드)
 
     if args.echo_to_unity:
@@ -642,6 +644,18 @@ def main():
                 # 교시 중에는 Unity가 보낸 관절 명령을 실물에 쓰지 않는다(사람이 손으로 잡는 중).
                 continue
             ours = struct.unpack_from(f"<{N_JOINTS}f", data)
+            # 실물 제어 입력이므로 숫자가 아닌 값(NaN/Inf)은 걸러낸다(2026-09-21 코드 리뷰).
+            # JOINT_CLAMP만 믿으면 안 되는 이유: Python의 min/max는 NaN이 섞이면 비교가
+            # 전부 False가 돼 "우연히" lo로 눌리는 것처럼 보이지만, 그건 정의된 동작이 아니라
+            # 이 인터프리터의 구현 특성에 기댄 것이다 — last_cmd까지 오염시키지 않으려면
+            # 여기서 명시적으로 거절해야 한다(last_cmd는 다음 슬루 리밋의 기준점이 된다).
+            if not all(math.isfinite(v) for v in ours):
+                if not invalid_warned:
+                    print(f"[거부] 비정상 패킷 — 숫자가 아닌 값(NaN/Inf) 포함: {list(ours)}. "
+                          "계속되면 콘솔에 반복하지 않습니다.")
+                    invalid_warned = True
+                continue
+            invalid_warned = False
             target = to_sdk_frame(ours, args.unmirror)
 
             now = time.time()
