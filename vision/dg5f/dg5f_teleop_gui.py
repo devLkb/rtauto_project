@@ -120,7 +120,9 @@ CAM_MIN_FPS = float(os.environ.get("RTAUTO_VISION_CAMERA_MIN_FPS", "15"))
 # (env var 없으면 아래 기본값. 시작 시 값일 뿐이며 GUI에서 언제든 바꿀 수 있다.)
 DEF_SIM_IP = os.environ.get("RTAUTO_UNITY_IP", "127.0.0.1")               # Unity 트윈
 DEF_SIM_PORT = int(os.environ.get("RTAUTO_PORT_DG5F_SIM", "5006"))
-DEF_REAL_IP = os.environ.get("RTAUTO_UNITY_IP", "127.0.0.1")              # 실물 SDK 브리지
+# 실물 SDK 브리지(dg5f_sdk_bridge.py)가 도는 PC의 주소 — Unity가 도는 PC와 다른 값일 수
+# 있으므로 RTAUTO_UNITY_IP를 재사용하지 않는다(2026-09-21 UR 브리지 IP 분리와 같은 이유).
+DEF_REAL_IP = os.environ.get("RTAUTO_DG5F_BRIDGE_IP", "127.0.0.1")        # 실물 SDK 브리지
 DEF_REAL_PORT = int(os.environ.get("RTAUTO_PORT_DG5F_BRIDGE", "5008"))    # 구 5007 — ZED와 포트 충돌해 변경(config/rtauto_config.py 참조)
 SEND_HZ_CAP = 60
 FILTER_FREQ, FILTER_MIN_CUTOFF, FILTER_BETA = 30.0, 0.6, 0.0005

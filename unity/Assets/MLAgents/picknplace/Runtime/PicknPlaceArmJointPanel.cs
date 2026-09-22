@@ -195,9 +195,17 @@ namespace KDT.PicknPlaceTraining
                 // the physical ceiling — they do different jobs, so both stay.
                 float smoothed = Mathf.Lerp(drive.target, _targetDeg[i], t);
                 float maxStep = UrArmLimits.MaxDegPerSec[i] * Time.fixedDeltaTime;
-                drive.target = Mathf.Clamp(
+                smoothed = Mathf.Clamp(
                     smoothed, drive.target - maxStep, drive.target + maxStep);
+                drive.target = smoothed;
+                // 팔+손목은 스프링(xDrive stiffness/damping)이 있을 이유가 없다 — 이 패널이
+                // 실제로 "Unity→URSim" 방향을 구동하는 코드다(UrArmTwinDriver는 반대 방향).
+                // 힘 자체를 0으로 꺼서 각도만 직접 적용한다(2026-09-22).
+                drive.stiffness = 0f;
+                drive.damping = 0f;
                 body.xDrive = drive;
+                body.jointPosition = new ArticulationReducedSpace(smoothed * Mathf.Deg2Rad);
+                body.jointVelocity = new ArticulationReducedSpace(0f);
             }
         }
 

@@ -110,8 +110,12 @@ public class HandSliderUI : MonoBehaviour
     void FixedUpdate()
     {
         if (_bodies == null) return;
-        Apply(armJoints);
-        if (driveHandJoints) Apply(handJoints);
+        // 팔+손목(UR16e 6축)은 스프링(xDrive stiffness/damping)이 있을 이유가 없다 —
+        // 빠르게 움직일 때 스프링이 목표를 지나쳤다 되돌아오며 떠는 현상만 낳는다.
+        // 손가락(handJoints)은 자가충돌을 버티려 스프링이 필요해서(RobotConfig 주석 참고)
+        // 그대로 둔다. 2026-09-22 사용자 요청.
+        Apply(armJoints, bypassSpring: true);
+        if (driveHandJoints) Apply(handJoints, bypassSpring: false);
     }
 
     /// <summary>armJoints[i].value를 각 관절의 현재 xDrive.target으로 재동기화한다.
@@ -125,7 +129,7 @@ public class HandSliderUI : MonoBehaviour
                 armJoints[i].value = b.xDrive.target;
     }
 
-    void Apply(JointSlider[] arr)
+    void Apply(JointSlider[] arr, bool bypassSpring)
     {
         float t = Mathf.Clamp01(Time.fixedDeltaTime * lerpSpeed);
         foreach (var j in arr)
@@ -134,7 +138,20 @@ public class HandSliderUI : MonoBehaviour
             {
                 var d = b.xDrive;
                 d.target = Mathf.Lerp(d.target, j.value, t);
-                b.xDrive = d;
+                if (bypassSpring)
+                {
+                    // 스프링 힘 자체를 꺼서(0) xDrive 힘과 직접 대입이 다투지 않게 하고,
+                    // 각도는 jointPosition으로 직접 적용한다.
+                    d.stiffness = 0f;
+                    d.damping = 0f;
+                    b.xDrive = d;
+                    b.jointPosition = new ArticulationReducedSpace(d.target * Mathf.Deg2Rad);
+                    b.jointVelocity = new ArticulationReducedSpace(0f);
+                }
+                else
+                {
+                    b.xDrive = d;
+                }
             }
         }
     }
