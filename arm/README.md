@@ -23,6 +23,7 @@ URSim 환경에서는 둘 다 `127.0.0.1`이라 우연히 같아 보이지만, �
 3. [파일별 역할](#3-파일별-역할)
 4. [코드 레벨 상세 — `ur_rtde_bridge.py`](#4-코드-레벨-상세--ur_rtde_bridgepy)
 5. [따라 하기: URSim으로 왕복 트윈 띄우기](#5-따라-하기-ursim으로-왕복-트윈-띄우기)
+5-2. [따라 하기: 카메라로 물체를 찾아 팔이 그 앞까지 가기](#5-2-따라-하기-카메라로-물체를-찾아-팔이-그-앞까지-가기)
 6. [증상별 확인 순서](#6-증상별-확인-순서)
 7. [관련 문서](#7-관련-문서)
 
@@ -56,8 +57,11 @@ UrArmReceiver.cs ◀─UDP 5010──  송신(deg) ← rad_to_deg ←───�
 
 | 파일 | 줄 수 | 역할 |
 |---|---|---|
-| `ur_rtde_bridge.py` | 351 | **본체.** UDP 수신 → 속도 제한 → `servoJ` 송신, 선택적 실제각 echo, 제어 링크 자동 재접속 |
+| `ur_rtde_bridge.py` | 351 | **본체.** UDP 수신 → 속도 제한 → `servoJ` 송신, 선택적 실제각 echo, 제어 링크 자동 재접속. `--echo-only` 는 **읽기 전용** — 제어 연결을 안 잡아, 다른 프로그램이 팔을 움직이는 동안 Unity 로 구경만 보낼 때 쓴다 |
 | `prepose_to_joints.py` | — | **파지 직전 자세 → 관절 각도 → 이동 후 정지.** 카메라로 정한 손바닥 자세를 받아 팔을 그 자세로 옮긴다(잡지 않는다). 좌표 관계는 전부 URDF 에서 읽는다 |
+| `eye_in_hand.py` | — | **카메라가 본 것 → 로봇 좌표.** 손목 카메라 장착값(`RTAUTO_D405_MOUNT_*`)을 읽어 카메라 → 팔 끝(tool0) → 로봇 밑동 순서로 옮긴다. 아직 안 잰 장착값이면 경고를 같이 돌려주고, **실물 자동 이동은 `RTAUTO_D405_MOUNT_VALIDATED=1` 전까지 막는다** |
+| `pregrasp_planner.py` | — | **물체 위치·방향 → 물체 앞에 설 자리** + 안전 검사. 물체에서 `RTAUTO_PREGRASP_DISTANCE_M`(기본 12 cm)만큼 떨어진 자리를 낸다 — **잡지 않는다.** 이상한 값이면 자세를 안 만들고 거절을 돌려준다 |
+| `approach_object.py` | — | **위 전부를 순서대로 부르는 도구.** `--look`(카메라만) / `--plan`(팔 연결, 계산만) / `--move`(실제 이동) / `--watch`(물체를 옮길 때마다 다시 찾기) |
 | `run_ursim.sh` | 18 | URSim 도커 컨테이너 실행 (Linux/macOS, bash) |
 | `run_ursim.ps1` | 19 | 같은 내용의 Windows PowerShell 판 |
 
@@ -211,6 +215,122 @@ python arm/ur_rtde_bridge.py --ip --echo-to-unity
 > Unity의 팔 패널에는 이 브리지를 버튼 하나로 띄우는 `UrArmBridgeLauncher`가 붙어 있다
 > (기본 인자가 정확히 `--ip --echo-to-unity`다). 터미널 2를 대신할 수 있으며,
 > Play를 멈추면 프로세스를 반드시 죽인다.
+
+## 5-2. 따라 하기: 카메라로 물체를 찾아 팔이 그 앞까지 가기
+
+🛑 **먼저 알아 둘 것.** 이 경로는 **잡지 않는다.** 물체 앞 12 cm 지점에 손을 벌린 채
+서서 멈추는 데까지다. 그리고 손목 카메라 장착값을 실물로 재기 전까지는 **실제 이동이
+열리지 않는다**(`RTAUTO_D405_MOUNT_VALIDATED=0` 이면 `--move` 가 거부된다).
+
+**터미널 1 (bash, 리포 루트, 가짜 팔 URSim)** — 띄운 채로 둔다:
+
+```bash
+bash arm/run_ursim.sh
+```
+
+**터미널 1 (PowerShell, 리포 루트, 가짜 팔 URSim)**:
+
+```powershell
+arm/run_ursim.ps1
+```
+
+펜던트를 `http://localhost:6080/vnc.html` 에서 열어 **전원 ON → 브레이크 해제 →
+Remote Control 켜기**까지 한다. 이걸 안 하면 `--move` 가 "명령을 보낼 수 없다"로 멈춘다.
+
+**터미널 2 (bash, 리포 루트)** — 카메라에 무엇이 보이는지부터:
+
+```bash
+source vision/.vision/bin/activate
+python arm/approach_object.py --look
+```
+
+**터미널 2 (PowerShell, 리포 루트)**:
+
+```powershell
+vision/.vision/Scripts/Activate.ps1
+python arm/approach_object.py --look
+```
+
+잘 되면 `찾은 것 : cup 확신 86%` 와 `Camera XYZ : (...)` 가 나온다. 물체를 못 찾으면
+`찾은 것 : 없음` 과 함께 왜 그런지가 같이 나온다.
+
+그다음 팔에 연결해 **로봇 밑동 기준 좌표와 설 자리까지** 계산해 본다(아직 안 움직인다):
+
+```bash
+python arm/approach_object.py --plan --ip
+```
+
+`Camera XYZ` / `TCP XYZ` / `Base XYZ` 세 줄이 **모두** 나와야 정상이다. 한 줄이라도
+빠지면 그 단계에서 막힌 것이다.
+
+마지막으로 실제 이동(가짜 팔에 먼저):
+
+```bash
+python arm/approach_object.py --move --ip
+```
+
+움직이기 전에 `이 자리로 팔을 보낼까? [y/N]` 을 묻는다. `--yes` 를 주면 묻지 않는다 —
+**무인 시연에서만** 쓴다. `--watch` 를 붙이면 물체를 옮길 때마다 다시 찾아간다.
+
+### 카메라가 보는 것을 같이 보기 — `--show`
+
+```bash
+python arm/approach_object.py --look --show          # 한 장 보고 아무 키
+python arm/approach_object.py --look --show --watch  # 계속 갱신, Ctrl+C 로 끝
+```
+
+왼쪽 색 사진(찾은 것은 주황 테두리, **가기로 고른 것은 굵은 초록 + "← 이걸로 간다"**),
+오른쪽 거리 사진. `--watch` 가 아니면 아무 키를 누를 때까지 창이 멈춰 있다.
+
+🛑 **`vision/d405/yolo_assist.py --live` 를 옆 터미널에 같이 띄우지 마라.** D405 는 한 번에
+한 프로그램만 열 수 있어서, 나중에 뜬 쪽이 카메라를 **하드웨어 재설정**해 버리고 먼저 뜬
+쪽이 조용히 죽는다(2026-09-22 실측). 그래서 보기 기능이 `--show` 로 안에 들어와 있다.
+
+### 그 밖의 선택지
+
+| 선택지 | 무엇 |
+|---|---|
+| `--target cup` | 그 이름이 들어간 물체만 고른다. 기본은 **가장 가까운 것** |
+| `--watch` | 물체를 옮길 때마다 다시 찾아간다(시연 시나리오 7~9단계) |
+| `--yes` | 움직이기 전에 묻지 않는다. **무인 시연에서만** |
+| `--pose-json 파일` | 정한 자세를 파일로 남긴다(`prepose_to_joints.py --pose-json` 에 넘길 수 있다) |
+| `--fake-object X,Y,Z` | 🛑 **시험용.** 카메라를 안 쓰고 "카메라 앞 X,Y,Z m 에 물체가 있다"고 치고 나머지를 돌린다 |
+| `--unvalidated-mount-ok` | 🛑 손목 카메라 장착값을 안 쟀어도 **가짜 팔에서는** 움직인다. 실물 주소면 줘도 막힌다(`RTAUTO_UR_SIM_IPS`) |
+
+### Unity 화면에서 구경하기
+
+URSim 이 움직이는 것을 Unity 트윈으로 볼 수 있다. **새로 만들 것은 없고 방향만 맞추면 된다.**
+
+```text
+approach_object.py --move  --(RTDE)-->  URSim
+ur_rtde_bridge.py --echo-only  --(UDP 5010)-->  Unity UrArmReceiver -> UrArmTwinDriver
+```
+
+1. **씬**: Project 창에서 `unity/Assets/Scenes/Pipeline_Demo_GraspLift.unity` 더블클릭
+   (`UrArmReceiver` 가 있는 **유일한 씬**이다).
+2. **오브젝트**: Hierarchy 창에서 `UR16e_DG5F_PicknPlaceAgent` 를 고른다 —
+   `UrArmSender`/`UrArmReceiver`/`UrArmTwinDriver`/`PicknPlaceArmJointPanel` 이 전부 여기 붙어 있다.
+3. **인스펙터 한 군데만 고친다** — Inspector 창의 `Ur Arm Bridge Launcher` 컴포넌트:
+
+   | 필드 표시 이름 | 넣을 값 | 왜 |
+   |---|---|---|
+   | `Arguments` | `--ip --echo-only` | 기본값 `--ip --echo-to-unity` 는 **제어 연결을 잡아서** `approach_object.py --move` 를 막는다. 제어 연결은 한 번에 하나만 가능하다 |
+
+4. **Play** — 에디터 상단 중앙 ▶. 멈출 때 다시 누른다.
+5. Game 화면 오른쪽에서 **`브리지 실행`** → 그 아래 "URSim 연동 방향" 에서 **`URSim→Unity`**.
+   - ⚠️ `Unity→URSim` 과 **동시에 켜지 않는다**(되먹임 루프). 두 버튼은 서로 배타다.
+   - 잘 되면 아래가 **초록 `URSim: 수신중 (UDP 5010)`**. 주황 `대기중` 이면 브리지가 안 도는 것이다.
+6. 터미널에서 `python arm/approach_object.py --move --ip --unvalidated-mount-ok` 를 돌리고
+   `y` 를 치면 **Unity 화면 속 팔이 움직인다.**
+
+### 카메라도 팔도 없이 계산만 확인하기
+
+장비가 아직 없을 때 쓰라고 만들었다.
+
+```bash
+python arm/pregrasp_planner.py --demo
+python -m unittest arm.tests.test_pregrasp_planner vision.d405.tests.test_object_pose -v
+```
 
 ## 6. 증상별 확인 순서
 

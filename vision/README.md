@@ -23,10 +23,23 @@ vision/
 │   ├── README.md                              파일별·채널별 상세(정본)
 │   ├── CALIBRATION_GUIDE.md                   보정 시 취할 손 동작 체크리스트
 │   └── tests/                                 캘리브레이션 수학 단위 테스트
+├── d405/                                   ★ 현역 — 손목 3D 카메라(RealSense D405)
+│   ├── d405_stream.py                         카메라를 여는 **유일한 자리**(다듬기 포함)
+│   ├── yolo_assist.py                         물체 찾기(YOLOE) + 테두리로 점 잘라내기
+│   ├── segment_objects.py                     모양으로 나누기(기본 꺼짐) + 후보 판정
+│   ├── object_pose.py                         물체 하나의 **위치·방향** 재기(2026-09-22)
+│   ├── depth_stack.py                         여러 장 합치기(없는 값은 안 지어낸다)
+│   ├── exposure_sweep.py                      노출·게인 훑기(흰 물체 원인 가르기)
+│   └── tests/                                 카메라 없이 도는 단위 시험
 ├── zed_object_detection/                   ⛔ 폐기 — DEPRECATED.md 참고
 ├── requirements-vision-mlagents.constraints.txt   비전+ML-Agents 공용 venv 제약(사람이 관리)
 └── requirements-vision-mlagents.resolved.txt      검증 시점의 pip freeze 전체 스냅샷
 ```
+
+🛑 **D405 는 한 번에 한 프로그램만 열 수 있다**(2026-09-22 실측). 두 번째 프로그램이
+카메라를 **하드웨어 재설정**해 버려서 먼저 뜬 쪽이 조용히 죽는다 — `yolo_assist.py --live`
+와 `arm/approach_object.py` 를 **동시에 띄우지 않는다.** 팔 경로를 돌리면서 카메라 화면도
+보려면 `arm/approach_object.py --show` 를 쓴다(같은 프로그램 안에서 그린다).
 
 가상환경은 관례상 `vision/.vision/`에 만든다(git 비추적). **비전과 ML-Agents는 venv 하나를
 공유한다** — 버전 조합의 근거는 [`docs/PYTHON_ENV_SETUP.md`](../docs/PYTHON_ENV_SETUP.md).
