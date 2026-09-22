@@ -20,13 +20,18 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from arm.eye_in_hand import (  # noqa: E402
-    CameraMount, camera_to_base, depth_to_points_cam, intrinsics, points_to_base,
-    pose_to_matrix, rotvec_to_matrix, rpy_to_matrix,
+    CameraMount, MountNotValidatedError, camera_to_base, depth_to_points_cam,
+    intrinsics, points_to_base, pose_to_matrix,
+    require_validated_mount_for_physical_move, rotvec_to_matrix, rpy_to_matrix,
+    tool0_pose_from_joints,
+)
+from arm.prepose_to_joints import (  # noqa: E402
+    RobotChain, baselink_transform_to_ur_pose, tool0_pose_to_active_tcp_pose,
 )
 
 
-def mount(xyz=(0.0, 0.0, 0.0), rpy=(0.0, 0.0, 0.0), measured=True):
-    return CameraMount("tool0", tuple(xyz), tuple(rpy), measured)
+def mount(xyz=(0.0, 0.0, 0.0), rpy=(0.0, 0.0, 0.0), measured=True, validated=False):
+    return CameraMount("tool0", tuple(xyz), tuple(rpy), measured, validated)
 
 
 class RotationTests(unittest.TestCase):
@@ -111,6 +116,119 @@ class UnmeasuredTests(unittest.TestCase):
         got, _ = points_to_base([[0, 0, 0.2]], [0, 0, 0, 0, 0, 0], mount(measured=False))
         self.assertEqual(got.shape, (1, 3))
         self.assertTrue(np.isfinite(got).all())
+
+
+class PhysicalMoveValidationGateTests(unittest.TestCase):
+    """P1-5 — "값이 들어있다"(measured)와 "실물로 검증했다"(validated)는 다르다.
+
+    좌표 계산·시각화(`points_to_base()`/`camera_to_base()`)는 미검증 mount도 그대로
+    허용해야 한다(원칙 2, 기존 개발 흐름을 안 깬다) — 실물 자동 이동 관문
+    (`require_validated_mount_for_physical_move()`)만 막는다.
+    """
+
+    def test_measured_but_not_validated_is_rejected_for_physical_move(self):
+        """장착값을 채워 넣었어도(measured=True) 실물로 검증(validated) 안 했으면 거절."""
+        m = mount(xyz=(0.05, 0, 0), measured=True, validated=False)
+        with self.assertRaises(MountNotValidatedError) as ctx:
+            require_validated_mount_for_physical_move(m)
+        self.assertIn("검증", str(ctx.exception))
+
+    def test_unmeasured_is_also_rejected_for_physical_move(self):
+        m = mount(measured=False, validated=False)
+        with self.assertRaises(MountNotValidatedError):
+            require_validated_mount_for_physical_move(m)
+
+    def test_validated_mount_passes_the_gate(self):
+        """사람이 실물 검증 후 .env에서 직접 1로 바꾼 상태를 흉내낸다."""
+        m = mount(xyz=(0.05, 0, 0), measured=True, validated=True)
+        got = require_validated_mount_for_physical_move(m)
+        self.assertIs(got, m)
+
+    def test_calc_and_viz_are_unaffected_by_validated_flag(self):
+        """실물 이동 관문과 무관하게, 좌표 계산 자체는 검증 여부를 안 본다."""
+        unvalidated = mount(xyz=(0.05, 0, 0), validated=False)
+        validated = mount(xyz=(0.05, 0, 0), validated=True)
+        p1, w1 = points_to_base([[0, 0, 0.2]], [0, 0, 0, 0, 0, 0], unvalidated)
+        p2, w2 = points_to_base([[0, 0, 0.2]], [0, 0, 0, 0, 0, 0], validated)
+        np.testing.assert_allclose(p1, p2)
+        self.assertIsNone(w1)  # measured=True(기본)라 경고 없음 — validated와 무관
+        self.assertIsNone(w2)
+
+    def test_config_default_is_not_validated(self):
+        """기본값은 반드시 미검증이다 — 새 머신에서 설치만 하고 실물 이동이 열리면 안 된다."""
+        import rtauto_config as cfg
+        self.assertFalse(cfg.d405_mount_validated())
+
+
+class ActiveTcpVsTool0Tests(unittest.TestCase):
+    """P1-1 — `getActualTCPPose()`(활성 TCP)를 tool0 자세로 착각하면 안 된다.
+
+    카메라 장착값은 tool0 기준인데, 컨트롤러가 주는 "TCP 자세"는 활성 TCP(DG5F
+    손끝 TCP 등으로 바뀌어 있을 수 있다) 기준이다. `tool0_pose_from_joints()`가
+    관절각에서 직접 계산해 이 문제를 피하는지 확인한다(2026-09-21 코드 리뷰).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.chain = RobotChain()
+        cls.q6 = [0.0, -math.pi / 2, math.pi / 2, -math.pi / 2, -math.pi / 2, 0.0]
+
+    def _reference_tool0_pose(self):
+        """RobotChain으로 직접 계산한 tool0 자세 — 시험의 기준값."""
+        return baselink_transform_to_ur_pose(
+            self.chain.forward_kinematics(self.q6), self.chain
+        )
+
+    def test_active_tcp_equals_tool0(self):
+        """활성 TCP 오프셋이 항등이면 tool0_pose_from_joints()가 기준값과 같다."""
+        got = tool0_pose_from_joints(self.q6)
+        np.testing.assert_allclose(got, self._reference_tool0_pose(), atol=1e-9)
+
+    def test_active_tcp_translation_offset_would_have_mismatched(self):
+        """활성 TCP가 tool0에서 5cm 떨어져 있을 때, (버그였다면) 그 활성 TCP 자세를
+        그대로 카메라 계산에 넣었을 결과가 tool0 기준 결과와 **눈에 띄게 다름**을
+        확인한다 — 이 차이가 실물에서 카메라 좌표가 어긋나는 크기다."""
+        tcp_offset = [0.05, 0.0, 0.0, 0.0, 0.0, 0.0]
+        tool0_pose = tool0_pose_from_joints(self.q6)
+        buggy_active_tcp_pose = tool0_pose_to_active_tcp_pose(tool0_pose, tcp_offset)
+
+        m = mount()
+        correct, _ = points_to_base([[0, 0, 0.2]], tool0_pose, m)
+        buggy, _ = points_to_base([[0, 0, 0.2]], buggy_active_tcp_pose, m)
+        self.assertGreater(float(np.linalg.norm(correct[0] - buggy[0])), 0.04)
+
+    def test_active_tcp_rotation_offset_would_have_mismatched(self):
+        """활성 TCP가 tool0에서 Z로 30도 돌아가 있을 때도 마찬가지로 결과가 갈린다."""
+        tcp_offset = [0.0, 0.0, 0.0, 0.0, 0.0, math.radians(30)]
+        tool0_pose = tool0_pose_from_joints(self.q6)
+        buggy_active_tcp_pose = tool0_pose_to_active_tcp_pose(tool0_pose, tcp_offset)
+
+        m = mount(xyz=(0.0, 0.0, 0.05))  # 회전 차이가 점 위치에 드러나려면 오프셋이 필요
+        correct, _ = points_to_base([[0.1, 0.0, 0.2]], tool0_pose, m)
+        buggy, _ = points_to_base([[0.1, 0.0, 0.2]], buggy_active_tcp_pose, m)
+        self.assertGreater(float(np.linalg.norm(correct[0] - buggy[0])), 0.01)
+
+    def test_camera_pose_is_unaffected_by_active_tcp_setting(self):
+        """같은 관절각이면, 컨트롤러의 활성 TCP 설정이 뭐든 카메라가 본 점의 로봇
+        기준 좌표는 **똑같아야 한다** — tool0_pose_from_joints()는 애초에 활성 TCP를
+        입력으로 받지 않으므로 이 성질이 저절로 성립한다."""
+        pose_no_offset_config = tool0_pose_from_joints(self.q6)
+        pose_with_offset_config = tool0_pose_from_joints(self.q6)  # 활성 TCP와 무관
+        np.testing.assert_allclose(pose_no_offset_config, pose_with_offset_config, atol=1e-12)
+
+        m = mount(xyz=(0.03, -0.01, 0.02), rpy=(5, -10, 15))
+        p1, _ = points_to_base([[0, 0, 0.2]], pose_no_offset_config, m)
+        p2, _ = points_to_base([[0, 0, 0.2]], pose_with_offset_config, m)
+        np.testing.assert_allclose(p1, p2, atol=1e-12)
+
+    def test_unsupported_parent_link_is_rejected_explicitly(self):
+        """flange는 tool0와 위치는 같지만 축이 120도 다르다 — 지원하지 않는 장착
+        기준이면 조용히 계산하지 않고 명시적으로 거절해야 한다."""
+        bad_mount = CameraMount("flange", (0, 0, 0), (0, 0, 0), True)
+        with self.assertRaises(ValueError):
+            camera_to_base([0, 0, 0, 0, 0, 0], bad_mount)
+        with self.assertRaises(ValueError):
+            points_to_base([[0, 0, 0.2]], [0, 0, 0, 0, 0, 0], bad_mount)
 
 
 class DepthTests(unittest.TestCase):

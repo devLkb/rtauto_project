@@ -24,7 +24,10 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import depth_stack                                     # noqa: E402
-from yolo_assist import Detection, split_by_boxes      # noqa: E402
+from yolo_assist import (Detection, split_by_boxes, ESTIMATE_BAND_M,   # noqa: E402
+                         find_objects_hybrid, suppress_cross_class_duplicates,
+                         CROSS_CLASS_MIN_DEPTH_POINTS)
+import rtauto_config as cfg                            # noqa: E402  (yolo_assist가 먼저 sys.path를 잡아 둔다)
 
 
 class _Intr:
@@ -122,6 +125,313 @@ class TestSparseDepth(unittest.TestCase):
 
         self.assertEqual(objs, [], "거리값이 없는데 물체를 지어냈다")
         self.assertEqual(len(rest), len(far_pts))
+
+
+class TestOwnership(unittest.TestCase):
+    """**소유(ownership)와 계측(measurement)은 다르다** — 마스크 안의 점은 크기 계산에
+    실제로 썼는지와 무관하게 전부 이 YOLO 물체가 소유하며, 다른 후보(geometry 쪽)로
+    다시 넘어가면 안 된다 (2026-09-21, 바깥 조언자 진단 — 세션 18 §B의 재발 방지 시험).
+    """
+
+    def test_owned_but_unmeasured_points_do_not_leak_to_geometry_fallback(self):
+        """마스크 안에 거리 차가 큰 두 무리가 있으면 `_merge_pieces()`가 **가까운 무리만**
+        계측에 쓴다. 예전에는 나머지(먼 무리)가 "쓰지 않은 점"으로 남에게 넘어가
+        모양 쪽에서 **같은 물체를 또 만들었다.** 지금은 둘 다 이 detection의 소유라서
+        `rest` 로 새어 나가면 안 된다."""
+        det = _cup_detection(280, 190, 360, 290)
+        near, near_pix = _points_on_rect(280, 190, 360, 290, z=0.20)
+        # ESTIMATE_BAND_M(0.05m) 보다 훨씬 먼 무리 — 같은 마스크 안이지만 병합 대상이 아니다.
+        far, far_pix = _points_on_rect(280, 190, 360, 290, z=0.20 + 10 * ESTIMATE_BAND_M)
+
+        pts = np.vstack([near, far])
+        pix = (np.concatenate([near_pix[0], far_pix[0]]),
+              np.concatenate([near_pix[1], far_pix[1]]))
+
+        objs, rest = split_by_boxes(pts, pix, [det], COLOR_SHAPE,
+                                    depth_shape=DEPTH_SHAPE, intr=_Intr)
+
+        self.assertEqual(len(objs), 1, "가까운 무리로 물체 하나는 나와야 한다")
+        self.assertAlmostEqual(objs[0].distance_m, 0.20, delta=0.01,
+                               msg="계측은 여전히 가까운 무리를 써야 한다")
+        self.assertEqual(len(rest), 0,
+                         "계측에 안 쓴(먼 무리) 점이 geometry fallback으로 새어 나갔다 — "
+                         "같은 물체가 또 생길 수 있다")
+
+    def test_higher_confidence_detection_owns_partially_overlapping_points(self):
+        """두 YOLO 마스크가 **부분적으로 겹치면**(포함 관계 아님), 겹친 점은 확신이
+        높은 쪽이 갖는다 — 나란히 놓인 컵처럼 박스가 살짝 겹칠 때를 흉내낸다.
+
+        ⚠️ **일부러 포함 비율을 낮게 잡는다(완전히 겹치지 않게).** 두 마스크가
+        **완전히** 겹치는(포함 관계) 경우는 2026-09-21 신설된
+        `suppress_cross_class_duplicates()`가 `split_by_boxes()` 이전에 먼저
+        하나로 줄인다(class 이름과 무관하게, 점 개수 기준) — 그건
+        `TestCrossClassDuplicate`가 따로 검증한다. 이 시험은 그 앞 단계를 통과하고
+        **남은** 두 detection 사이에서 `split_by_boxes()`의 확신 기준 점 배정이
+        맞는지만 본다."""
+        det_low = _cup_detection(280, 190, 340, 290, conf=0.4, name="cup")   # 왼쪽 위주
+        det_high = _cup_detection(310, 190, 360, 290, conf=0.9, name="cup")  # 오른쪽 위주
+        pts, pix = _points_on_rect(280, 190, 360, 290, z=0.25)
+
+        objs, rest = split_by_boxes(pts, pix, [det_low, det_high], COLOR_SHAPE,
+                                    depth_shape=DEPTH_SHAPE, intr=_Intr)
+
+        self.assertEqual(len(objs), 2, "부분 겹침인데 하나로 줄었다 — 앞 단계가 잘못 합쳤다")
+        sources = [o.source for o in objs]
+        self.assertTrue(any("90%" in s for s in sources), "확신 높은 쪽이 안 보인다")
+        self.assertTrue(any("40%" in s for s in sources), "확신 낮은 쪽이 통째로 사라졌다")
+
+    def test_not_object_points_never_become_a_grasp_candidate(self):
+        """사람(`person`) 같은 `NOT_OBJECT` 안의 점은 물체로도, geometry fallback
+        후보로도 다시 나오면 안 된다."""
+        det = _cup_detection(280, 190, 360, 290, conf=0.9, name="person")
+        pts, pix = _points_on_rect(280, 190, 360, 290, z=0.25)
+
+        objs, rest = split_by_boxes(pts, pix, [det], COLOR_SHAPE,
+                                    depth_shape=DEPTH_SHAPE, intr=_Intr)
+
+        self.assertEqual(objs, [], "사람 영역에서 잡을 물체를 만들었다")
+        self.assertEqual(len(rest), 0, "사람 영역의 점이 geometry fallback 후보로 남았다")
+
+
+class TestGeometryFallbackToggle(unittest.TestCase):
+    """`find_objects_hybrid(geometry_fallback=...)` — 2026-09-21 사용자 결정으로
+    `yolo_assist.py` 의 기본값은 꺼짐(`False`)이지만, 함수 자체의 기본값은 켜짐
+    (`True`, 기존 호출부·시험과 호환)이다. 여기서는 둘 다 명시적으로 확인한다.
+
+    `segment_objects.find_objects()`(평면 제거 + RANSAC 군집화)는 다른 시험에서
+    이미 검증돼 있다 — 여기서는 **그걸 다시 재현하지 않고**, "꺼져 있으면 아예 안
+    부른다 / 켜져 있으면 결과를 합친다"는 `find_objects_hybrid()` 자체의 분기만
+    가짜(`find_objects`)로 갈아끼워 확인한다.
+    """
+
+    def _scene_with_one_yolo_object(self):
+        det = _cup_detection(280, 190, 360, 290, conf=0.9, name="cup")
+        pts, pix = _points_on_rect(280, 190, 360, 290, z=0.25)
+        return pts, pix, det
+
+    def test_fallback_on_calls_geometry_and_merges_its_result(self):
+        import unittest.mock as mock
+
+        import segment_objects
+
+        pts, pix, det = self._scene_with_one_yolo_object()
+        fake_shape_obj = segment_objects.ObjectCloud(
+            points=np.zeros((10, 3), np.float32), center=np.array([1.0, 1.0, 0.9]),
+            size=np.array([0.05, 0.05, 0.05]), n_points=10)
+        with mock.patch("segment_objects.find_objects",
+                        return_value=([fake_shape_obj], np.zeros((0, 3)), "가짜 설명")) as m:
+            objs, note, dets = find_objects_hybrid(
+                pts, pix, np.zeros((*COLOR_SHAPE, 3), np.uint8), None,
+                depth_shape=DEPTH_SHAPE, intr=_Intr, dets=[det], geometry_fallback=True)
+        m.assert_called_once()
+        self.assertEqual(len(objs), 2, "안전망을 켰는데 가짜 모양 물체가 안 섞였다")
+        self.assertIn("모양으로 추가 1개", note)
+
+    def test_fallback_off_never_calls_geometry(self):
+        import unittest.mock as mock
+
+        import segment_objects
+
+        pts, pix, det = self._scene_with_one_yolo_object()
+        with mock.patch("segment_objects.find_objects") as m:
+            objs, note, dets = find_objects_hybrid(
+                pts, pix, np.zeros((*COLOR_SHAPE, 3), np.uint8), None,
+                depth_shape=DEPTH_SHAPE, intr=_Intr, dets=[det], geometry_fallback=False)
+        m.assert_not_called()
+        self.assertEqual(len(objs), 1, "안전망을 껐는데 물체 수가 달라졌다")
+        self.assertEqual(objs[0].source, "YOLO:cup 90%")
+        self.assertIn("안전망 꺼짐", note)
+
+    def test_default_keeps_old_behavior_for_existing_callers(self):
+        """함수 차원의 기본값은 `True` — 기존 호출부·시험을 깨면 안 된다."""
+        import unittest.mock as mock
+
+        import segment_objects
+
+        pts, pix, det = self._scene_with_one_yolo_object()
+        with mock.patch("segment_objects.find_objects") as m:
+            m.return_value = ([], np.zeros((0, 3)), "가짜 설명")
+            find_objects_hybrid(pts, pix, np.zeros((*COLOR_SHAPE, 3), np.uint8), None,
+                                depth_shape=DEPTH_SHAPE, intr=_Intr, dets=[det])
+        m.assert_called_once()
+
+
+def _color_points_on_rect(u1, v1, u2, v2, z, step=2):
+    """`suppress_cross_class_duplicates` 단위 시험 전용 — **색 사진 좌표 그대로**인
+    3D 점과 픽셀 좌표를 만든다(`_points_on_rect` 는 깊이 사진 좌표로 절반 환산해서
+    나오므로, 그 함수를 그대로 쓰면 안 된다 — 이 함수는 `Detection.contains()` 가
+    기대하는 색 사진 좌표를 바로 준다)."""
+    us = np.arange(u1 + 1, u2 - 1, step, dtype=float)
+    vs = np.arange(v1 + 1, v2 - 1, step, dtype=float)
+    uu, vv = np.meshgrid(us, vs)
+    uu, vv = uu.ravel(), vv.ravel()
+    pts = np.stack([(uu - _Intr.ppx) * z / _Intr.fx,
+                    (vv - _Intr.ppy) * z / _Intr.fy,
+                    np.full(uu.shape, z)], axis=1)
+    return pts, uu, vv
+
+
+class TestCrossClassDuplicate(unittest.TestCase):
+    """`suppress_cross_class_duplicates()` — **같은 물체가 서로 다른 class 이름으로
+    두 번 잡히는 것**을 하나로 줄인다 (2026-09-21, 실물 페트병이 `cup 73%` +
+    `bottle 44%` 로 동시에 잡힌 것을 재현·수정).
+
+    🛑 **D-9(YOLO+모양 안전망 사이의 중복)와 다른 문제다** — 여기는 YOLO 결과
+    안에서, 서로 다른 class 이름표가 같은 물리적 물체를 가리키는 경우만 다룬다.
+    """
+
+    def test_larger_complete_mask_can_beat_higher_confidence_partial_mask(self):
+        """실측 재현: `cup 73%`(병 윗부분만) vs `bottle 44%`(병 전체). **confidence가
+        낮아도** 더 넓게(전체를) 덮은 쪽을 남겨야 한다."""
+        cup = _cup_detection(300, 190, 360, 230, conf=0.73, name="cup")       # 윗부분만
+        bottle = _cup_detection(280, 190, 360, 290, conf=0.44, name="bottle")  # 병 전체
+        pts, px, py = _color_points_on_rect(280, 190, 360, 290, z=0.25)
+
+        kept, debug_lines = suppress_cross_class_duplicates(
+            [cup, bottle], pts, px, py, COLOR_SHAPE, debug=True)
+
+        self.assertEqual(len(kept), 1, "중복이 하나로 안 줄었다")
+        self.assertEqual(kept[0].name, "bottle",
+                         "confidence 가 높다고 부분 영역(cup)을 남겼다 — 전체를 "
+                         "덮은 쪽(bottle)을 남겨야 한다")
+        self.assertTrue(debug_lines, "디버그 정보가 안 남았다")
+
+    def test_cross_class_nested_duplicate_removed(self):
+        """Case A — 작은 detection 이 큰 detection 안에 완전히 포함되고 같은 거리면
+        **1개로 줄어야 한다.**"""
+        small = _cup_detection(300, 190, 340, 220, conf=0.6, name="cup")
+        big = _cup_detection(280, 190, 360, 290, conf=0.6, name="bottle")
+        pts, px, py = _color_points_on_rect(280, 190, 360, 290, z=0.25)
+
+        kept, _ = suppress_cross_class_duplicates([small, big], pts, px, py, COLOR_SHAPE)
+        self.assertEqual(len(kept), 1)
+
+    def test_two_real_objects_are_kept(self):
+        """Case B — 컵 하나 + 병 하나가 화면에서도, 거리에서도 서로 안 겹치면 **2개
+        유지되어야 한다.**"""
+        cup = _cup_detection(40, 40, 120, 140, conf=0.9, name="cup")
+        bottle = _cup_detection(400, 300, 480, 400, conf=0.8, name="bottle")
+        cup_pts, cup_px, cup_py = _color_points_on_rect(40, 40, 120, 140, z=0.20)
+        bot_pts, bot_px, bot_py = _color_points_on_rect(400, 300, 480, 400, z=0.30)
+        pts = np.vstack([cup_pts, bot_pts])
+        px = np.concatenate([cup_px, bot_px])
+        py = np.concatenate([cup_py, bot_py])
+
+        kept, _ = suppress_cross_class_duplicates([cup, bottle], pts, px, py, COLOR_SHAPE)
+        self.assertEqual(len(kept), 2, "서로 다른 진짜 물체 두 개가 하나로 합쳐졌다")
+
+    def test_overlap_but_depth_different_are_kept(self):
+        """Case C — 2D 로는 많이 겹쳐도(앞쪽 작은 컵, 뒤쪽 병) **거리가 다르면
+        2개 유지되어야 한다.**
+
+        카메라 한 화소는 거리를 하나만 잴 수 있다 — 그래서 "앞쪽 작은 컵이 뒤쪽
+        큰 병의 일부를 가린" 장면을 합성할 때, 가려진 안쪽 사각형은 **앞쪽 거리
+        (0.20m)**, 그 바깥의 남은 큰 영역은 **뒤쪽 거리(0.45m)**로 나눠 채운다."""
+        front_cup = _cup_detection(300, 210, 340, 250, conf=0.8, name="cup")       # 작고, 안쪽
+        back_bottle = _cup_detection(280, 190, 360, 290, conf=0.7, name="bottle")  # 크고, 바깥까지
+
+        outer_pts, outer_px, outer_py = _color_points_on_rect(280, 190, 360, 290, z=0.45)
+        inner_pts, inner_px, inner_py = _color_points_on_rect(300, 210, 340, 250, z=0.20)
+        # 바깥 점 중 안쪽 사각형과 겹치는 화소는 뺀다 — 같은 화소가 두 거리를 가질 수 없다.
+        keep_outer = ~((outer_px >= 300) & (outer_px <= 340) & (outer_py >= 210) & (outer_py <= 250))
+        pts = np.vstack([outer_pts[keep_outer], inner_pts])
+        px = np.concatenate([outer_px[keep_outer], inner_px])
+        py = np.concatenate([outer_py[keep_outer], inner_py])
+
+        kept, _ = suppress_cross_class_duplicates(
+            [front_cup, back_bottle], pts, px, py, COLOR_SHAPE)
+        self.assertEqual(len(kept), 2,
+                         "2D 겹침만 보고 거리가 다른(앞/뒤) 두 물체를 하나로 합쳤다")
+
+    def test_no_depth_does_not_aggressively_remove(self):
+        """Case E — 거리값이 모자라면(둘 중 하나라도) **확신 없이 지우지 않는다.**"""
+        cup = _cup_detection(300, 190, 340, 220, conf=0.7, name="cup")
+        bottle = _cup_detection(280, 190, 360, 290, conf=0.6, name="bottle")
+        # 점을 CROSS_CLASS_MIN_DEPTH_POINTS 보다 적게만 준다 — 대표 거리를 못 낸다.
+        few = max(1, CROSS_CLASS_MIN_DEPTH_POINTS - 2)
+        all_pts, all_px, all_py = _color_points_on_rect(280, 190, 360, 290, z=0.25, step=1)
+        idx = np.linspace(0, len(all_pts) - 1, few).astype(int)
+        pts, px, py = all_pts[idx], all_px[idx], all_py[idx]
+
+        kept, _ = suppress_cross_class_duplicates([cup, bottle], pts, px, py, COLOR_SHAPE)
+        self.assertEqual(len(kept), 2,
+                         "거리값이 모자란데도 겹침만 보고 하나를 지웠다")
+
+    def test_same_class_nested_duplicate_is_also_removed(self):
+        """🛑 **2026-09-21 실물 재현으로 뒤집힌 가정.** 처음엔 "같은 class 끼리는
+        YOLO 자체 NMS(agnostic_nms 포함)가 정리한다"고 보고 건드리지 않았다.
+        그런데 사용자가 실물에서 `cup 86%, cup 63%, cup 38%` 가 **한 병 위에
+        동시에 3번** 잡히는 것을 재현했다 — 작은 detection 이 큰 detection 안에
+        포함되면 IoU 가 낮게 나와 **class 가 같아도** NMS 를 통과한다. 그래서
+        class 이름은 더 이상 안 보고, 포함 관계로만 판단한다."""
+        small = _cup_detection(300, 190, 340, 220, conf=0.86, name="cup")   # 뚜껑만
+        big = _cup_detection(280, 190, 360, 290, conf=0.38, name="cup")     # 병 전체
+        pts, px, py = _color_points_on_rect(280, 190, 360, 290, z=0.25)
+
+        kept, debug_lines = suppress_cross_class_duplicates(
+            [small, big], pts, px, py, COLOR_SHAPE, debug=True)
+        self.assertEqual(len(kept), 1, "같은 class 인데도 포함 관계인 중복이 안 줄었다")
+        self.assertTrue(debug_lines)
+
+    def test_same_class_disjoint_real_objects_are_kept(self):
+        """Case D 의 진짜 취지 — **나란히 놓인 서로 다른 진짜 물체(같은 class)**는
+        겹치는 부분이 적어 포함 비율이 낮으므로 계속 분리 유지돼야 한다."""
+        cup_a = _cup_detection(40, 40, 120, 140, conf=0.9, name="cup")
+        cup_b = _cup_detection(400, 300, 480, 400, conf=0.8, name="cup")
+        a_pts, a_px, a_py = _color_points_on_rect(40, 40, 120, 140, z=0.20)
+        b_pts, b_px, b_py = _color_points_on_rect(400, 300, 480, 400, z=0.30)
+        pts = np.vstack([a_pts, b_pts])
+        px = np.concatenate([a_px, b_px])
+        py = np.concatenate([a_py, b_py])
+
+        kept, debug_lines = suppress_cross_class_duplicates(
+            [cup_a, cup_b], pts, px, py, COLOR_SHAPE, debug=True)
+        self.assertEqual(len(kept), 2, "나란히 놓인 서로 다른 같은-class 물체를 합쳤다")
+        self.assertEqual(debug_lines, [])
+
+
+class TestOutOfRangeNoise(unittest.TestCase):
+    """D405 가 못 믿는 거리(너무 가깝거나 먼)의 잡음이 진짜 물체를 밀어내면 안 된다.
+
+    2026-09-21 코드 리뷰로 발견: `split_by_boxes()`가 `near`/`far` 검사를 전혀 안 해서,
+    렌즈 코앞 반사 같은 잡음이 YOLO 박스 안에 섞이면 `_merge_pieces()`가 "가장 가까운
+    조각"을 고르는 로직 때문에 그 잡음을 물체로 내고 진짜 물체는 사라졌다.
+    """
+
+    def test_near_camera_noise_does_not_replace_the_real_object(self):
+        det = _cup_detection(280, 190, 360, 290)
+        real, real_pix = _points_on_rect(280, 190, 360, 290, z=0.25)
+        # D405_NEAR_M(기본 0.07m)보다 훨씬 가까운 잡음 — 렌즈 반사 등으로 흔히 생긴다.
+        noise_z = cfg.D405_NEAR_M / 2.0
+        noise, noise_pix = _points_on_rect(280, 190, 360, 290, z=noise_z)
+
+        pts = np.vstack([real, noise])
+        pix = (np.concatenate([real_pix[0], noise_pix[0]]),
+              np.concatenate([real_pix[1], noise_pix[1]]))
+
+        objs, _ = split_by_boxes(pts, pix, [det], COLOR_SHAPE,
+                                 depth_shape=DEPTH_SHAPE, intr=_Intr)
+
+        self.assertEqual(len(objs), 1, "잡음과 실제 물체가 하나로 합쳐지거나 사라졌다")
+        self.assertAlmostEqual(objs[0].distance_m, 0.25, delta=0.01,
+                               msg="믿을 수 없는 거리의 잡음이 실제 물체 대신 뽑혔다")
+
+    def test_far_background_noise_is_dropped_too(self):
+        det = _cup_detection(280, 190, 360, 290)
+        real, real_pix = _points_on_rect(280, 190, 360, 290, z=0.25)
+        # D405_FAR_M(기본 0.50m)보다 훨씬 먼 점 — 잘 안 잡히는 먼 배경.
+        far_z = cfg.D405_FAR_M * 2.0
+        far, far_pix = _points_on_rect(280, 190, 360, 290, z=far_z)
+
+        pts = np.vstack([real, far])
+        pix = (np.concatenate([real_pix[0], far_pix[0]]),
+              np.concatenate([real_pix[1], far_pix[1]]))
+
+        objs, _ = split_by_boxes(pts, pix, [det], COLOR_SHAPE,
+                                 depth_shape=DEPTH_SHAPE, intr=_Intr)
+
+        self.assertEqual(len(objs), 1)
+        self.assertAlmostEqual(objs[0].distance_m, 0.25, delta=0.01)
 
 
 class TestDepthStack(unittest.TestCase):

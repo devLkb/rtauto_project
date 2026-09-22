@@ -292,6 +292,23 @@ class GraspPrePose:
             raise GraspPrePoseError(
                 "confidence는 0~1이어야 한다 (받은 값 {}).".format(self.confidence)
             )
+        # ⚠️ NaN/Inf 는 비교식(<, >)을 전부 통과시킨다 — `NaN < x`와 `x < NaN`이 둘 다
+        # False라서, 아래 순서 비교(stamp_emit < stamp_capture)만으로는 NaN이 섞인
+        # 시각을 못 걸러낸다(2026-09-21 코드 리뷰로 발견). 나이 계산(실제 이동 직전
+        # 거부, arm/prepose_to_joints.py의 MAX_POSE_AGE_SEC)이 이 값을 그대로 빼서
+        # 쓰므로, 여기서 먼저 유한한 숫자인지 확인한다.
+        if not math.isfinite(self.stamp_capture):
+            raise GraspPrePoseError(
+                "stamp_capture가 숫자가 아니다(NaN/Inf 등, 받은 값 {}).".format(
+                    self.stamp_capture
+                )
+            )
+        if not math.isfinite(self.stamp_emit):
+            raise GraspPrePoseError(
+                "stamp_emit이 숫자가 아니다(NaN/Inf 등, 받은 값 {}).".format(
+                    self.stamp_emit
+                )
+            )
         if self.stamp_emit < self.stamp_capture:
             raise GraspPrePoseError(
                 "내보낸 시각이 찍은 시각보다 빠르다 "

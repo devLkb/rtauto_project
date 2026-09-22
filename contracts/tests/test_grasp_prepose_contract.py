@@ -133,6 +133,34 @@ class TestAccept(unittest.TestCase):
             GraspPrePose.accept(**_valid_kwargs(stamp_capture=10.0, stamp_emit=9.0))
         self.assertIn("빠르다", str(ctx.exception))
 
+    def test_rejects_nan_stamp_capture(self):
+        """P2-1 — NaN은 모든 순서 비교(<, >)를 통과시킨다. stamp_emit < stamp_capture
+        검사만으로는 NaN이 섞인 시각을 못 걸러낸다 — 따로 막아야 한다."""
+        with self.assertRaises(GraspPrePoseError) as ctx:
+            GraspPrePose.accept(**_valid_kwargs(stamp_capture=math.nan, stamp_emit=1000.05))
+        self.assertIn("stamp_capture", str(ctx.exception))
+
+    def test_rejects_nan_stamp_emit(self):
+        with self.assertRaises(GraspPrePoseError) as ctx:
+            GraspPrePose.accept(**_valid_kwargs(stamp_capture=1000.0, stamp_emit=math.nan))
+        self.assertIn("stamp_emit", str(ctx.exception))
+
+    def test_rejects_infinite_stamp_capture(self):
+        with self.assertRaises(GraspPrePoseError):
+            GraspPrePose.accept(**_valid_kwargs(stamp_capture=math.inf, stamp_emit=math.inf))
+
+    def test_rejects_infinite_stamp_emit(self):
+        with self.assertRaises(GraspPrePoseError):
+            GraspPrePose.accept(**_valid_kwargs(stamp_capture=1000.0, stamp_emit=math.inf))
+
+    def test_rejects_negative_infinite_stamp_capture(self):
+        with self.assertRaises(GraspPrePoseError):
+            GraspPrePose.accept(**_valid_kwargs(stamp_capture=-math.inf, stamp_emit=1000.05))
+
+    def test_rejects_negative_infinite_stamp_emit(self):
+        with self.assertRaises(GraspPrePoseError):
+            GraspPrePose.accept(**_valid_kwargs(stamp_capture=1000.0, stamp_emit=-math.inf))
+
     def test_rejects_non_base_frame(self):
         with self.assertRaises(GraspPrePoseError) as ctx:
             GraspPrePose.accept(**_valid_kwargs(frame="camera"))

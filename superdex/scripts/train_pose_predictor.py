@@ -42,8 +42,10 @@ import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "config"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import rtauto_config as cfg  # noqa: E402  (기준값의 유일한 출처 — 원칙 1)
+from dataset_contract import check_frame  # noqa: E402
 
 RESULTS_DIR = REPO_ROOT / "superdex" / "results"
 
@@ -115,8 +117,21 @@ def _features(points, pose_pos, pose_quat):
 
 
 def load_pairs(path):
-    """저장된 데이터를 `(점 덩어리, 자세, 정답)` 짝으로 편다."""
+    """저장된 데이터를 `(점 덩어리, 자세, 정답)` 짝으로 편다.
+
+    🛑 **좌표 기준(frame)이 실물에서 재현 가능한지 여기서도 반드시 확인한다**
+    (P1-6, 2026-09-21 코드 리뷰). `test_pose_dataset.py`(검사 스크립트)만 이 검사를
+    하고 이 함수는 안 봤다면, 검사 스크립트를 건너뛰고 옛(`frame="object"`) 데이터셋을
+    바로 학습시킬 수 있었다 — 검사와 실제 학습 진입점이 **같은 계약**
+    (`dataset_contract.py`)을 봐야 그 구멍이 막힌다.
+    """
     data = np.load(path, allow_pickle=True)
+    if "frame" not in data.files:
+        raise ValueError(
+            "데이터셋에 frame 정보가 없다 — 좌표 기준을 모르는 데이터셋은 학습에 쓸 수 "
+            "없다({}).".format(path)
+        )
+    check_frame(data["frame"])  # 실물 재현 불가능한 frame(예: "object")이면 여기서 예외
     pts = data["points"].astype(np.float32)
     start = data["cloud_start"]
     cloud_obj = data["cloud_object"]

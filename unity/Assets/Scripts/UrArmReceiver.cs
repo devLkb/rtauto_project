@@ -29,9 +29,15 @@ public class UrArmReceiver : MonoBehaviour
              + "arm/ur_rtde_bridge.py의 STALE_AFTER_SEC(1.0)과 값을 맞춰 둔다.")]
     public float staleAfterSeconds = 1.0f;
 
+    //: 관절각 정신머리 검사 — arm/ur_rtde_bridge.py의 UR_JOINT_LIMIT_DEG와 같은 값
+    //: (URDF 팔 관절 6개의 소프트웨어 한계 ±2π rad = ±360°). 이보다 벗어난 값은
+    //: 손상된 패킷이지 정상 관절각이 아니다(2026-09-21 코드 리뷰).
+    const float JointLimitDeg = 360f;
+
     readonly float[] _latest = new float[ChannelCount];
     volatile bool _hasData;
     long _lastPacketUtcTicks; // 수신 스레드에서 Unity Time API 사용 불가 -> DateTime 사용
+    bool _invalidWarned; // 비정상 패킷 경고 래치 — ReceiveLoop 스레드 안에서만 건드린다
 
     UdpClient _client;
     Thread _thread;
@@ -88,16 +94,44 @@ public class UrArmReceiver : MonoBehaviour
     void ReceiveLoop()
     {
         var remote = new IPEndPoint(IPAddress.Any, ActivePort);
+        var decoded = new float[ChannelCount];
         while (_running)
         {
             try
             {
                 byte[] data = _client.Receive(ref remote);
-                if (data.Length < ChannelCount * 4) continue;
+                // 프로토콜은 float32 x 6 단일 버전이다(DG5F처럼 다중 버전으로 늘어나지
+                // 않는다) — 길이가 정확해야 한다. 짧거나 길면 손상/오조준 패킷으로 버린다.
+                if (data.Length != ChannelCount * 4)
+                {
+                    WarnInvalid($"패킷 길이 {data.Length}바이트 (정확히 {ChannelCount * 4}바이트여야 함)");
+                    continue;
+                }
+                bool ok = true;
+                for (int i = 0; i < ChannelCount; i++)
+                {
+                    float v = BitConverter.ToSingle(data, i * 4);
+                    if (float.IsNaN(v) || float.IsInfinity(v) || Mathf.Abs(v) > JointLimitDeg)
+                    {
+                        ok = false;
+                        break;
+                    }
+                    decoded[i] = v;
+                }
+                if (!ok)
+                {
+                    // ⚠️ 비정상 값이면 _latest/_hasData/타임스탬프를 **전부 건드리지 않는다** —
+                    // arm/ur_rtde_bridge.py의 validate_packet()과 같은 원칙(2026-09-21).
+                    // 여기서 갱신하면 UrArmTwinDriver의 ArticulationBody.xDrive.target이
+                    // NaN으로 오염돼 이후 Lerp가 계속 NaN을 내는 문제로 번질 수 있다.
+                    WarnInvalid("숫자가 아니거나(NaN/Inf) 범위를 벗어난 관절각 포함");
+                    continue;
+                }
+                _invalidWarned = false;
                 lock (_lock)
                 {
                     for (int i = 0; i < ChannelCount; i++)
-                        _latest[i] = BitConverter.ToSingle(data, i * 4);
+                        _latest[i] = decoded[i];
                 }
                 Interlocked.Exchange(ref _lastPacketUtcTicks, DateTime.UtcNow.Ticks);
                 _hasData = true;
@@ -107,6 +141,14 @@ public class UrArmReceiver : MonoBehaviour
                 if (_running) Debug.LogWarning("[UrArmReceiver] " + e.Message);
             }
         }
+    }
+
+    /// 비정상 패킷 경고 — 래치로 한 번만 찍는다(연속 거부 시 콘솔 도배 방지).
+    void WarnInvalid(string reason)
+    {
+        if (_invalidWarned) return;
+        _invalidWarned = true;
+        Debug.LogWarning($"[UrArmReceiver] 비정상 패킷 거부 — {reason}. 계속되면 반복하지 않습니다.");
     }
 
     /// 메인 스레드에서 최신 6채널 각도[deg]를 buffer에 복사. **끊긴 상태(!IsFresh)면 false** —

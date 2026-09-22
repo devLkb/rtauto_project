@@ -22,12 +22,18 @@ from pathlib import Path
 
 import numpy as np
 
-#: 예측기 입력으로 **써도 되는** 것. 카메라로 얻을 수 있는 것뿐이다.
-INPUT_ALLOWED = {"points", "cloud_start"}
+# 정본은 dataset_contract.py 하나 — 여기서 다시 목록을 만들면 train_pose_predictor.py의
+# load_pairs()와 조용히 어긋날 수 있다(P1-6/P1-7, 2026-09-21 코드 리뷰).
+from dataset_contract import (  # noqa: E402
+    CANDIDATE_INPUT, DEPLOYABLE_FRAMES, LABEL_ONLY, LEAKY_FRAMES, OBSERVATION_INPUT,
+    check_frame,
+)
 
-#: 정답을 만들거나 사람이 읽는 데만 쓰는 것. **입력에 넣으면 안 된다.**
-LABEL_ONLY = {"pose_pos", "pose_quat", "pose_rate", "pose_tilt", "pose_object",
-              "cloud_object", "frame", "made_from"}
+#: 예측기 입력으로 **써도 되는** 칸 — 관측(카메라가 본 것) + 채점할 후보 자세.
+#: ⚠️ pose_pos/pose_quat는 예전에 LABEL_ONLY였다 — **틀렸다**(P1-7). 지금 예측기
+#: (`train_pose_predictor._features()`)는 이 둘을 실제로 입력에 쓴다. 지금 모델은
+#: "점 구름 → 자세" 생성기가 아니라 "(점 구름, 후보 자세) → 점수" 채점기다.
+INPUT_ALLOWED = OBSERVATION_INPUT | CANDIDATE_INPUT
 
 _fail = 0
 
@@ -57,8 +63,10 @@ def main(argv) -> int:
     unknown = keys - INPUT_ALLOWED - LABEL_ONLY
     check("모르는 칸이 없다", sorted(unknown) if unknown else "없음",
           not unknown, "전부 입력용 또는 정답용으로 분류됨")
-    check("입력용 칸", sorted(keys & INPUT_ALLOWED),
-          (keys & INPUT_ALLOWED) == INPUT_ALLOWED, sorted(INPUT_ALLOWED))
+    check("관측 입력 칸(카메라가 본 것)", sorted(keys & OBSERVATION_INPUT),
+          (keys & OBSERVATION_INPUT) == OBSERVATION_INPUT, sorted(OBSERVATION_INPUT))
+    check("후보 자세 입력 칸(채점 대상)", sorted(keys & CANDIDATE_INPUT),
+          (keys & CANDIDATE_INPUT) == CANDIDATE_INPUT, sorted(CANDIDATE_INPUT))
     # 점 좌표에 물체 이름·성공률 같은 것이 숫자로 숨어들지 않았는지 — 모양으로 본다
     pts = data["points"]
     check("점은 좌표 3개짜리뿐", "{}".format(pts.shape),
@@ -117,10 +125,28 @@ def main(argv) -> int:
               avg < 90, "< 90% (다 같으면 배울 게 없다)")
     print()
 
-    # --- 5. 좌표 기준이 적혀 있는가 ---------------------------------------
-    print("5. 좌표 기준")
+    # --- 5. 좌표 기준이 "실물 D405로도 낼 수 있는" 것인가 -------------------
+    # 🛑 2026-09-21 코드 리뷰로 발견: 이 검사가 예전엔 정반대였다 — `frame == "object"`
+    #    (물체 기준)이면 **통과**로 쳤다. 그런데 "물체 기준"은 시뮬레이터가 아는
+    #    물체의 정답 위치(`env.block.get_root_transform()`)가 있어야만 계산할 수
+    #    있다. 실물 D405는 바로 그 정답 위치를 몰라서 이 문제를 푸는 것이므로,
+    #    "물체 기준"으로 맞춘 입력은 정답을 미리 알고 문제를 푼 것과 같다
+    #    (sim-to-real 입력 누수). 입력 배열에 물체 이름이 안 보인다고 해서 안전한 게
+    #    아니다 — 좌표값 자체가 이미 정답으로 정렬돼 있으면 그것도 누수다.
+    #    카메라가 스스로 아는 기준(camera)이나 로봇 밑동 기준(base)만 실물에서도
+    #    똑같이 만들 수 있다. 설계 원칙: docs/FESTA_PREGRASP_PLAN.md 재검토 필요.
+    print("5. 좌표 기준 — 실물 D405 추론 때도 똑같이 만들 수 있는가")
     frame = str(data["frame"]) if "frame" in keys else "(없음)"
-    check("점 덩어리와 자세가 같은 기준", frame, frame == "object", "object")
+    check("좌표 기준이 시뮬레이터 정답 없이도 나오는가", frame,
+          frame in DEPLOYABLE_FRAMES,
+          "camera 또는 base — 'object'는 실물 추론 때 못 만든다(정답을 몰라서 풀려는 "
+          "문제이므로 순환)")
+    if frame in LEAKY_FRAMES:
+        print("     ⚠️ 이 데이터셋은 물체의 '정답' 자세(시뮬레이터만 아는 값)로 점 구름과")
+        print("        자세를 맞춰 정렬했다 — 실물 D405 추론 때는 그 정답을 몰라서 같은")
+        print("        방식으로 입력을 못 만든다. build_pose_dataset.py의 좌표 기준을")
+        print("        camera 또는 base로 다시 설계해야 한다(2026-09-21 코드 리뷰,")
+        print("        재설계는 아직 안 됨 — 이 시험이 그걸 넘어가지 못하게 막는다).")
 
     print()
     print("=" * 62)

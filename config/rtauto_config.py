@@ -269,6 +269,19 @@ DG5F_FRAME_TIMEOUT_S = float(_env("RTAUTO_DG5F_FRAME_TIMEOUT_S", "0.5"))
 GRASP_LIFT_HEIGHT_M = float(_env("RTAUTO_GRASP_LIFT_HEIGHT_M", "0.05"))
 GRASP_LIFT_SPEED_MPS = float(_env("RTAUTO_GRASP_LIFT_SPEED_MPS", "0.02"))
 
+#: `ArmMover.move_to()`가 명령을 다 보낸 뒤 "정말 도착했나"를 판정하는 허용 오차[deg]
+#: — 관절마다 이 값 이내여야 arrived=True(P1-1/P1-2, 2026-09-21). ⚠️ 실측 전
+#: 잠정값이다(UR_MAX_DEG_PER_SEC과 같은 사정) — 실물에서 재조정할 것. 너무 좁으면
+#: 정상적으로 도착했는데도 컨트롤러의 자연스러운 정착 오차 때문에 계속 실패로 뜬다.
+ARRIVAL_TOLERANCE_DEG = float(_env("RTAUTO_ARRIVAL_TOLERANCE_DEG", "1.0"))
+
+#: 접근 시작 지점(pre-approach)에서 최종 파지 직전 자세까지 **마지막 직선 구간**의
+#: 속도(m/s). `arm/prepose_to_joints.py`의 `ArmMover.move_to()`가 이 구간만 moveL로
+#: 움직인다(P1-4, 2026-09-21) — 물체에 가까워지는 구간이라 GRASP_LIFT_SPEED_MPS와
+#: 비슷하게 느리게 잡는다. 접근 시작 지점까지 가는 구간(moveJ)은 이 값과 무관하게
+#: 기존 UR_MAX_DEG_PER_SEC(관절 속도)를 쓴다 — 그 구간은 물체 근처가 아니다.
+APPROACH_SPEED_MPS = float(_env("RTAUTO_APPROACH_SPEED_MPS", "0.05"))
+
 #: 들어올린 뒤 **일부러 조금 더 조여 보는** 각도(deg). 이것이 "집어보기"다.
 #: ⚠️ 왜 필요한가: 닿은 관절은 목표를 그 자리에 세워 두므로, 물체가 빠져도 손가락이
 #:    거의 안 움직인다(0.5도 수준). 그래서 "손가락이 더 닫혔나" 만 보면 놓친 것을
@@ -417,8 +430,28 @@ def d405_mount_measured():
 
     ⚠️ 정말로 0,0,0 인 장착은 현실에 없다(카메라가 팔 끝 축 위 한 점에 부피 없이
     붙을 수는 없다). 그래서 0을 "안 쟀음" 신호로 써도 안전하다.
+
+    🛑 **이건 "값이 들어있다"일 뿐 "실물로 검증했다"가 아니다** (2026-09-21 코드
+    리뷰로 발견). 사람이 자를 잘못 읽고 아무 값이나 넣어도 이 함수는 True를 낸다 —
+    실물 자동 이동 여부를 가르는 데는 `d405_mount_validated()`를 대신 써야 한다.
     """
     return any(abs(v) > 1e-9 for v in D405_MOUNT_XYZ_M + D405_MOUNT_RPY_DEG)
+
+
+# 🛑 **손목 카메라 장착값을 실물로 검증했는가 — 실물 자동 이동을 여는 유일한 열쇠**
+# (P1-5, 2026-09-21 코드 리뷰로 추가). `d405_mount_measured()`(위)는 "0이 아닌 값이
+# 들어있다"만 보므로 실물 검증의 증거가 못 된다. 이 값은 **기본 false**이고, hand-eye
+# 검증(BACKLOG Q2/Q3, docs/FESTA_PREGRASP_PLAN.md §7-2 — 팔을 여러 자세로 움직여 가며
+# 표식을 찍어 장착값을 푸는 작업)을 사람이 실제로 끝낸 뒤에만 **사람이 직접**
+# `.env`에서 1로 바꾼다. 프로그램이 스스로 이 값을 true로 바꾸는 코드를 넣지 않는다 —
+# 그러면 "검증됨"이 다시 "값이 들어있음"과 같은 뜻이 되어 버린다.
+D405_MOUNT_VALIDATED = _env("RTAUTO_D405_MOUNT_VALIDATED", "0") == "1"
+
+
+def d405_mount_validated():
+    """`arm/eye_in_hand.py`의 실물 자동 이동 관문(`require_validated_mount_for_physical_move`)이
+    보는 값. 좌표 계산·시각화는 이 값과 무관하게 그대로 동작한다 — 실물 이동 경로에서만 막는다."""
+    return D405_MOUNT_VALIDATED
 
 
 #: 카메라 내부 값(초점거리·중심). 0 이면 위 시야각에서 계산해 쓴다.

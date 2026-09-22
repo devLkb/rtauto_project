@@ -65,7 +65,9 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config.rtauto_config import (  # noqa: E402
+    APPROACH_SPEED_MPS,
     ARM_HAND_URDF,
+    ARRIVAL_TOLERANCE_DEG,
     MAX_POSE_AGE_SEC,
     UR_MAX_DEG_PER_SEC,
     dg5f_link_prefix,
@@ -93,6 +95,11 @@ URDF_BASE_LINK = "base_link"
 
 #: 팔 관절 6개의 이름. URDF에서 이 순서로 나오는 것을 `arm_joint_names()`가 확인한다.
 ARM_JOINT_COUNT = 6
+
+#: `ArmMover.move_to()`가 "관측 시각이 미래"로 볼 허용 오차[초](P2-1, 2026-09-21).
+#: 카메라와 이 스크립트가 같은 PC의 같은 시계를 쓴다는 전제라 수 ms 수준이어야 정상이다
+#: — 이보다 크게 미래인 stamp_capture는 시계가 안 맞거나 값을 믿을 수 없다는 뜻이다.
+CLOCK_SKEW_TOLERANCE_SEC = 0.5
 
 _JOINT_BLOCK_RE = re.compile(r"<joint\s[^>]*?name=\"([^\"]+)\"[^>]*?type=\"([^\"]+)\"(.*?)</joint>", re.S)
 _ORIGIN_RE = re.compile(r"<origin([^>]*)/?>")
@@ -406,19 +413,105 @@ def ur_tcp_pose_to_palm_transform(
 
 
 # ---------------------------------------------------------------------------
+# tool0 자세 ↔ 컨트롤러의 "활성 TCP" 자세 (2026-09-21 코드 리뷰로 추가)
+# ---------------------------------------------------------------------------
+# ⚠️ **"TCP"라는 말이 이 파일 안에서도 두 가지 다른 뜻으로 쓰인다.** 위
+# `palm_pose_to_ur_tcp_pose()`가 돌려주는 "TCP 자세"는 실제로는 **tool0** 자세다
+# (`UR_TCP_LINK = "tool0"`). 그런데 `RTDEControlInterface`의 `isPoseWithinSafetyLimits`
+# / `getInverseKinematics*` / `getActualTCPPose()`는 그 이름과 달리 **컨트롤러에 지금
+# 설정된 활성 TCP**(펜던트·URCap이 `set_tcp()`로 바꿀 수 있다 — DG5F 손끝 TCP 등)
+# 기준으로 좌표를 해석한다. 두 "TCP"가 같은 값이라는 보장이 없다 — 다르면 우리가
+# tool0 기준으로 계산한 목표를 그대로 넘겼을 때 팔이 그 차이(TCP 오프셋)만큼
+# 엉뚱한 곳으로 간다. 아래 두 함수가 그 경계를 명시적으로 나눈다.
+def tool0_pose_to_active_tcp_pose(
+    tool0_pose6: Sequence[float], tcp_offset6: Sequence[float]
+) -> np.ndarray:
+    """tool0 자세 → **컨트롤러의 활성 TCP** 자세.
+
+    `tcp_offset6`은 `RTDEControlInterface.getTCPOffset()`가 주는 값이다 — tool0
+    기준으로 본 활성 TCP의 자세다. 이 관계는 `ArmMover.check_frames()`가 이미
+    `getActualTCPPose() ≈ tool0_pose @ getTCPOffset()`로 실측 검증해 둔 것과 같다.
+
+    컨트롤러의 TCP 설정(펜던트·URCap이 잡아 둔 것)을 함부로 덮어쓰지 않고, 우리가
+    원하는 tool0 목표를 **지금 설정된 활성 TCP 기준 목표로 변환**해서 IK/안전검사에
+    넘기는 쪽을 쓴다 — 현장 TCP 설정을 그대로 보존하기 위해서다.
+    """
+    t_base_tool0 = pose6_to_transform(tool0_pose6)
+    t_tool0_activetcp = pose6_to_transform(tcp_offset6)
+    return transform_to_pose6(t_base_tool0 @ t_tool0_activetcp)
+
+
+def active_tcp_pose_to_tool0_pose(
+    active_tcp_pose6: Sequence[float], tcp_offset6: Sequence[float]
+) -> np.ndarray:
+    """위의 반대 — 활성 TCP 자세(`getActualTCPPose()` 등) → tool0 자세.
+
+    `getActualTCPPose()`를 우리 좌표 계산의 기준점(예: 손목 카메라 장착 좌표)으로
+    되짚어야 할 때 쓴다. **활성 TCP 자세를 tool0 자세인 것처럼 그대로 쓰면 안 된다**
+    — `arm/eye_in_hand.py`가 이 문제를 겪었던 것과 같은 함정이다.
+    """
+    t_base_activetcp = pose6_to_transform(active_tcp_pose6)
+    t_tool0_activetcp = pose6_to_transform(tcp_offset6)
+    return transform_to_pose6(t_base_activetcp @ invert_transform(t_tool0_activetcp))
+
+
+# ---------------------------------------------------------------------------
 # 팔로 보내기
 # ---------------------------------------------------------------------------
 @dataclass
 class MoveResult:
-    """움직였는지, 안 움직였으면 왜 안 움직였는지."""
+    """계획·실행·도착 세 단계 중 어디까지 갔는지 (P1-2, 2026-09-21 재설계).
+
+    🛑 **왜 세 단계로 나눴나.** 예전에는 `moved` 하나가 "계산상 갈 수 있다"
+    (`plan()`)와 "실제로 도착했다"(`move_to()`)를 동시에 나타냈다 — `plan()`이
+    실제로는 팔을 전혀 안 움직이는데도 `moved=True`를 돌려줘서, "계획 성공"과
+    "실제 도착"이 호출부에서 구분되지 않았다. `A-3`(BACKLOG)가 요구하는
+    "명령 전송 완료가 아니라 실제 도착을 확인한 뒤 다음 단계로" 는 이 구분이
+    없으면 지킬 수 없다.
+
+    ==============  ===================================================
+    `feasible`       계산상 갈 수 있는가(안전검사+IK 통과). `plan()`도 채운다 —
+                     **실제로 움직였다는 뜻이 아니다.**
+    `executed`       `move_to()`가 실제로 `moveJ`/`moveL` 명령을 로봇에 보냈고,
+                     RTDE가 성공(bool True)을 돌려줬으며 예외가 없었는가.
+    `arrived`        실행 뒤 `RTDEReceiveInterface`로 실제 관절각을 읽어 목표와
+                     대조했을 때 허용 오차(`ARRIVAL_TOLERANCE_DEG`) 안인가.
+                     **다음 단계로 넘어가도 되는지는 이 값 하나만 본다.**
+    `moved`          호환용 별칭 — 항상 `arrived`와 같은 값이다(과거 코드가
+                     `.moved`만 보던 자리를 더 엄격한 뜻으로 자동 승격시킨다).
+    ==============  ===================================================
+    """
 
     moved: bool
     reason: str
+    feasible: bool = False
+    executed: bool = False
+    arrived: bool = False
+    #: 실제 도착 오차[deg] — 관절마다의 최대 절대오차. 확인 안 했으면 None.
+    arrival_error_deg: Optional[float] = None
+    #: 최종 파지 직전 자세 — **tool0** 자세(사람이 읽는 값, 활성 TCP와 무관하다).
     tcp_pose: Optional[Tuple[float, ...]] = None
+    #: 최종 자세의 관절각.
     joints: Optional[Tuple[float, ...]] = None
+    #: 접근 시작 지점(pre-approach) — `GraspPrePose.approach_dir`/`standoff`로 계산한
+    #: 중간 경유점의 tool0 자세(P1-4, 2026-09-21). 없으면(None) 중간 경유 없이
+    #: 최종 자세로 바로 간다(예: approach_dir 계약이 없는 옛 자세).
+    pre_tcp_pose: Optional[Tuple[float, ...]] = None
+    #: 접근 시작 지점의 관절각.
+    pre_joints: Optional[Tuple[float, ...]] = None
+    #: 최종 자세의 **활성 TCP** 자세 — `move_to()`가 `moveL`에 그대로 넘기는 값
+    #: (플랜 때 안전검사·IK에 실제로 쓴 값과 같아야 하므로 다시 계산하지 않는다).
+    active_tcp_pose: Optional[Tuple[float, ...]] = None
 
     def describe(self) -> str:
-        head = "이동함" if self.moved else "움직이지 않음"
+        if self.arrived:
+            head = "도착 확인됨"
+        elif self.executed:
+            head = "명령은 보냈지만 도착 미확인"
+        elif self.feasible:
+            head = "갈 수 있음(계산만, 실행 안 함)"
+        else:
+            head = "움직이지 않음"
         return "{} — {}".format(head, self.reason)
 
 
@@ -496,8 +589,36 @@ class ArmMover:
         return self.can_command
 
     # -- 본 일 -------------------------------------------------------------
+    def _solve_joints(self, tool0_pose6, tcp_offset, q_near):
+        """tool0 자세 하나 → (관절각 또는 None, 실패 이유 또는 None).
+
+        활성 TCP 변환 → 안전검사 → IK → 관절 안전검사 순서로, `plan()`이 최종
+        자세와 접근 시작 지점(pre-approach) 둘 다에 **같은 절차**로 쓴다(P1-4).
+        """
+        active_tcp_pose = tool0_pose_to_active_tcp_pose(tool0_pose6, tcp_offset)
+        if not self._control.isPoseWithinSafetyLimits(list(active_tcp_pose)):
+            return None, "그 자세는 팔의 안전 범위 밖이다."
+        if not self._control.getInverseKinematicsHasSolution(list(active_tcp_pose)):
+            return None, "팔이 그 자세까지 닿지 못한다."
+        joints = (
+            self._control.getInverseKinematics(list(active_tcp_pose), q_near)
+            if q_near
+            else self._control.getInverseKinematics(list(active_tcp_pose))
+        )
+        if not joints or len(joints) != ARM_JOINT_COUNT:
+            return None, "관절 각도를 풀지 못했다."
+        if not self._control.isJointsWithinSafetyLimits(list(joints)):
+            return None, "풀린 관절 각도가 안전 범위 밖이다."
+        return tuple(joints), None
+
     def plan(self, pose: GraspPrePose) -> MoveResult:
-        """움직이지는 않고, 갈 수 있는지와 관절 각도만 정한다."""
+        """움직이지는 않고, 갈 수 있는지와 관절 각도만 정한다.
+
+        `pose.approach_dir`/`pose.standoff`가 있으면(항상 있다 — 계약이 요구함,
+        `contracts/grasp_prepose.py` 참고) **접근 시작 지점(pre-approach)** 도 같이
+        계산·검사한다(P1-4, 2026-09-21). 최종 자세만 안전하다고 중간 경로까지
+        안전한 것은 아니므로, 둘 다 각각 안전검사·IK를 통과해야 "갈 수 있다"가 된다.
+        """
         pose.validate()
         if not pose.accepted:
             return MoveResult(
@@ -510,6 +631,22 @@ class ArmMover:
         tcp_pose = palm_pose_to_ur_tcp_pose(
             pose.palm_position, pose.palm_orientation, self.chain
         )
+        # ⚠️ tcp_pose는 **tool0** 자세다 — 아래 컨트롤러 호출들은 tool0가 아니라
+        # 컨트롤러에 지금 설정된 **활성 TCP** 기준으로 좌표를 해석한다(2026-09-21
+        # 코드 리뷰로 발견). 그대로 넘기면 활성 TCP != tool0 일 때 팔이 그 차이만큼
+        # 엉뚱한 곳으로 간다 — _solve_joints()가 tool0_pose_to_active_tcp_pose()로 변환한다.
+
+        # 접근 시작 지점 = 최종 손바닥 위치에서 접근 방향으로 standoff만큼 뒤로 뺀 곳.
+        # (계약: approach_dir는 "마지막 구간에서 다가갈 방향" — 그 방향으로 이동해
+        # 최종 위치에 도착하므로, 시작점은 그 방향의 반대로 물러난 자리다.)
+        approach_dir = np.asarray(pose.approach_dir, dtype=float)
+        pre_palm_position = (
+            np.asarray(pose.palm_position, dtype=float) - approach_dir * pose.standoff
+        )
+        pre_tcp_pose = palm_pose_to_ur_tcp_pose(
+            pre_palm_position, pose.palm_orientation, self.chain
+        )
+
         if not self.can_command:
             if self.can_read:
                 return MoveResult(
@@ -519,44 +656,63 @@ class ArmMover:
                         self.control_error or "이유 미상"
                     ),
                     tcp_pose=tuple(tcp_pose),
+                    pre_tcp_pose=tuple(pre_tcp_pose),
                 )
             return MoveResult(
                 False,
                 "연습 모드 — 팔에 연결하지 않았다. UR 좌표 계산까지만 했다.",
                 tcp_pose=tuple(tcp_pose),
+                pre_tcp_pose=tuple(pre_tcp_pose),
             )
 
-        if not self._control.isPoseWithinSafetyLimits(list(tcp_pose)):
+        # 컨트롤러의 활성 TCP 오프셋(펜던트·URCap이 설정한 것)을 읽어 우리 tool0
+        # 목표를 그 기준 목표로 변환한다 — 컨트롤러의 TCP 설정 자체는 건드리지 않는다.
+        try:
+            tcp_offset = list(self._control.getTCPOffset())
+        except Exception as exc:
             return MoveResult(
-                False, "그 자세는 팔의 안전 범위 밖이다.", tcp_pose=tuple(tcp_pose)
-            )
-        if not self._control.getInverseKinematicsHasSolution(list(tcp_pose)):
-            return MoveResult(
-                False, "팔이 그 자세까지 닿지 못한다.", tcp_pose=tuple(tcp_pose)
+                False,
+                "컨트롤러의 활성 TCP 설정을 읽지 못했다 — 확실하지 않으면 움직이지 "
+                "않는다: {}".format(exc),
+                tcp_pose=tuple(tcp_pose),
+                pre_tcp_pose=tuple(pre_tcp_pose),
             )
 
         q_near = self._receive.getActualQ() if self._receive is not None else None
-        joints = (
-            self._control.getInverseKinematics(list(tcp_pose), q_near)
-            if q_near
-            else self._control.getInverseKinematics(list(tcp_pose))
-        )
-        if not joints or len(joints) != ARM_JOINT_COUNT:
-            return MoveResult(
-                False, "관절 각도를 풀지 못했다.", tcp_pose=tuple(tcp_pose)
-            )
-        if not self._control.isJointsWithinSafetyLimits(list(joints)):
+
+        pre_joints, pre_reason = self._solve_joints(pre_tcp_pose, tcp_offset, q_near)
+        if pre_joints is None:
             return MoveResult(
                 False,
-                "풀린 관절 각도가 안전 범위 밖이다.",
+                "접근 시작 지점(pre-approach)에 못 간다: {}".format(pre_reason),
                 tcp_pose=tuple(tcp_pose),
-                joints=tuple(joints),
+                pre_tcp_pose=tuple(pre_tcp_pose),
             )
+
+        # 최종 자세의 IK는 접근 시작 지점의 관절해를 기준점(q_near)으로 푼다 —
+        # 로봇의 지금 실제 자세가 아니라 **다음에 실제로 지나갈 점**을 기준으로 풀어야
+        # moveJ(접근 시작) → moveL(최종) 구간이 다른 팔꿈치 자세로 튀지 않는다.
+        final_active_tcp_pose = tool0_pose_to_active_tcp_pose(tcp_pose, tcp_offset)
+        final_joints, final_reason = self._solve_joints(tcp_pose, tcp_offset, pre_joints)
+        if final_joints is None:
+            return MoveResult(
+                False,
+                final_reason,
+                tcp_pose=tuple(tcp_pose),
+                pre_tcp_pose=tuple(pre_tcp_pose),
+                pre_joints=tuple(pre_joints),
+            )
+        # ⚠️ feasible=True 일 뿐 moved(=arrived)는 여전히 False다 — plan()은 계산만
+        # 하고 팔을 전혀 안 움직인다. 실제로 움직였는지는 move_to()만 안다(P1-2).
         return MoveResult(
-            True,
-            "갈 수 있다.",
+            False,
+            "갈 수 있다 — 접근 시작 지점을 거쳐 최종 자세까지 (계산만, 아직 안 움직였다).",
+            feasible=True,
             tcp_pose=tuple(tcp_pose),
-            joints=tuple(joints),
+            joints=tuple(final_joints),
+            pre_tcp_pose=tuple(pre_tcp_pose),
+            pre_joints=tuple(pre_joints),
+            active_tcp_pose=tuple(final_active_tcp_pose),
         )
 
     def check_frames(self) -> Tuple[bool, str]:
@@ -582,9 +738,7 @@ class ArmMover:
             # 적는다 — 실제로 0이 아니면 아래 차이로 드러나므로 조용히 넘어가지 않는다.
             offset = [0.0] * 6
             offset_note = "못 읽어서 0으로 가정(원격 조작 꺼짐)"
-        ours = transform_to_pose6(
-            pose6_to_transform(ours_flange) @ pose6_to_transform(offset)
-        )
+        ours = tool0_pose_to_active_tcp_pose(ours_flange, offset)
         theirs = np.asarray(self._receive.getActualTCPPose(), dtype=float)
 
         pos_err_mm = float(np.linalg.norm(ours[:3] - theirs[:3])) * 1000.0
@@ -616,12 +770,19 @@ class ArmMover:
         return ok, report
 
     def move_to(self, pose: GraspPrePose, acceleration: float = 0.5,
-                max_age_sec: Optional[float] = None) -> MoveResult:
+                max_age_sec: Optional[float] = None,
+                approach_speed_mps: Optional[float] = None) -> MoveResult:
         """계산한 자세로 움직이고 **멈춘다.** 갈 수 없거나 관측이 오래됐으면 움직이기 전에 거절한다.
 
         `max_age_sec`를 안 주면 `.env`의 `RTAUTO_MAX_POSE_AGE_SEC`(기본 2초)를 쓴다.
         **실제 이동 직전(여기)에서만 나이를 강제한다** — `plan()`은 계산만 하고 움직이지
         않으므로 저장된 자세 분석·재현 작업을 방해하지 않게 그대로 둔다(P4).
+
+        `plan()`이 접근 시작 지점(pre-approach)을 찾아냈으면(P1-4) 거기까지 `moveJ`로
+        먼저 간 뒤, **마지막 구간만 직선으로**(`moveL`, `approach_dir` 방향) 최종
+        자세까지 간다 — 끝점만 안전하다고 중간 경로까지 안전한 것은 아니므로, 접근
+        구간 자체를 짧고 예측 가능한 직선으로 만든다. 찾아내지 못했으면(과거 계약이
+        없는 자세 등) 예전처럼 `moveJ`로 바로 간다.
         """
         age_limit = MAX_POSE_AGE_SEC if max_age_sec is None else max_age_sec
         age = time.time() - pose.stamp_capture
@@ -631,14 +792,87 @@ class ArmMover:
                 "관측이 너무 오래됐다({:.2f}초 지남, 허용 {:.2f}초) — 그 사이 물체가 "
                 "옮겨갔을 수 있어 움직이지 않는다.".format(age, age_limit),
             )
+        # ⚠️ stamp_capture가 **미래**(age가 크게 음수)여도 위 검사는 통과한다 — 시계가
+        # 안 맞거나 값이 조작됐다는 뜻이므로 이것도 "믿을 수 없는 관측"이다(2026-09-21
+        # 코드 리뷰). 같은 PC 안에서 나는 시각차라면 수 ms 수준이어야 정상이므로,
+        # CLOCK_SKEW_TOLERANCE_SEC(여유 있게 0.5초)를 넘는 미래 시각은 거절한다.
+        if age < -CLOCK_SKEW_TOLERANCE_SEC:
+            return MoveResult(
+                False,
+                "관측 시각이 지금보다 {:.2f}초 미래다 — 시계가 안 맞거나 시각값을 "
+                "믿을 수 없어 움직이지 않는다.".format(-age),
+            )
 
         plan = self.plan(pose)
-        if not plan.moved or plan.joints is None:
+        if not plan.feasible or plan.joints is None:
             return plan
-        self._control.moveJ(list(plan.joints), self.speed, acceleration)
-        self._control.stopJ(acceleration)
+
+        # ⚠️ 이 밑부터는 **실제로 로봇에 명령을 보낸다.** moveJ/moveL은 둘 다 bool을
+        # 돌려준다(ur_rtde 1.6.5 확인) — 반환값을 버리면 "명령이 거부됐는데도 성공한
+        # 것처럼 보이는" 상태가 된다(2026-09-21 코드 리뷰로 발견). RTDE 예외도 마찬가지로
+        # 성공으로 남으면 안 된다 — 전부 여기서 막는다.
+        def _fail(reason: str) -> MoveResult:
+            # 실행이 중간에 끊긴 상태다 — 적극적으로 감속 정지시킨다(정상 완료된
+            # blocking move 뒤에는 이미 멈춰 있으므로 이 호출이 따로 필요 없다).
+            try:
+                self._control.stopJ(acceleration)
+            except Exception:
+                pass
+            return MoveResult(
+                False, reason, feasible=True, executed=False,
+                tcp_pose=plan.tcp_pose, joints=plan.joints,
+                pre_tcp_pose=plan.pre_tcp_pose, pre_joints=plan.pre_joints,
+                active_tcp_pose=plan.active_tcp_pose,
+            )
+
+        try:
+            if plan.pre_joints is not None and plan.active_tcp_pose is not None:
+                speed_mps = (
+                    APPROACH_SPEED_MPS if approach_speed_mps is None else approach_speed_mps
+                )
+                if not self._control.moveJ(list(plan.pre_joints), self.speed, acceleration):
+                    return _fail("접근 시작 지점으로 가는 moveJ가 실패했다(로봇이 명령을 "
+                                "거부했거나 중단됐다) — moveL은 시도하지 않았다.")
+                if not self._control.moveL(list(plan.active_tcp_pose), speed_mps, acceleration):
+                    return _fail("접근 시작 지점까지는 갔지만, 최종 자세로 가는 moveL이 "
+                                "실패했다 — 팔이 접근 시작 지점 근처에 멈춰 있을 수 있다.")
+                reason = "접근 시작 지점을 거쳐 최종 자세까지 명령을 보냈다."
+            else:
+                if not self._control.moveJ(list(plan.joints), self.speed, acceleration):
+                    return _fail("최종 자세로 가는 moveJ가 실패했다.")
+                reason = "최종 자세로 명령을 보냈다."
+        except Exception as exc:
+            return _fail("이동 중 RTDE 예외로 중단됐다: {}".format(exc))
+
+        # 명령이 (거부 없이) 끝났다 — 이제 **실제로 거기 도착했는지** 관절각을 다시
+        # 읽어 확인한다. "성공"은 이 확인을 통과해야만 붙는다(A-3, P1-2).
+        try:
+            actual_q = self._receive.getActualQ() if self._receive is not None else None
+        except Exception:
+            actual_q = None
+        if actual_q is None:
+            return MoveResult(
+                False,
+                "명령은 보냈지만 실제 관절각을 읽지 못해 도착을 확인할 수 없다.",
+                feasible=True, executed=True,
+                tcp_pose=plan.tcp_pose, joints=plan.joints,
+                pre_tcp_pose=plan.pre_tcp_pose, pre_joints=plan.pre_joints,
+                active_tcp_pose=plan.active_tcp_pose,
+            )
+        err_deg = max(
+            abs(math.degrees(a) - math.degrees(t)) for a, t in zip(actual_q, plan.joints)
+        )
+        arrived = err_deg <= ARRIVAL_TOLERANCE_DEG
         return MoveResult(
-            True, "자세까지 이동하고 멈췄다.", plan.tcp_pose, plan.joints
+            arrived,
+            (reason + " 실제 도착 확인함(최대 관절 오차 {:.3f}°).".format(err_deg))
+            if arrived else
+            (reason + " 그러나 실제 도착 오차 {:.3f}°가 허용치 {:.3f}°를 넘는다 — "
+             "성공으로 보지 않는다.".format(err_deg, ARRIVAL_TOLERANCE_DEG)),
+            feasible=True, executed=True, arrived=arrived, arrival_error_deg=err_deg,
+            tcp_pose=plan.tcp_pose, joints=plan.joints,
+            pre_tcp_pose=plan.pre_tcp_pose, pre_joints=plan.pre_joints,
+            active_tcp_pose=plan.active_tcp_pose,
         )
 
 
@@ -762,13 +996,26 @@ def main(argv=None) -> int:
     finally:
         mover.close()
 
+    if result.pre_tcp_pose is not None:
+        print("접근 시작 지점: {} (앞 3개 m, 뒤 3개 회전벡터) — approach_dir/standoff로 계산".format(
+            _fmt(result.pre_tcp_pose)))
     if result.tcp_pose is not None:
         print("UR 좌표 자세  : {} (앞 3개 m, 뒤 3개 회전벡터)".format(_fmt(result.tcp_pose)))
     if result.joints is not None:
         print("팔 관절 목표  : {} rad".format(_fmt(result.joints)))
         print("              : {} deg".format(_fmt([math.degrees(v) for v in result.joints], 2)))
     print("결과          : {}".format(result.describe()))
-    return 0 if (result.moved or ip is None or args.plan_only) else 1
+    # 세 모드가 "성공"의 뜻이 다르다(P1-2, 2026-09-21):
+    #   ip 없음(순수 계산)  — 연결 자체가 없어 feasible을 못 정한다. 좌표가 나왔으면 성공.
+    #   --plan-only        — 연결은 했지만 실행은 안 함. IK/안전검사 통과(feasible)가 성공.
+    #   실제로 움직이려던 모드 — 명령만 보내고 끝나면 안 된다. 도착 확인(arrived)까지 성공.
+    if ip is None:
+        ok = result.tcp_pose is not None
+    elif args.plan_only:
+        ok = result.feasible
+    else:
+        ok = result.arrived
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

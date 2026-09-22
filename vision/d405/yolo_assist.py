@@ -1,8 +1,22 @@
 # -*- coding: utf-8 -*-
-"""**배운 물체는 YOLO 로 가르고, 못 찾은 곳은 모양으로 나눈다** — 둘을 같이 쓴다.
+"""**배운 물체는 YOLO 로 찾는다.** 모양(geometry) 안전망은 옵션으로 켤 수 있다.
 
-왜 둘을 같이 쓰나
------------------
+🛑 **2026-09-21 사용자 결정 — 모양(geometry) 안전망은 기본이 꺼져 있다.**
+이전 판은 "모양만 보고" 나누는 안전망을 항상 같이 돌렸다. 그런데:
+
+- **지금(페스타 2026-11-13까지) 목표는 "상식적인 범위"의 물건을 YOLO 로 확실히
+  인식하는 것**이지, 진짜 이름 없는 미지의 형상까지 잡는 것이 아니다(사용자 확인,
+  `ai_festa_plan.md` §8-2). 그건 **페스타 이후 별도 과제**다.
+- 잡으러 갈 후보는 이미 YOLO 만 신뢰한다(`segment_objects.is_grasp_candidate()`),
+  그래서 안전망이 켜져 있어도 실제 행동에는 안 쓰인다 — 화면만 복잡해진다.
+- 안전망은 반사되는 물체(페트병 등)에서 거리값이 끊겨 **한 물체를 여러 조각으로
+  쪼개는 원인**이 됐다(2026-09-21 실측) — 꺼 두면 이 혼란이 사라진다.
+
+**필요하면 언제든 `--geometry-fallback` 로 켤 수 있다** — 코드는 그대로 남아 있다.
+아래는 **켰을 때**의 설계 배경이다(꺼도 유효한 설명이니 지우지 않는다).
+
+왜 둘을 같이 쓰는 모드가 있나 (`--geometry-fallback`)
+------------------------------------------------------
 `segment_objects.py` 는 **모양만 보고** 나눈다. 처음 보는 물체에도 되는 것이 장점인데,
 **붙어 있으면 못 가른다** — 사용자가 화면에서 찾았다(2026-09-18):
 
@@ -18,9 +32,9 @@ YOLO 는 그 반대다. **붙어 있어도 하나씩 가르지만 배운 종류�
 붙어 있는 물체 가르기     ❌ 못 가른다                 ✅ 가른다
 ======================  ==========================  ==========================
 
-🛑 **YOLO 로 갈아타는 것이 아니다.** `CLAUDE.md` 프로젝트 목적은 **처음 보는 물체**를
-잡는 것이다. YOLO 만 쓰면 배운 9종 밖에서는 아무것도 못 한다. 그래서 **YOLO 는 도우미**고,
-못 찾았을 때는 모양으로 나누는 쪽이 계속 답을 낸다.
+🛑 **YOLO 로 완전히 갈아탄 것도 아니다.** `--geometry-fallback` 을 켜면 YOLO 가
+못 찾은 나머지도 화면에 **참고용**으로 보여준다(잡으러 갈 후보에는 여전히 안 쓴다).
+진짜 미지 형상 일반화 작업을 다시 시작하면 이 옵션부터 켤 것.
 
 쓰는 모델 — **YOLOE** (글자로 찾을 것을 정한다)
 ------------------------------------------------
@@ -89,6 +103,10 @@ YOLO 는 "여기 컵이 있다" 를 정확히 말하는데, **흰 종이컵은 �
     vision/.vision/Scripts/Activate.ps1
     python vision/d405/yolo_assist.py --live
 
+모양(geometry) 안전망도 참고로 보고 싶을 때:
+
+    python vision/d405/yolo_assist.py --live --geometry-fallback
+
 한 장만 찍어 보기:
 
     python vision/d405/yolo_assist.py --save
@@ -128,8 +146,14 @@ NOT_OBJECT = ("person", "dining table", "chair", "couch", "bed", "tv", "refriger
 #: ⚠️ **이름이 맞는지는 중요하지 않다.** 우리가 쓰는 것은 **테두리**다 — 실제로 캔이
 #:    `bottle` 로 불렸지만(77 %) 테두리는 정확했다(2026-09-18 실측). 이름이 아니라
 #:    잘라내기가 목적이다.
+#: 🛑 **2026-09-21 사용자 결정 — "처음 보는 물체 일반화"는 이 목록을 무한히 늘리라는
+#:    뜻이 아니다.** 진짜 미지의(이름조차 없는) 형상까지 잡는 것은 **페스타(2026-11-13)
+#:    이후 별도 과제**다. 지금은 **전시에서 실제로 나올 법한 "상식적인 범위"의 물건을
+#:    확실히 인식**하는 것이 목표라서, 그 범위 안에서 목록을 채운다
+#:    (`ai_festa_plan.md` §8-2 참고). 공구는 이 상식적 범위에 들어간다고 보고 추가함.
 PROMPT_WORDS = ("cup", "paper cup", "bottle", "can", "box", "computer mouse",
-                "keyboard", "pen", "cell phone", "book", "bowl", "person")
+                "keyboard", "pen", "cell phone", "book", "bowl", "person",
+                "screwdriver", "wrench", "hammer", "pliers", "tape measure", "scissors")
 
 #: 기본 가중치. **찾을 말이 이미 구워진** 파일을 쓴다.
 #: ⚠️ 구워 두는 이유: YOLOE 는 글자를 이해하려고 별도 모델(`mobileclip2_b.ts`, **242 MB**)
@@ -214,7 +238,20 @@ class Detector:
     def detect(self, bgr) -> List[Detection]:
         if not self.ready:
             return []
-        res = self.model.predict(bgr, conf=self.conf, verbose=False)[0]
+        # ⚠️ agnostic_nms=True — 같은 자리에 **다른 class** 로 겹쳐 나온 것들 사이에도
+        #    표준 NMS(IoU 기준)를 적용한다. 기본(꺼짐)은 class 별로 따로 NMS를 해서,
+        #    겹치는 박스가 서로 다른 class 로 잡히면 NMS 가 둘 다 살려 둔다.
+        #    🛑 **이것만으로 다 안 잡힌다 — 같은 class 끼리도 마찬가지다**(2026-09-21
+        #    실측: `cup 86%, cup 63%, cup 38%` 가 한 병 위에 동시에 3번). IoU 는
+        #    "겹친 넓이 ÷ 합친 넓이"라서, 작은 detection(예: 병 뚜껑만 잡은 부분)이
+        #    큰 detection(예: 병 전체) 안에 통째로 들어가 있으면 **합친 넓이가 커서
+        #    IoU가 낮게 나와 NMS 를 통과한다** — class 가 같든 다르든 이 계산은
+        #    똑같다. 그래서 `suppress_cross_class_duplicates()` 를
+        #    Intersection-over-Smaller 기준으로 따로 둔다(2026-09-21, class 이름
+        #    일치 여부는 안 본다).
+        #    iou 임계값은 **일부러 안 낮춘다** — 낮추면 진짜로 가까이 붙은 서로 다른
+        #    물체(컵 옆에 병)까지 하나로 지워질 위험이 있다.
+        res = self.model.predict(bgr, conf=self.conf, agnostic_nms=True, verbose=False)[0]
         masks = None
         if getattr(res, "masks", None) is not None:
             masks = res.masks.data.cpu().numpy()      # (물체수, 높이, 너비)
@@ -258,6 +295,160 @@ MASK_COVER_MIN = 0.6
 #: 추정 물체의 앞뒤 두께를 최소 이만큼으로 본다(m). 한 면만 보이므로 0 이 나올 수 있는데,
 #: 0 이면 크기 판정이 이상해진다.
 ESTIMATE_MIN_DEPTH_M = 0.005
+
+# --------------------------------------------------------------------------
+# YOLO 중복 detection — 같은 물체가 detection 여러 개로 겹쳐 잡힘
+# --------------------------------------------------------------------------
+# 🛑 **D-9(YOLO+모양 안전망 사이의 중복)와 다른 문제다.** 여기는 YOLO **내부**에서
+#    같은 물리적 물체가 detection 여러 개로 동시에 나오는 경우다. 반드시 YOLO
+#    ownership 배정(아래 `split_by_boxes`) **이전에** 정리한다.
+#
+#    2026-09-21 실측 ① — 서로 다른 class 이름표(`cup 73%` 와 `bottle 44%`)로 나옴
+#    (병을 45도 이상 위에서 내려다볼 때 재현됨).
+#    2026-09-21 실측 ② — **class 이름이 같아도 똑같이 생긴다**(`cup 86%, cup 63%,
+#    cup 38%` 가 한 병 위에 동시에 3번). `agnostic_nms=True` 를 켠 YOLO 자체 NMS
+#    로도 못 거른다 — 작은 detection 이 큰 detection 안에 포함된 경우 IoU 가
+#    낮게 나오는 건 class 가 같든 다르든 똑같기 때문. 그래서 **class 이름 일치
+#    여부는 판단 기준에서 뺐다** — 포함 관계(2D)와 거리(3D)만 본다.
+
+#: **Intersection over Smaller**(작은 쪽 면적 대비 겹친 비율) 기준. 단순 IoU(합집합
+#: 대비 겹침)는 두 detection 의 크기 차가 크면(컵 뚜껑 부분만 vs 병 전체) 낮게 나와
+#: 포함 관계를 못 잡는다 — 그래서 "작은 쪽이 큰 쪽 안에 거의 다 들어가는가"를 본다.
+CROSS_CLASS_CONTAINMENT_MIN = 0.80
+
+#: 두 detection 의 대표 거리(중앙값) 차이가 이 안이면 "같은 물체" 후보로 본다(m).
+CROSS_CLASS_DEPTH_TOL_M = 0.03
+
+#: 대표 거리를 낼 때 최소 이만큼의 유효 거리점이 있어야 한다. 모자라면 **중복
+#: 판정을 하지 않는다**(거리값 부족한 상태에서 2D 겹침만 보고 지우지 않는다).
+CROSS_CLASS_MIN_DEPTH_POINTS = FEW_POINTS_MIN
+
+#: 남길 쪽을 고를 때 "더 넓게 측정한 쪽(점이 많은 쪽)을 남긴다"는 규칙이 통하는
+#: 물리적 크기 상한(m, 3D 퍼짐 기준). 이보다 크면 배경까지 먹었을 가능성이 크므로
+#: **크다고 무조건 남기지 않는다** — 그때는 거꾸로 더 작은(보수적인) 쪽을 남긴다.
+CROSS_CLASS_MAX_PLAUSIBLE_SIZE_M = 0.35
+
+
+def _cross_class_area_and_overlap(a, b, shape):
+    """두 detection 의 2D 겹침. **mask 있으면 mask, 없으면 박스**(계획서 §6).
+
+    같은 `detect()` 호출에서 나온 마스크는 전부 같은 해상도라, 마스크가 둘 다
+    있으면 그 화소끼리 바로 겹쳐 셀 수 있다. 하나라도 없으면 박스 사각형으로
+    물러선다. 돌려주는 값은 전부 **색 사진 화소 기준**으로 맞춰서, 마스크 쓴
+    경우와 박스만 쓴 경우가 같은 자로 비교되게 한다.
+    """
+    if (a.mask is not None and b.mask is not None
+            and a.mask.shape == b.mask.shape):
+        ma, mb = a.mask > 0.5, b.mask > 0.5
+        scale = (shape[0] * shape[1]) / float(a.mask.shape[0] * a.mask.shape[1])
+        return (float(np.count_nonzero(ma)) * scale,
+                float(np.count_nonzero(mb)) * scale,
+                float(np.count_nonzero(ma & mb)) * scale)
+    ax1, ay1, ax2, ay2 = a.box
+    bx1, by1, bx2, by2 = b.box
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    return area_a, area_b, inter
+
+
+def _representative_depth_and_extent(det, pts, px, py, shape,
+                                     min_points=CROSS_CLASS_MIN_DEPTH_POINTS):
+    """이 detection 영역 안 점들의 **대표 거리(중앙값)** 와 **점 개수·3D 퍼짐**.
+
+    돌려주는 것: `(대표 거리 또는 None, 점 개수, 3D 최대 퍼짐 또는 None)`.
+    거리값이 `min_points` 보다 적으면 `(None, 점 개수, None)` — **확신 없이
+    중복 판정에 쓰지 않으려는 것**(계획서 §3 — "duplicate suppression을
+    보수적으로 적용하지 않는다").
+    """
+    inside = det.contains(px, py, shape)
+    n = int(inside.sum())
+    if n < min_points:
+        return None, n, None
+    region = pts[inside]
+    depth = float(np.median(region[:, 2]))
+    extent = float((region.max(axis=0) - region.min(axis=0)).max())
+    return depth, n, extent
+
+
+def suppress_cross_class_duplicates(dets, pts, px, py, shape, debug=False):
+    """**같은 물체가 여러 detection 으로 겹쳐 잡히는 것**을 하나로 줄인다.
+
+    2026-09-21 실측 ①: 페트병 하나가 `cup 73%` + `bottle 44%` 로 동시에 잡혔다
+    (약 45도 이상 위에서 내려다볼 때 재현). `cup`은 병의 윗부분만, `bottle`은
+    병 전체를 덮고 있었다 — **확신(confidence)이 높은 쪽이 더 좋은 영역이라는
+    보장이 없다.**
+
+    🛑 **2026-09-21 실측 ② — class 이름이 같아도 똑같이 생긴다.** 처음에는 "같은
+    class 끼리는 YOLO 자체 NMS(`agnostic_nms=True`)가 정리한다"고 보고 건드리지
+    않았다. 그런데 실물에서 **`cup 86%, cup 63%, cup 38%`처럼 같은 class 가 한
+    물체 위에 3번**(뚜껑/몸통 번갈아) 나오는 것을 사용자가 재현했다 — NMS 는
+    IoU(합친 넓이 대비 겹침) 기준이라, **작은 detection 이 큰 detection 안에
+    포함된 경우**엔 class 가 같든 다르든 **똑같이 통과해 버린다.** 그래서
+    **class 이름 일치 여부는 더 이상 판단 기준에 안 쓴다** — 포함 관계와 거리만
+    본다. "진짜로 다른, 나란히 놓인 같은 class 물체 2개"는 겹치는 부분이
+    적어(포함 비율이 낮아) 이 기준에 안 걸리므로 계속 안전하게 분리된다.
+
+    판단 기준(**전부** 만족해야 중복으로 본다, confidence·class 이름은 안 쓴다):
+
+    1. 2D 포함 — Intersection over Smaller >= `CROSS_CLASS_CONTAINMENT_MIN`
+    2. 거리 일치 — 대표 거리 차이 <= `CROSS_CLASS_DEPTH_TOL_M`,
+       **거리값이 모자란 쪽이 하나라도 있으면 중복으로 보지 않는다**
+
+    남길 쪽 — **점이 많은(더 넓게 실제로 측정한) 쪽을 남긴다.** 단 그 detection의
+    3D 퍼짐이 `CROSS_CLASS_MAX_PLAUSIBLE_SIZE_M` 을 넘으면 배경을 먹었을 수
+    있으므로 거꾸로 작은 쪽을 남긴다.
+
+    돌려주는 것: `(살아남은 detections, 디버그 문자열 목록)`
+    """
+    n = len(dets)
+    alive = [True] * n
+    debug_lines = []
+    info = [_representative_depth_and_extent(d, pts, px, py, shape) for d in dets]
+
+    for i in range(n):
+        if not dets[i].is_object or not alive[i]:
+            continue
+        for j in range(i + 1, n):
+            if not dets[j].is_object or not alive[j]:
+                continue
+
+            depth_i, n_i, extent_i = info[i]
+            depth_j, n_j, extent_j = info[j]
+            if depth_i is None or depth_j is None:
+                continue                      # 거리값 부족 — 보수적으로 그냥 둔다
+
+            area_i, area_j, inter = _cross_class_area_and_overlap(dets[i], dets[j], shape)
+            smaller = min(area_i, area_j)
+            containment = inter / smaller if smaller > 1e-9 else 0.0
+            depth_diff = abs(depth_i - depth_j)
+            if containment < CROSS_CLASS_CONTAINMENT_MIN or depth_diff > CROSS_CLASS_DEPTH_TOL_M:
+                continue
+
+            i_too_big = extent_i is not None and extent_i > CROSS_CLASS_MAX_PLAUSIBLE_SIZE_M
+            j_too_big = extent_j is not None and extent_j > CROSS_CLASS_MAX_PLAUSIBLE_SIZE_M
+            if i_too_big and not j_too_big:
+                keep, drop, reason = j, i, "큰 쪽이 배경까지 먹었을 수 있어 작은 쪽을 남김"
+            elif j_too_big and not i_too_big:
+                keep, drop, reason = i, j, "큰 쪽이 배경까지 먹었을 수 있어 작은 쪽을 남김"
+            elif n_i >= n_j:
+                keep, drop, reason = i, j, "더 넓게 측정한 쪽(점 {}개 vs {}개)".format(n_i, n_j)
+            else:
+                keep, drop, reason = j, i, "더 넓게 측정한 쪽(점 {}개 vs {}개)".format(n_j, n_i)
+
+            alive[drop] = False
+            if debug:
+                debug_lines.append(
+                    "duplicate: {} {:.0%} <-> {} {:.0%}  containment={:.2f} "
+                    "depth_diff={:.3f}m  keep={} {:.0%}  reason={}".format(
+                        dets[i].name, dets[i].conf, dets[j].name, dets[j].conf,
+                        containment, depth_diff, dets[keep].name, dets[keep].conf, reason))
+            if drop == i:
+                break
+
+    return [d for d, a in zip(dets, alive) if a], debug_lines
 
 
 def _mask_extent(d, shape):
@@ -351,7 +542,8 @@ def estimate_from_mask(d, inside, intr, shape, depth_shape):
 
 
 def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
-                   min_points=CLUSTER_MIN_POINTS):
+                   min_points=CLUSTER_MIN_POINTS, near=None, far=None,
+                   debug=False, debug_lines=None, dets_out=None):
     """**YOLO 가 찾은 것들의 점을 따로 떼어낸다.**
 
     테두리(mask)가 있으면 그것으로, 없으면 네모 박스로 가른다.
@@ -363,6 +555,14 @@ def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
     `shape`          **색 사진** 크기 `(세로, 가로)` — 박스·테두리가 사는 좌표
     `depth_shape`    **깊이 사진** 크기 `(세로, 가로)`. 안 주면 색 사진과 같다고 본다
     `intr`           깊이 사진 기준 초점거리·중심. 있으면 **듬성듬성해도 추정**한다
+    `near`/`far`     D405 가 믿을 수 있는 거리 범위(m). 안 주면 설정값(`D405_NEAR_M`/
+                     `D405_FAR_M`) 을 쓴다
+    `debug_lines`    리스트를 주면 **class 간 중복 판정 내역**(`suppress_cross_class_
+                     duplicates` 참고)을 그 리스트에 이어 붙인다. 반환값 형태를 안
+                     바꾸려고 out-parameter 로 뺐다
+    `dets_out`       리스트를 주면 **class 간 중복을 정리한 뒤의 detections** 를
+                     그 리스트에 채운다(화면에 박스를 그릴 때 중복 없는 목록이
+                     필요한 호출부용) — 마찬가지로 out-parameter
     ==============  =====================================================
 
     돌려주는 것: `(박스별 물체 목록, 어느 박스에도 안 든 점)`
@@ -374,8 +574,18 @@ def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
        (640x480 → 320x240), 전에는 깊이 화소 번호를 **환산 없이** 테두리에 대고 있었다.
        그러면 화면 가운데 있는 컵의 점이 테두리 밖으로 밀려나 **통째로 버려진다**
        (2026-09-18 발견). 여기서 한 번에 환산한다.
+
+    🛑 **믿을 수 없는 거리도 제일 먼저 뺀다** (2026-09-21 코드 리뷰로 발견).
+       `find_objects()`(모양 전용 경로)는 `near`/`far` 밖의 점을 맨 처음에 버리는데,
+       이 함수는 그 검사가 없었다 — YOLO 박스/테두리 안에 렌즈 코앞 반사 같은 잡음이
+       섞이면, `_merge_pieces()`가 "가장 가까운 조각"을 고르는 로직 때문에 **그 잡음이
+       진짜 물체 대신 뽑히고 진짜 물체는 통째로 사라질 수 있었다**(재현·확인함).
+       그래서 여기서도 클러스터링 전에 먼저 범위를 벗어난 점을 뺀다.
     """
     from segment_objects import cluster
+
+    near = cfg.D405_NEAR_M if near is None else near
+    far = cfg.D405_FAR_M if far is None else far
 
     pts = np.asarray(points, dtype=np.float64)
     depth_shape = tuple(shape) if depth_shape is None else tuple(depth_shape)
@@ -383,6 +593,21 @@ def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
     sy = shape[0] / float(depth_shape[0])
     px = np.asarray(pixel_xy[0], dtype=float) * sx      # 색 사진 좌표로 환산
     py = np.asarray(pixel_xy[1], dtype=float) * sy
+
+    # 믿을 수 없는 거리(너무 가깝거나 먼)는 클러스터링에 들어가기 전에 뺀다 —
+    # find_objects()(모양 전용 경로)와 같은 순서.
+    in_range = (pts[:, 2] >= near) & (pts[:, 2] <= far)
+    pts, px, py = pts[in_range], px[in_range], py[in_range]
+
+    # 🛑 **class 간 중복부터 정리하고 나서 소유권을 배정한다** — 같은 물체가
+    # `cup`/`bottle` 처럼 서로 다른 class 이름으로 동시에 나오면, 아래 owner 배정은
+    # class 를 구분하지 않으므로 **둘 다 살아남아 물체가 두 번 생긴다.** D-9(YOLO+
+    # 모양 안전망 사이의 중복)와는 다른 문제라서 별도 함수로 뺐다.
+    dets, cc_debug = suppress_cross_class_duplicates(dets, pts, px, py, shape, debug=debug)
+    if debug_lines is not None:
+        debug_lines.extend(cc_debug)
+    if dets_out is not None:
+        dets_out[:] = dets
 
     owner = np.full(len(pts), -1, dtype=np.int64)
     best_conf = np.zeros(len(pts))
@@ -407,6 +632,22 @@ def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
             continue
         inside = pts[sel]
 
+        # 🛑 **소유(ownership)와 계측(measurement)은 다른 질문이다** (2026-09-21,
+        #    바깥 조언자 진단 — `claudeDocs/daily/2026-09-18.md` 세션 18 §B).
+        #    이 마스크 안의 점은 **전부 이 YOLO 물체가 소유한다** — 그중 몇 개만
+        #    크기·중심 계산에 실제로 썼는지와는 무관하다. 예전에는 "계산에 안 쓴 점"을
+        #    바로 아래 `used[idx_in[o.index]]`처럼 **계산에 쓴 점만** 소비 처리했다.
+        #    그러면 계산에 안 쓴 나머지가 "주인 없는 점"으로 되돌아가 `pts[~used]`를
+        #    거쳐 모양(geometry) 쪽으로 넘어갔고, 같은 물체가 **또 하나 생겼다**
+        #    ("크기 계산에 안 썼다" 와 "다른 물체의 점이다" 가 같은 뜻으로 처리되던
+        #    버그). 그래서 소유는 여기서 **먼저, 무조건** 확정하고, 계측은 아래에서
+        #    별도로(신뢰도 높은 subset만) 계산한다.
+        #
+        #    🛑 **마스크 바깥 점까지 소유하는 것은 아니다** — `sel = owner == i` 가
+        #    이미 마스크(또는 박스) 안으로 한정했고, 다른 detection이 더 높은 확신으로
+        #    같은 점을 먼저 차지했으면 `owner` 배정 단계에서 이미 걸러졌다.
+        used[idx_in] = True
+
         # ⚠️ **네모 박스는 그 방향의 배경까지 전부 긁어온다.** 처음엔 박스 안의 점을
         #    통째로 한 물체로 썼더니 텀블러가 **324x344x598 cm** 로 나왔다(2026-09-18) —
         #    뒤의 벽·모니터가 같이 들어온 것이다. 테두리(mask)를 쓰면서 대부분 해결됐지만,
@@ -423,11 +664,11 @@ def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
             if guess is not None:
                 o = guess
         if o is None:
+            # 이 detection이 소유한 점은 (위에서 이미) 계속 소유한 채로 남는다 —
+            # 계측에 실패했다고 해서 모양 쪽에 다시 넘기지 않는다.
             continue
         o.source = "YOLO:{} {:.0%}".format(d.name, d.conf)      # 어디서 나왔는지 남긴다
         objs.append(o)
-        # 박스 안 전체가 아니라 **쓴 점만** 소비 처리한다 — 나머지는 모양 쪽이 다시 본다
-        used[idx_in[o.index]] = True
 
     # 사람으로 잡힌 박스 안의 점은 **버린다** — 잡으러 가면 안 된다
     for d in dets:
@@ -439,26 +680,55 @@ def split_by_boxes(points, pixel_xy, dets, shape, depth_shape=None, intr=None,
 
 
 def find_objects_hybrid(points, pixel_xy, color_bgr, detector, near=None, far=None,
-                        depth_shape=None, intr=None, dets=None):
-    """**YOLO 로 먼저 가르고, 남은 곳은 모양으로 나눈다.**
+                        depth_shape=None, intr=None, dets=None, geometry_fallback=True,
+                        debug=False, debug_lines=None):
+    """**YOLO 로 먼저 가르고**, `geometry_fallback=True` 면 **남은 곳은 모양으로도 나눈다.**
 
     `depth_shape` 와 `intr` 를 주면 **거리값이 듬성듬성한 물체도** 위치·크기를 낸다.
     `dets` 를 미리 주면 YOLO 를 **다시 돌리지 않는다**(화면에도 그려야 하므로 한 번만 돈다).
 
-    돌려주는 것: `(물체 목록, 설명 문구, YOLO 가 찾은 것들)`
+    🛑 **`geometry_fallback` 기본은 함수 차원에서는 `True`** (기존 호출부·시험과
+    호환 유지). 하지만 `yolo_assist.py` 의 대화형 도구(`main()`)는 **기본을 꺼서
+    부른다**(2026-09-21 사용자 결정) — 자세한 이유는 `main()`의 `--geometry-fallback`
+    플래그 설명 참고.
+
+    `debug=True` 면 class 간 중복 판정 내역을 `debug_lines`(리스트를 주면 그 리스트에
+    채운다)로 돌려준다 — `suppress_cross_class_duplicates` 참고.
+
+    🛑 **돌려주는 `dets` 는 class 간 중복을 정리한 뒤의 목록이다** — 화면에 그리는
+    박스와 실제로 물체가 된 개수가 서로 다르게 보이지 않도록, 지워진 detection은
+    여기서도 빠진다.
+
+    돌려주는 것: `(물체 목록, 설명 문구, YOLO 가 찾은 것들 — 중복 정리됨)`
     """
     from segment_objects import find_objects
 
     if dets is None:
         dets = detector.detect(color_bgr) if (detector and detector.ready) else []
+    deduped_dets = []
     boxed, rest = split_by_boxes(points, pixel_xy, dets, color_bgr.shape[:2],
-                                 depth_shape=depth_shape, intr=intr)
+                                 depth_shape=depth_shape, intr=intr,
+                                 near=near, far=far, debug=debug,
+                                 debug_lines=debug_lines, dets_out=deduped_dets)
+    dets = deduped_dets
+
+    found = ", ".join("{} {:.0%}".format(d.name, d.conf) for d in dets) or "없음"
+
+    if not geometry_fallback:
+        # 평면 제거·군집화 자체를 **안 돈다** — 꺼 둔 상태에서 결과만 버리는 게
+        # 아니라 계산도 안 하는 것이 목적이다(계산 자체가 낭비이기도 하고, 화면에
+        # 안 쓸 결과를 만드느라 시간을 쓸 이유가 없다).
+        objs = list(boxed)
+        objs.sort(key=lambda o: -o.n_points)
+        guess = sum(1 for o in objs if o.estimated)
+        extra = " / 거리값이 모자라 추정한 것 {}개".format(guess) if guess else ""
+        return objs, "YOLO: {} / 모양 안전망 꺼짐(--geometry-fallback 로 켤 수 있다){}".format(
+            found, extra), dets
 
     shape_objs, _, note = find_objects(rest, near=near, far=far)
 
     objs = boxed + shape_objs
     objs.sort(key=lambda o: -o.n_points)
-    found = ", ".join("{} {:.0%}".format(d.name, d.conf) for d in dets) or "없음"
     guess = sum(1 for o in objs if o.estimated)
     extra = " / 거리값이 모자라 추정한 것 {}개".format(guess) if guess else ""
     return objs, "YOLO: {} / 모양으로 추가 {}개 ({}){}".format(
@@ -488,6 +758,19 @@ def main() -> int:
                     help="거리 사진 몇 장을 합칠지. **흰 종이컵처럼 값이 깜빡이는 물체**를 "
                          "건지는 수단이다(지어내지 않는다). 기본: 한 장 찍기는 {}장, "
                          "실시간은 1장".format(depth_stack.DEFAULT_FRAMES))
+    ap.add_argument("--geometry-fallback", action="store_true",
+                    help="YOLO가 못 찾은 나머지를 모양(geometry)으로도 잡아 화면에 "
+                         "회색 '참고용'으로 보여준다. **기본은 꺼져 있다**(2026-09-21 "
+                         "사용자 결정 — 지금 목표는 '상식적 범위'를 YOLO로 확실히 "
+                         "인식하는 것이고, 진짜 미지 형상 일반화는 페스타 이후 별도 "
+                         "과제다: ai_festa_plan.md §8-2). 켜면 잡으러 갈 후보에는 "
+                         "여전히 안 쓰인다(is_grasp_candidate가 YOLO만 신뢰) — 화면 "
+                         "참고·디버깅용으로만 켤 것")
+    ap.add_argument("--debug", action="store_true",
+                    help="class 간 중복 판정 내역을 화면·로그에 자세히 찍는다 — 예: "
+                         "'cup 73% <-> bottle 44%  containment=0.91 depth_diff=0.012m "
+                         "keep=bottle 44% reason=...'. 기본 화면이 복잡해지는 것을 "
+                         "막기 위해 평소엔 꺼 둔다")
     args = ap.parse_args()
 
     if not (args.live or args.save):
@@ -496,7 +779,7 @@ def main() -> int:
 
     import cv2
     from d405_stream import open_depth
-    from segment_objects import Tracker, size_verdict
+    from segment_objects import Tracker, size_verdict, is_grasp_candidate
     from view_d405 import colorize, put_labels, put_lines
 
     n_frames = args.frames
@@ -515,8 +798,16 @@ def main() -> int:
         print("확신 기준 {:.0%} 이상만 믿는다 (잠정값 — 이 모델 성적을 우리가 모른다)".format(
             args.conf))
     else:
-        print("⚠️ YOLO 를 못 쓴다 ({}) — **모양으로 나누기만 돈다**".format(det.why))
-    print("🛑 YOLO 로 갈아타는 것이 아니다. 배운 9종 밖은 모양 쪽이 계속 답을 낸다.")
+        print("⚠️ YOLO 를 못 쓴다 ({})".format(det.why))
+        if not args.geometry_fallback:
+            print("🛑 모양(geometry) 안전망도 꺼져 있다 — **이 상태로는 물체를 하나도 "
+                  "못 찾는다.** --geometry-fallback 를 주거나 YOLO 모델을 고칠 것.")
+    if args.geometry_fallback:
+        print("모양(geometry) 안전망 켜짐 — YOLO가 못 찾은 나머지도 화면에 참고용으로 "
+              "보여준다(잡으러 갈 후보에는 안 쓰인다).")
+    else:
+        print("🛑 모양(geometry) 안전망 꺼짐(기본값) — 지금 목표(상식적 범위)는 YOLO로 "
+              "충분하다는 2026-09-21 결정. 켜려면 --geometry-fallback.")
     if n_frames > 1:
         print("거리 사진 {}장을 합친다 — 깜빡이는 화소를 건진다(없는 값은 안 지어낸다). "
               "⚠️ 카메라가 멈춰 있을 때만 맞다.".format(n_frames))
@@ -537,14 +828,27 @@ def main() -> int:
             depth_m, color = got[-1]
             if color is None:
                 continue
-            stack_note = ""
+            # ⚠️ **`--live` 기본은 1장, `--save` 기본은 5장이다** — 지금까지 화면으로
+            #    평가한 대부분은 `--live`(1장)였고, 여러 장 합치기의 효과를 실제로 본
+            #    적이 없었다(2026-09-18 세션 18, 바깥 조언자 지적). 몇 장을 합치는지가
+            #    화면에 안 보이면 이 사실을 매번 잊는다 — 그래서 **장 수를 항상 표시**한다.
             if len(got) > 1:
                 depth_m, st = depth_stack.stack([d for d, _ in got])
                 stack_note = st["message"]
+            else:
+                single_valid = float((depth_m > 0).mean())
+                stack_note = "1장만 사용 — 값 있는 화소 {:.0%} (여러 장 합치려면 --frames 5)".format(
+                    single_valid)
             pts, pix = _to_points(depth_m, intr)
+            cross_class_debug = [] if args.debug else None
             objs, note, dets = find_objects_hybrid(
                 pts, pix, color, det, near, far,
-                depth_shape=depth_m.shape, intr=intr)
+                depth_shape=depth_m.shape, intr=intr,
+                geometry_fallback=args.geometry_fallback,
+                debug=args.debug, debug_lines=cross_class_debug)
+            if cross_class_debug:
+                for line in cross_class_debug:
+                    print(line)
             objs = tracker.update(objs)
 
             paint = colorize(depth_m, near, far)
@@ -583,29 +887,43 @@ def main() -> int:
                 cv_ = (o.center[1] * intr.fy / z + intr.ppy) * vy
                 # 번호는 **흰색**으로 쓴다. 덩어리 색(초록/빨강/파랑)과 같은 색으로 쓰면
                 # 그 위에서 안 읽힌다 — 크기 판정은 덩어리 색이 이미 말해 준다.
-                col = (255, 255, 255)
-                if o.estimated:
+                #
+                # ⚠️ **소유(누가 찾았나)와 후보(잡으러 갈 만한가)는 다른 질문이다**
+                #    (2026-09-21 사용자 결정). "모양"(geometry) 안전망은 화면에 계속
+                #    보여주되, 아직 잡으러 가는 후보로는 **믿지 않는다** — 그래서
+                #    회색으로 흐리게 표시해 "참고용" 임을 구분한다. `estimated` 는
+                #    YOLO 경로에서만 나오므로(거리값이 모자라 테두리로 추정한 경우)
+                #    이 구분과 겹치지 않는다.
+                if not is_grasp_candidate(o):
+                    col = (150, 150, 150)            # 회색 — 참고용, 후보 아님
+                elif o.estimated:
                     col = (0, 255, 255)              # 노랑 — 거리값이 모자라 추정한 것
                     hw = (o.size[0] / 2) * intr.fx / z * vx
                     hh = (o.size[1] / 2) * intr.fy / z * vy
                     cv2.rectangle(view_o, (int(cu - hw), int(cv_ - hh)),
                                   (int(cu + hw), int(cv_ + hh)), col, 2)
-                tags.append((cu, cv_, "{}번{}".format(
-                    o.track_id, " 추정" if o.estimated else ""), col))
+                else:
+                    col = (255, 255, 255)
+                tags.append((cu, cv_, "{}번{}{}".format(
+                    o.track_id, " 추정" if o.estimated else "",
+                    " 참고" if not is_grasp_candidate(o) else ""), col))
             view_o = put_labels(view_o, tags)
             view_c = put_labels(view_c, tags)
 
             n_ok = sum(1 for o in objs if size_verdict(o)[1] == "잡을만")
-            lines = ["찾은 덩어리 {}개 — 잡을만한 크기 {}개  (번호는 양쪽 그림에 같이 찍힌다)"
-                     .format(len(objs), n_ok),
-                     "초록=잡을만 / 빨강=큼 / 파랑=작음 / 노란 네모=거리값이 모자라 추정",
+            n_cand = sum(1 for o in objs if is_grasp_candidate(o))
+            lines = ["찾은 덩어리 {}개 — 잡을만한 크기 {}개 / 잡으러 갈 후보(YOLO 인식) {}개"
+                     .format(len(objs), n_ok, n_cand),
+                     "초록=잡을만 / 빨강=큼 / 파랑=작음 / 노란 네모=거리값이 모자라 추정 / "
+                     "회색 번호=모양으로만 잡힘(참고용, 후보 아님)",
                      note]
             if stack_note:
                 lines.append(stack_note)
             for o in objs[:6]:
-                lines.append("  {}번 [{}] {:.1f}x{:.1f}x{:.1f} cm  {}{}".format(
+                lines.append("  {}번 [{}] {:.1f}x{:.1f}x{:.1f} cm  {}{}{}".format(
                     o.track_id, size_verdict(o)[1], *(o.size * 100), o.source,
-                    "  ← 추정" if o.estimated else ""))
+                    "  ← 추정" if o.estimated else "",
+                    "  ⚠️ 참고용(후보 아님)" if not is_grasp_candidate(o) else ""))
             view_o = put_lines(view_o, lines)
             both = np.hstack([view_c, view_o])
 
@@ -616,10 +934,13 @@ def main() -> int:
                 if stack_note:
                     print(stack_note)
                 print(note)
+                print("잡으러 갈 후보(YOLO 인식) {}개 / 화면 참고용(모양) {}개".format(
+                    n_cand, len(objs) - n_cand))
                 for o in objs[:8]:
-                    print("  {}번 [{}] {:.1f}x{:.1f}x{:.1f} cm  거리 {:.2f} m  {}".format(
+                    print("  {}번 [{}] {:.1f}x{:.1f}x{:.1f} cm  거리 {:.2f} m  {}{}".format(
                         o.track_id, size_verdict(o)[1], *(o.size * 100),
-                        o.distance_m, o.source))
+                        o.distance_m, o.source,
+                        "  ⚠️ 참고용(후보 아님)" if not is_grasp_candidate(o) else ""))
                     if o.estimated:
                         print("        ⚠️ {}".format(o.why))
                 print("저장: {}".format(RESULTS_DIR / "yolo_{}.png".format(stamp)))

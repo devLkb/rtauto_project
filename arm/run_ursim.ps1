@@ -4,6 +4,14 @@
 # 있다(공식 이미지 기본 예시는 5900/6080만 게시해 RTDE가 막힌다).
 # 근거: docs/SIM2REAL_ROADMAP.md §9 "URSim 선행 개발 경로".
 #
+# 🛑 이미지 버전을 반드시 5.25.2로 고정한다(태그 없이 받으면 :latest가 따라와 실물
+#    UR16e 버전(PolyScope 5.25.2, docs/SIM2REAL_ROADMAP.md §4)과 어긋난다). 2026-09-21
+#    코드 리뷰 3차 URSim 실측 중 :latest(5.26.0)로 실제로 겪은 문제 — ur_rtde 1.6.5로
+#    RTDEControlInterface 연결이 "Failed to start RTDE data synchronization, before
+#    timeout"으로 계속 실패했다(읽기 전용 RTDEReceiveInterface는 됐다 — 명령 연결만
+#    깨졌다). 5.25.2로 다시 띄우니 바로 됐다 — 컨트롤러·클라이언트 라이브러리 버전
+#    호환성 문제였다.
+#
 # 펜던트 화면(웹): http://localhost:6080/vnc.html
 # ⚠️ 공식 문서 경고 — 포트를 게시하면 시뮬 로봇이 LAN에 노출된다. 방화벽 확인할 것.
 #
@@ -40,9 +48,9 @@ $runArgs = @(
 )
 
 if ($Detach) {
-    docker run -d @runArgs universalrobots/ursim_e-series
+    docker run -d @runArgs universalrobots/ursim_e-series:5.25.2
     Write-Host "뒤에서 띄웠다. 끌 때: ./arm/run_ursim.ps1 -Stop"
     Write-Host "펜던트 화면: http://localhost:6080/vnc.html"
 } else {
-    docker run -it @runArgs universalrobots/ursim_e-series
+    docker run -it @runArgs universalrobots/ursim_e-series:5.25.2
 }

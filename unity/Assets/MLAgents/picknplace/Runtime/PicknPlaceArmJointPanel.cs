@@ -58,6 +58,9 @@ namespace KDT.PicknPlaceTraining
         bool _active;
         bool _resolved;
         Vector2 _scroll;
+        /// FullReset()이 안전을 위해 Unity→UR 송신을 강제로 껐는가(P1-4, 2026-09-21).
+        /// UI가 "왜 꺼졌는지"를 보여주는 데 쓴다 — 자동으로 다시 켜지 않는다.
+        bool _resetBlockedSend;
 
         public bool IsActive => _active;
 
@@ -118,11 +121,24 @@ namespace KDT.PicknPlaceTraining
         /// 호출하면 오히려 (a) 팔이 HomeArmDeg라는 낯선 자세로 튀고 (b) 큐브가 매번 새 랜덤
         /// 위치로 스폰돼 데모가 재현되지 않는다 — 데모 리셋은 매번 같은 그림이어야 한다.
         ///
-        /// ⚠️ URSim으로 송신 중이면 이 순간이동이 그대로 URSim 목표가 된다. 브리지의 슬루
-        /// 리밋(RTAUTO_UR_MAX_DEG_PER_SEC)이 속도는 막아주지만 "움직일 필요 자체"를 없애주진
-        /// 않으므로, 초기화 전에 송신을 끄는 쪽이 안전하다.
+        /// ⚠️ URSim/실물로 송신 중이면 이 순간이동이 그대로 목표가 된다(P1-4, 2026-09-21
+        /// 코드 리뷰로 강제 차단 추가). 브리지의 슬루 리밋(RTAUTO_UR_MAX_DEG_PER_SEC)이
+        /// 속도는 막아주지만 "움직일 필요 자체"를 없애주진 않는다 — 리셋 직전 자세와
+        /// Scene 초기 자세가 다르면, 리셋 버튼 하나로 실물 팔이 순간이동급 목표를
+        /// 받아 그 차이만큼 빠르게 움직이려 든다. 그래서 송신 중이면 **리셋을 거절하지
+        /// 않고, 대신 송신부터 끈 뒤** 리셋한다 — 화면(Unity)만 되돌리고 실물은 그
+        /// 순간 목표를 받지 않는다. 다시 보내려면 사람이 명시적으로 다시 켜야 한다.
         public void FullReset()
         {
+            if (urSender != null && urSender.sendEnabled)
+            {
+                urSender.sendEnabled = false;
+                _resetBlockedSend = true;
+                Debug.LogWarning(
+                    "[PicknPlaceArmJointPanel] 초기화 버튼을 눌러 Unity→UR 송신을 껐다 — "
+                    + "리셋으로 팔이 순간이동하면 그 목표가 그대로 실물/URSim에 나갈 수 "
+                    + "있어서다. 다시 보내려면 'Unity→URSim' 버튼을 직접 눌러야 한다.");
+            }
             if (fistButton != null) fistButton.SetFist(false);
             for (int i = 0; i < _joints.Length; i++)
             {
@@ -289,6 +305,15 @@ namespace KDT.PicknPlaceTraining
             GUI.color = previous;
             if (!live)
                 GUILayout.Label("ur_rtde_bridge.py --ip --echo-to-unity 필요");
+            // 리셋 버튼이 안전을 위해 송신을 껐다면, 왜 꺼졌는지 화면에서 바로 보이게
+            // 한다 — 조용히 꺼져 있으면 "왜 안 움직이지"가 된다(P1-4, 2026-09-21).
+            if (_resetBlockedSend && !toUrsim)
+            {
+                Color warn = GUI.color;
+                GUI.color = new Color(1f, 0.65f, 0f);
+                GUILayout.Label("⚠ 초기화 때문에 Unity→URSim 송신이 꺼졌다 — 다시 켜려면 위 버튼을 누를 것");
+                GUI.color = warn;
+            }
         }
 
         /// 브리지(arm/ur_rtde_bridge.py) 실행/중지 버튼. 터미널을 따로 열고 venv를 켜는
@@ -310,10 +335,41 @@ namespace KDT.PicknPlaceTraining
 
         void SetDirection(bool toUrsim, bool fromUrsim)
         {
-            // 방향 전환 순간에 슬라이더가 낡은 값을 들고 있으면 URSim이 그 값으로 튄다 —
-            // 켜기 직전에 현재 자세로 맞춰서 이동량을 0에서 시작하게 한다(README의
-            // "실물 송신 켜기 전 중립 자세" 절차와 같은 이유).
-            if (toUrsim) SyncFromCurrentPose();
+            // 방향 전환 순간에 슬라이더가 낡은 값을 들고 있으면 URSim/실물이 그 값으로
+            // 튄다 — 켜기 직전에 현재 자세로 맞춰서 이동량을 0에서 시작하게 한다.
+            //
+            // ⚠️ 2026-09-21 코드 리뷰(P1-4) — SyncFromCurrentPose()는 이름과 달리
+            // **Unity 자신의 xDrive.target**(우리가 마지막으로 명령한 값)을 읽지, 로봇이
+            // 실제로 있는 자리를 읽지 않는다. 실물 관절 피드백(urReceiver)이 살아
+            // 있으면 그걸 우선 쓴다 — 명령각과 실제각이 벌어져 있는 상태로 송신을 켜면
+            // 그 차이만큼 실물이 갑자기 움직이려 들기 때문이다. 피드백이 없거나
+            // 오래됐으면(!IsFresh) 기존처럼 Unity 자신의 값으로 물러선다 — receiver가
+            // 없는 URSim 단독 개발 흐름(echo 없이 명령만 보내보는 것)을 막지 않기 위해서다.
+            if (toUrsim)
+            {
+                if (urReceiver != null && urReceiver.IsFresh && urReceiver.GetAngles(_actualDeg))
+                {
+                    for (int i = 0; i < _joints.Length && i < _actualDeg.Length; i++)
+                    {
+                        if (_joints[i] == null) continue;
+                        float deg = Mathf.Clamp(_actualDeg[i], _lowerLimitDeg[i], _upperLimitDeg[i]);
+                        _targetDeg[i] = deg;
+                        var drive = _joints[i].xDrive;
+                        drive.target = deg;
+                        _joints[i].xDrive = drive;
+                    }
+                }
+                else
+                {
+                    Debug.LogWarning(
+                        "[PicknPlaceArmJointPanel] 실물/URSim의 실제각 피드백이 없거나 "
+                        + "오래돼서(!IsFresh), Unity 자신의 마지막 명령각으로만 맞추고 "
+                        + "송신을 켠다 — 명령각과 실제각이 벌어져 있다면 켜는 순간 그 "
+                        + "차이만큼 움직이려 들 수 있다.");
+                    SyncFromCurrentPose();
+                }
+                _resetBlockedSend = false;  // 사람이 명시적으로 다시 켰다 — 차단 표시를 지운다
+            }
             if (urSender != null) urSender.sendEnabled = toUrsim;
             if (urTwinDriver != null) urTwinDriver.driveEnabled = fromUrsim;
         }
