@@ -99,7 +99,12 @@ def main(argv=None) -> int:
     print("이 창은 보기만 한다 — 팔에 명령을 보내지 않는다.")
 
     fig = plt.figure(figsize=(7, 6))
-    fig.canvas.manager.set_window_title("UR16e + DG-5F — 지금 자세 ({})".format(ip))
+    # ⚠️ **창 안의 글씨는 영어로 쓴다.** matplotlib 기본 글꼴에 한글이 없어 전부
+    # 네모(□)로 깨진다(2026-09-22 실측: "Glyph 49552 missing from current font").
+    # 한글 글꼴을 찾아 쓰는 방법도 있지만, 그러면 그 글꼴이 깔린 컴퓨터에서만
+    # 제대로 보인다 — 새 머신에서 바로 돌아가야 한다는 원칙 2에 어긋난다.
+    # 설명은 터미널에 한글로 찍으므로(위 print) 읽는 데 문제 없다.
+    fig.canvas.manager.set_window_title("UR16e + DG-5F  current pose ({})".format(ip))
     ax = fig.add_subplot(111, projection="3d")
     reach = float(args.reach)
 
@@ -109,9 +114,9 @@ def main(argv=None) -> int:
                 "-o", linewidth=4, markersize=6, color="#1f77b4")
         # 손바닥은 따로 크게 — 파지 직전 자세에서 중요한 건 여기다
         ax.scatter(points[-1, 0], points[-1, 1], points[-1, 2],
-                   s=140, color="#d62728", depthshade=False, label="손바닥")
+                   s=140, color="#d62728", depthshade=False, label="palm (hand center)")
         ax.scatter([0], [0], [0], s=90, color="#2ca02c",
-                   depthshade=False, label="로봇 밑동")
+                   depthshade=False, label="robot base")
         # 바닥 격자
         grid = np.linspace(-reach, reach, 9)
         for g in grid:
@@ -126,8 +131,8 @@ def main(argv=None) -> int:
         ax.set_zlabel("z (m)")
         palm = points[-1]
         ax.set_title(
-            "손바닥 위치  x={:.3f}  y={:.3f}  z={:.3f} (m)\n"
-            "관절각  [{}] (도)".format(
+            "palm  x={:.3f}  y={:.3f}  z={:.3f} (m)\n"
+            "joints  [{}] (deg)".format(
                 palm[0], palm[1], palm[2],
                 ", ".join("{:.0f}".format(np.degrees(v)) for v in q6),
             ),

@@ -152,10 +152,23 @@ def main():
     ap.add_argument("--echo-ip", default=UNITY_IP, help="--echo-to-unity 대상 IP")
     ap.add_argument("--echo-port", type=int, default=PORT_UR_ARM_SIM,
                     help=f"--echo-to-unity 대상 포트 (기본 {PORT_UR_ARM_SIM})")
+    ap.add_argument("--echo-only", action="store_true",
+                    help="**읽기 전용.** 실제 관절각을 읽어 Unity로만 보내고, 로봇에 "
+                         "명령은 보내지 않는다(제어 연결 자체를 안 잡는다). Unity 명령 "
+                         "수신 포트도 안 연다. 다른 프로그램(arm/approach_object.py 등)이 "
+                         "로봇을 움직이는 동안 그 움직임을 Unity에서 구경할 때 쓴다 — "
+                         "제어 연결은 한 번에 하나만 잡을 수 있어서, 이 모드가 없으면 "
+                         "둘이 서로 다툰다")
     args = ap.parse_args()
 
     args.ip = resolve_ur_ip(args.ip)
     dry = args.ip is None
+    if args.echo_only:
+        # 읽기 전용은 곧 "Unity로 보내기"가 목적이다 — 따로 켜라고 하면 잊는다.
+        args.echo_to_unity = True
+        if dry:
+            print("[오류] --echo-only 는 팔에 연결해야 의미가 있다 — --ip 를 같이 줄 것.")
+            return
 
     if args.max_step is None:
         args.max_step = args.max_deg_per_sec / max(1e-6, args.hz)
@@ -165,13 +178,17 @@ def main():
     # UDP 수신 소켓을 RTDE 연결보다 먼저 잡는다 — dg5f_sdk_bridge.py와 같은 이유
     # (실패는 로봇을 건드리기 전에 나야 한다).
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        sock.bind(("0.0.0.0", args.listen))
-    except OSError as e:
-        sock.close()
-        print(f"[오류] UDP :{args.listen} 바인드 실패 — {e}")
-        print("       같은 포트를 듣는 브리지가 이미 떠 있을 가능성이 높다.")
-        return
+    # 읽기 전용(--echo-only)은 **받지 않으므로 바인드하지 않는다.** 바인드하면 진짜
+    # 브리지가 이미 떠 있을 때 포트를 뺏거나 실패한다 — 구경만 하려고 띄운 것이
+    # 남의 통신을 끊으면 안 된다. UDP는 바인드 없이도 보낼 수 있다.
+    if not args.echo_only:
+        try:
+            sock.bind(("0.0.0.0", args.listen))
+        except OSError as e:
+            sock.close()
+            print(f"[오류] UDP :{args.listen} 바인드 실패 — {e}")
+            print("       같은 포트를 듣는 브리지가 이미 떠 있을 가능성이 높다.")
+            return
     # 타임아웃을 --hz 절반 이하로 잡는다 — 이 값이 곧 idle 상태(Unity 명령 없음, 펜던트
     # 조그만 있는 상태)에서 echo_if_due()가 실제로 체크되는 주기라, --hz보다 크면
     # echo가 목표 Hz를 못 따라간다.
@@ -193,14 +210,21 @@ def main():
         # 제어는 모드·전원 상태를 탄다 — 제어 실패로 프로세스를 죽이지 않는 이유는
         # connect_control() 독스트링 참고(순서 의존 제거).
         rtde_r = rtde_receive.RTDEReceiveInterface(args.ip)
-        rtde_c = connect_control(rtde_control_mod, args.ip)
-        print("[연결] RTDE 읽기 접속 완료 / 제어 "
+        # 읽기 전용이면 **제어 연결을 아예 안 잡는다.** ur_rtde의 제어 경로는 로봇에
+        # 컨트롤 스크립트를 올리는 방식이라 한 번에 하나만 가능하다 — 여기서 잡으면
+        # 실제로 팔을 움직이려는 쪽(arm/approach_object.py)이 못 붙는다.
+        rtde_c = None if args.echo_only else connect_control(rtde_control_mod, args.ip)
+        if args.echo_only:
+            print("[연결] RTDE **읽기 전용** 접속 완료 — 로봇에 명령을 보내지 않는다.")
+        else:
+            print("[연결] RTDE 읽기 접속 완료 / 제어 "
               + ("접속 완료" if rtde_c is not None
                  else f"대기 — {CONTROL_RETRY_SEC:g}초마다 자동 재시도합니다. "
                       "펜던트를 Remote Control로 바꾸면 브리지 재시작 없이 붙습니다."))
 
-    print(f"[수신] UDP :{args.listen} 대기 — Unity UrArmSender 송신 필요"
-          + (" (드라이런: RTDE 송신 없음)" if dry else ""))
+    if not args.echo_only:
+        print(f"[수신] UDP :{args.listen} 대기 — Unity UrArmSender 송신 필요"
+              + (" (드라이런: RTDE 송신 없음)" if dry else ""))
     if args.echo_to_unity and not dry:
         print(f"[echo] 실제 관절각을 {args.hz:g} Hz로 Unity({args.echo_ip}:{args.echo_port})에 "
               "계속 보냅니다 — Unity가 명령을 안 보내도(펜던트로 직접 조그해도) 동작합니다.")
@@ -298,6 +322,11 @@ def main():
 
     try:
         while True:
+            if args.echo_only:
+                # 받을 것이 없다 — 정해진 주기로 읽어서 Unity로 보내기만 한다.
+                echo_if_due(time.time())
+                time.sleep(min(0.2, period / 2))
+                continue
             try:
                 data, addr = sock.recvfrom(4096)
                 if args.expect_from is not None and addr[0] != args.expect_from:

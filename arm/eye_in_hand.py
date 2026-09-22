@@ -152,6 +152,8 @@ class MountNotValidatedError(RuntimeError):
 
 def require_validated_mount_for_physical_move(
     mount: Optional[CameraMount] = None,
+    ip: Optional[str] = None,
+    allow_unvalidated_on_sim: bool = False,
 ) -> CameraMount:
     """**실물 자동 이동** 경로가 D405 좌표를 쓰기 전 반드시 통과해야 하는 관문
     (P1-5, 2026-09-21 코드 리뷰).
@@ -163,9 +165,25 @@ def require_validated_mount_for_physical_move(
     않고 예외를 낸다 — hand-eye 검증(BACKLOG Q2/Q3)이 끝나 사람이 `.env`의
     `RTAUTO_D405_MOUNT_VALIDATED=1`로 직접 바꾸기 전까지는 실물 자동 이동을 열지
     않는다는 정책을 코드로 강제한다.
+
+    **가짜 팔에서의 예외** (2026-09-22 사용자 결정): `allow_unvalidated_on_sim=True`
+    이고 `ip`가 config의 `UR_SIM_IPS`(기본 127.0.0.1/localhost)에 있으면 통과시킨다.
+    가짜 팔에는 부딪힐 물건도 다칠 사람도 없으므로, 장착값을 재기 전에 움직임
+    경로를 확인하는 것이 막는 것보다 낫다. **둘 중 하나라도 빠지면 막는다** —
+    모르는 주소는 실물로 본다.
     """
     mount = mount or CameraMount.from_config()
     if not mount.validated:
+        # 🛑 **가짜 팔(URSim)에서만 열리는 예외** (2026-09-22 사용자 결정).
+        # 장착값을 아직 안 쟀을 때 실물은 그대로 막되, 가짜 팔에서는 움직임 경로
+        # (moveJ → moveL → 도착 확인)를 확인할 수 있어야 하기 때문이다. 열리려면
+        # **두 가지가 동시에** 성립해야 한다:
+        #   ① 사람이 명시적으로 허용을 켰다(allow_unvalidated_on_sim)
+        #   ② 그 주소가 가짜 팔이다(config의 UR_SIM_IPS)
+        # 둘 중 하나라도 빠지면 예전처럼 막는다 — 특히 ②가 없으면 이 예외는
+        # 실물에서 아무 의미가 없다(모르는 주소는 실물로 본다).
+        if allow_unvalidated_on_sim and cfg.is_sim_arm(ip):
+            return mount
         raise MountNotValidatedError(
             "손목 카메라 장착값이 아직 실물로 검증되지 않았다"
             "(RTAUTO_D405_MOUNT_VALIDATED=0) — 실물 자동 이동에는 쓸 수 없다. "
@@ -173,6 +191,9 @@ def require_validated_mount_for_physical_move(
             "사람이 직접 .env에서 1로 바꿔야 한다. 좌표 계산·시각화만 필요하면 "
             "camera_to_base()/points_to_base()를 그대로 쓸 것 — 이 함수는 실물 "
             "이동 경로 전용이다."
+            + ("\n\n(허용을 켰지만 주소 '{}'가 가짜 팔 목록(RTAUTO_UR_SIM_IPS)에 "
+               "없다 — 모르는 주소는 실물로 보고 막는다.)".format(ip)
+               if allow_unvalidated_on_sim else "")
         )
     return mount
 
@@ -214,6 +235,41 @@ def points_to_base(points_cam, tool0_pose6, mount=None):
     t = camera_to_base(tool0_pose6, mount)
     moved = pts @ t[:3, :3].T + t[:3, 3]
     return moved, mount.warning()
+
+
+def points_to_tcp(points_cam, mount=None):
+    """카메라가 본 점들을 **팔 끝(tool0) 기준**으로만 옮긴다 — 중간 단계.
+
+    `points_to_base()`가 한 번에 하는 일의 **앞쪽 절반**이다. 왜 따로 뺐나:
+    좌표가 틀렸을 때 **어느 단계에서 틀렸는지** 봐야 고칠 수 있기 때문이다
+    (카메라 장착값이 틀린 것인지, 팔 자세가 틀린 것인지).
+    """
+    mount = mount or CameraMount.from_config()
+    pts = np.asarray(points_cam, dtype=float).reshape(-1, 3)
+    t = mount.matrix()
+    return pts @ t[:3, :3].T + t[:3, 3]
+
+
+def points_camera_tcp_base(points_cam, tool0_pose6, mount=None):
+    """카메라 기준 점들을 **세 단계 전부** 돌려준다 — 로그로 확인하려는 것.
+
+    돌려주는 것: `(카메라 기준, 팔 끝 기준, 로봇 밑동 기준, 경고 또는 None)`.
+
+    화면에 이렇게 찍으라고 만든 것이다::
+
+        Camera XYZ : [...]
+        TCP XYZ    : [...]
+        Base XYZ   : [...]
+
+    한 함수 안에서 뒤섞어 계산하면 틀렸을 때 어디가 틀렸는지 알 수 없다.
+    `tool0_pose6`에 대한 주의사항은 `camera_to_base()` 참고 — 활성 TCP 자세를
+    그대로 넣으면 안 된다.
+    """
+    mount = mount or CameraMount.from_config()
+    pts = np.asarray(points_cam, dtype=float).reshape(-1, 3)
+    in_tcp = points_to_tcp(pts, mount)
+    in_base, warn = points_to_base(pts, tool0_pose6, mount)
+    return pts, in_tcp, in_base, warn
 
 
 def tool0_pose_from_joints(q6: Sequence[float]) -> Tuple[float, float, float, float, float, float]:

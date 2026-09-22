@@ -774,7 +774,7 @@ class ArmMover:
                 approach_speed_mps: Optional[float] = None) -> MoveResult:
         """계산한 자세로 움직이고 **멈춘다.** 갈 수 없거나 관측이 오래됐으면 움직이기 전에 거절한다.
 
-        `max_age_sec`를 안 주면 `.env`의 `RTAUTO_MAX_POSE_AGE_SEC`(기본 2초)를 쓴다.
+        `max_age_sec`를 안 주면 `.env`의 `RTAUTO_MAX_POSE_AGE_SEC`(기본 10초)를 쓴다.
         **실제 이동 직전(여기)에서만 나이를 강제한다** — `plan()`은 계산만 하고 움직이지
         않으므로 저장된 자세 분석·재현 작업을 방해하지 않게 그대로 둔다(P4).
 
@@ -926,6 +926,11 @@ def _matrix_to_quat(rot: np.ndarray) -> Tuple[float, float, float, float]:
         x, y, z = quat
     norm = math.sqrt(w * w + x * x + y * y + z * z)
     return (w / norm, x / norm, y / norm, z / norm)
+
+
+#: 공개 이름. 다른 모듈(`arm/pregrasp_planner.py`)이 회전 → 쿼터니언 변환을 다시
+#: 만들지 않고 이것을 쓴다(원칙 1 — 같은 계산을 두 번 타이핑하지 않는다).
+matrix_to_quat = _matrix_to_quat
 
 
 def main(argv=None) -> int:

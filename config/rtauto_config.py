@@ -448,6 +448,23 @@ def d405_mount_measured():
 D405_MOUNT_VALIDATED = _env("RTAUTO_D405_MOUNT_VALIDATED", "0") == "1"
 
 
+#: **어느 주소가 가짜 팔(URSim)인가.** 실물 컨트롤박스는 이 목록에 절대 안 들어간다
+#: (실물은 LAN 주소를 쓰고, 자기 자신(loopback)에 있을 수가 없다).
+#:
+#: 왜 필요한가: 손목 카메라 장착값을 아직 안 쟀을 때 **실물은 못 움직이게 막되,
+#: 가짜 팔에서는 움직임 경로를 확인할 수 있어야** 하기 때문이다(2026-09-22 사용자
+#: 결정). 막는 쪽은 `arm/eye_in_hand.require_validated_mount_for_physical_move()`다.
+#: 다른 컴퓨터에서 URSim을 돌린다면 그 주소를 여기에 추가한다.
+UR_SIM_IPS = tuple(
+    v.strip().lower() for v in _env("RTAUTO_UR_SIM_IPS", "127.0.0.1,localhost").split(",")
+    if v.strip())
+
+
+def is_sim_arm(ip):
+    """이 주소가 **가짜 팔**인가. 모르면 False — 모를 때는 실물로 보고 막는 쪽이 안전하다."""
+    return str(ip or "").strip().lower() in UR_SIM_IPS
+
+
 def d405_mount_validated():
     """`arm/eye_in_hand.py`의 실물 자동 이동 관문(`require_validated_mount_for_physical_move`)이
     보는 값. 좌표 계산·시각화는 이 값과 무관하게 그대로 동작한다 — 실물 이동 경로에서만 막는다."""
@@ -469,7 +486,15 @@ def d405_mount_validated():
 # 강제한다.** --plan-only 계산이나 저장된 자세 파일 분석(ArmMover.plan 단독 호출)은
 # "그 자세로 지금 팔을 움직일 것"이 아니므로 막지 않는다 — 나이 검사가 분석·재현
 # 작업을 방해하면 안 된다.
-MAX_POSE_AGE_SEC = float(_env("RTAUTO_MAX_POSE_AGE_SEC", "2.0"))
+#
+# 🛑 **2026-09-22: 2.0 → 10.0 으로 늘렸다** (사용자 지시). 왜 2초가 너무 빡빡했나:
+# 사진을 찍고 팔이 움직이기 시작할 때까지 사이에 **사람이 승인하는 단계**가 있다
+# (arm/approach_object.py 의 "이 자리로 팔을 보낼까? [y/N]"). 사람이 화면의 좌표를
+# 읽고 판단하는 데 2초는 모자라서, 정상 절차인데도 "관측이 너무 오래됐다"로 거절됐다.
+# 물체는 사람이 놓아둔 채 가만히 있으므로 10초 안에 움직일 일은 없다.
+# ⚠️ 이 값이 커질수록 "그 사이 물체가 옮겨갔을 위험"도 같이 커진다 — 사람이 물체를
+# 옮기며 반복하는 시연(--watch)에서는 오히려 줄여야 할 수도 있다. 실물에서 재조정할 것.
+MAX_POSE_AGE_SEC = float(_env("RTAUTO_MAX_POSE_AGE_SEC", "10.0"))
 
 D405_CALIB_WIDTH = int(_env("RTAUTO_D405_CALIB_WIDTH", "1280"))
 D405_CALIB_HEIGHT = int(_env("RTAUTO_D405_CALIB_HEIGHT", "720"))
@@ -477,6 +502,82 @@ D405_FX = float(_env("RTAUTO_D405_FX", "0"))
 D405_FY = float(_env("RTAUTO_D405_FY", "0"))
 D405_CX = float(_env("RTAUTO_D405_CX", "0"))
 D405_CY = float(_env("RTAUTO_D405_CY", "0"))
+
+# ---------------- 물체 앞까지 자율 접근 (2026-09-22, 11월 시연 경로) ----------------
+# 카메라가 본 물체 앞 **파지 직전 위치(pre-grasp)** 까지 팔이 스스로 가는 경로에서
+# 쓰는 값들이다. 이 경로는 잡지 않는다 — 물체 앞에 손을 벌린 채 서는 데까지다.
+#
+# 쓰는 곳: vision/d405/object_pose.py (물체 위치·방향 재기),
+#          arm/pregrasp_planner.py (파지 직전 자세 만들기 + 안전 검사),
+#          arm/approach_object.py (전체를 한 번에 돌리는 도구).
+#
+# ⚠️ 아래 숫자는 **전부 잠정값**이다(UR_MAX_DEG_PER_SEC·ARRIVAL_TOLERANCE_DEG와 같은
+#    사정 — 실물에서 재 보고 고칠 것). 코드 어디에도 다시 적지 않는다(원칙 1).
+
+#: 물체 표면(정확히는 아래 잡는 자리)에서 **얼마나 떨어진 곳에 설 것인가** [m].
+#: 여기가 "파지 직전 위치"다. 사용자 요구 범위 100~150 mm 의 가운데를 기본으로 둔다.
+PREGRASP_DISTANCE_M = float(_env("RTAUTO_PREGRASP_DISTANCE_M", "0.12"))
+
+#: 파지 직전 위치로 들어갈 때 **마지막 몇 cm 만 직선으로** 움직인다 [m].
+#: 팔은 (파지 직전 위치 - 다가가는 방향 × 이 값)까지 관절 이동으로 간 뒤, 이 구간만
+#: 직선 이동한다(`arm/prepose_to_joints.py`의 move_to). 중간 경로를 짧고 예측
+#: 가능하게 만드는 것이 목적이다.
+APPROACH_CLEARANCE_M = float(_env("RTAUTO_APPROACH_CLEARANCE_M", "0.05"))
+
+#: 손바닥 원점에서 **손이 물체를 감싸는 자리의 가운데**까지 [m], 손바닥 기준 (x, y, z).
+#: 손바닥 기준 축: z = 손가락이 뻗는 쪽, x = 손바닥이 바라보는 쪽, y = 엄지↔새끼.
+#:
+#: ⚠️ **이건 하드코딩이 아니라 손의 물리 치수다** — 다만 같은 값이
+#:    `superdex/scripts/geometric_pose_score.py`의 `GRASP_CENTER_PALM`에도 있다
+#:    (그쪽이 시뮬레이터에서 잰 원본이다). 두 파이썬 환경이 갈라져 있어
+#:    (파이썬 3.12 vs 3.10.11, BACKLOG C-4) 지금은 import 로 합칠 수 없다.
+#:    **손 치수를 고치면 두 곳을 같이 고쳐야 한다.** 환경이 합쳐지면 한쪽을 지운다.
+DG5F_GRASP_CENTER_PALM_M = tuple(
+    float(v) for v in _env("RTAUTO_DG5F_GRASP_CENTER_PALM_M", "0.0356,0.0007,0.0426").split(","))
+
+#: 잡는 자리를 감싸는 공의 반지름 [m]. 위와 같은 출처(`GRASP_RADIUS_M`).
+DG5F_GRASP_RADIUS_M = float(_env("RTAUTO_DG5F_GRASP_RADIUS_M", "0.0447"))
+
+# --- 안전 한계: 이 밖으로 나가는 목표는 아예 만들지 않는다 ---
+# 비전이 잠깐 틀렸다고 팔이 멀리 날아가면 안 된다. 아래 검사는 전부
+# `arm/pregrasp_planner.py`의 `check_target()` 한 군데에서만 한다.
+
+#: 로봇 밑동(base_link) 기준으로 **물체가 있어도 되는 상자**의 최소·최대 [m].
+#: x, y, z 각각. UR16e 리치가 900 mm 이므로 그보다 좁게 잡아 둔다.
+WORKSPACE_MIN_M = tuple(
+    float(v) for v in _env("RTAUTO_WORKSPACE_MIN_M", "-0.75,-0.75,-0.10").split(","))
+WORKSPACE_MAX_M = tuple(
+    float(v) for v in _env("RTAUTO_WORKSPACE_MAX_M", "0.75,0.75,0.90").split(","))
+
+#: 밑동에서 목표까지의 직선 거리 한계 [m]. 상자만으로는 모서리가 리치를 넘는다.
+WORKSPACE_MAX_RADIUS_M = float(_env("RTAUTO_WORKSPACE_MAX_RADIUS_M", "0.85"))
+
+#: 밑동에 너무 가까운 목표는 팔이 자기 몸과 부딪힌다 — 이보다 가까우면 거절 [m].
+WORKSPACE_MIN_RADIUS_M = float(_env("RTAUTO_WORKSPACE_MIN_RADIUS_M", "0.25"))
+
+#: **한 번에 움직여도 되는 최대 거리** [m]. 지금 손끝 위치에서 목표까지가 이보다
+#: 멀면 거절한다. 비전이 한 번 크게 틀렸을 때 팔이 방을 가로지르는 것을 막는다.
+MAX_STEP_M = float(_env("RTAUTO_MAX_STEP_M", "0.40"))
+
+#: 물체 인식 확신이 이보다 낮으면 움직이지 않는다 (0~1).
+MIN_DETECT_CONFIDENCE = float(_env("RTAUTO_MIN_DETECT_CONFIDENCE", "0.40"))
+
+#: 물체 하나에 거리값(점)이 이보다 적으면 위치를 믿지 않는다.
+MIN_OBJECT_POINTS = int(_env("RTAUTO_MIN_OBJECT_POINTS", "60"))
+
+#: 잡을 수 있다고 보는 물체 크기 [m] — 가장 긴 변 기준. 손 벌림 폭에서 왔다.
+OBJECT_MIN_SIZE_M = float(_env("RTAUTO_OBJECT_MIN_SIZE_M", "0.02"))
+OBJECT_MAX_SIZE_M = float(_env("RTAUTO_OBJECT_MAX_SIZE_M", "0.16"))
+
+#: 물체의 **가장 긴 축이 위(+Z)와 이루는 각도** [도]로 "서 있다/누워 있다"를 가른다.
+#: 이 각도보다 작으면 서 있는 것, `OBJECT_LYING_MAX_TILT_DEG`보다 크면 누운 것,
+#: 사이면 기울어진 것으로 본다.
+OBJECT_STANDING_MAX_TILT_DEG = float(_env("RTAUTO_OBJECT_STANDING_MAX_TILT_DEG", "30"))
+OBJECT_LYING_MAX_TILT_DEG = float(_env("RTAUTO_OBJECT_LYING_MAX_TILT_DEG", "60"))
+
+#: 가장 긴 축과 두 번째 축의 길이 비가 이보다 작으면 **방향을 못 정한다**고 본다
+#: (원통·공처럼 돌려도 같은 모양 — 주축이 하나로 정해지지 않는다).
+OBJECT_AXIS_RATIO_MIN = float(_env("RTAUTO_OBJECT_AXIS_RATIO_MIN", "1.25"))
 
 # 팔+손 결합 URDF — **손 관절 20개의 "순서"의 유일한 정본**이다.
 # contracts/grasp_prepose.py가 이 파일을 읽어 관절 이름 순서를 얻는다. 관절 이름 목록을

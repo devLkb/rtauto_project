@@ -144,6 +144,38 @@ class PhysicalMoveValidationGateTests(unittest.TestCase):
         got = require_validated_mount_for_physical_move(m)
         self.assertIs(got, m)
 
+    # -- 가짜 팔(URSim) 예외 — 2026-09-22 사용자 결정 --------------------
+    # 장착값을 아직 안 쟀을 때도 **가짜 팔에서는** 움직임 경로를 확인할 수 있어야
+    # 한다. 다만 그 예외가 실물로 새면 안 되므로, 아래 네 시험이 경계를 못박는다.
+
+    def test_sim_arm_with_explicit_opt_in_passes(self):
+        """가짜 팔 주소 + 사람이 명시적으로 켬 → 통과."""
+        m = mount(measured=False, validated=False)
+        got = require_validated_mount_for_physical_move(
+            m, ip="127.0.0.1", allow_unvalidated_on_sim=True)
+        self.assertIs(got, m)
+
+    def test_sim_arm_without_opt_in_is_still_rejected(self):
+        """주소가 가짜 팔이어도 **사람이 안 켰으면** 막는다 — 기본은 막는 쪽이다."""
+        m = mount(measured=False, validated=False)
+        with self.assertRaises(MountNotValidatedError):
+            require_validated_mount_for_physical_move(m, ip="127.0.0.1")
+
+    def test_real_arm_with_opt_in_is_still_rejected(self):
+        """🛑 **가장 중요한 시험** — 허용을 켜도 실물 주소면 막아야 한다."""
+        m = mount(measured=False, validated=False)
+        with self.assertRaises(MountNotValidatedError) as ctx:
+            require_validated_mount_for_physical_move(
+                m, ip="192.168.0.11", allow_unvalidated_on_sim=True)
+        self.assertIn("가짜 팔 목록", str(ctx.exception))
+
+    def test_unknown_address_is_treated_as_real(self):
+        """주소를 모르면(None) 실물로 본다 — 모를 때 여는 쪽으로 기울면 안 된다."""
+        m = mount(measured=False, validated=False)
+        with self.assertRaises(MountNotValidatedError):
+            require_validated_mount_for_physical_move(
+                m, ip=None, allow_unvalidated_on_sim=True)
+
     def test_calc_and_viz_are_unaffected_by_validated_flag(self):
         """실물 이동 관문과 무관하게, 좌표 계산 자체는 검증 여부를 안 본다."""
         unvalidated = mount(xyz=(0.05, 0, 0), validated=False)
