@@ -141,7 +141,8 @@ def observe(stream, detector, frames: int, near: float, far: float,
     때문에 느려지고, 시간 다듬기가 매번 처음부터 다시 찬다.
 
     고르는 기준: **잡으러 갈 후보**(`is_grasp_candidate` — YOLO 가 찾은 것만) 중에서
-    **가장 가까운 것**. `want_name` 을 주면 그 이름이 들어간 것만 본다.
+    **가장 가까운 것**. `want_name` 을 주면 그 이름이 들어간 것만 본다 — 콤마로 여러
+    이름을 나열하면(예: "cup,bottle") **그중 하나라도 들어간 것**을 후보로 본다.
     """
     import depth_stack
     from segment_objects import is_grasp_candidate
@@ -171,7 +172,11 @@ def observe(stream, detector, frames: int, near: float, far: float,
     pairs = [(from_object_cloud(o, frame=FRAME_CAMERA), o)
              for o in objs if is_grasp_candidate(o)]
     if want_name:
-        pairs = [pc for pc in pairs if want_name.lower() in pc[0].label.lower()]
+        # 콤마로 여러 이름을 주면 그중 하나라도 라벨에 들어가면 후보로 본다
+        # (예: "cup,bottle" — 컵이든 병이든 둘 다 허용, 나머지는 제외).
+        wanted = [w.strip().lower() for w in want_name.split(",") if w.strip()]
+        pairs = [pc for pc in pairs
+                 if any(w in pc[0].label.lower() for w in wanted)]
     view = dict(color=color, depth_m=depth_m, intr=intr, dets=tuple(dets))
     if not pairs:
         return Observation(stamp, None, note=note, **view)
@@ -473,7 +478,8 @@ def main(argv=None) -> int:
     ap.add_argument("--ip", nargs="?", const="", default=None,
                     help="팔 IP. 값 없이 주면 .env 의 RTAUTO_UR_IP (기본 URSim)")
     ap.add_argument("--target", default=None,
-                    help="이 이름이 들어간 물체만 고른다(예: cup). 기본은 가장 가까운 것")
+                    help="이 이름이 들어간 물체만 고른다(예: cup, 또는 콤마로 여러 개 "
+                         "— cup,bottle). 기본은 후보 전부 중 가장 가까운 것")
     ap.add_argument("--watch", action="store_true",
                     help="계속 반복한다 — 물체를 옮기면 다시 찾아간다. Ctrl+C 로 끝낸다")
     ap.add_argument("--yes", action="store_true",
