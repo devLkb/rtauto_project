@@ -33,10 +33,26 @@ def load(path):
     return d.pose.to_numpy(), img, world
 
 
+def load_d3(path):
+    """D405 녹화(`--camera d405`)면 관절 입체 위치(장면x21x3, m, 못 읽은 것은 NaN). 아니면 None."""
+    import pandas as pd
+    d = pd.read_csv(path)
+    if "d30_x" not in d.columns:
+        return None
+    d = d[(d.detected == 1) & (d.pose != "-")]
+    return np.stack([d[[f"d3{i}_x", f"d3{i}_y", f"d3{i}_z"]].to_numpy(dtype=float)
+                     for i in range(21)], axis=1)
+
+
+#: 엄지·중지 값 계산에 쓰는 관절 — D405 에서 이 중 하나라도 깊이를 못 읽은 장면은 뺀다.
+NEEDED = sorted({0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 13, 17})
+
+
 def features(lm):
     """한 장면의 후보 값들. 이름 → 값."""
     out = {}
-    out["opp_dist(현재)"] = A._thumb_opposition(lm)
+    out["대향량(현재)"] = A.thumb_opp_amount_lm(lm)
+    out["opp_dist(옛)"] = A._thumb_opposition(lm)
     out["thumb_cmc_abd(현재)"] = np.degrees(A._thumb_abduction(lm))
     for k, v in A.thumb_features(lm).items():
         out[k] = v
@@ -55,8 +71,21 @@ def main():
             return 2
         path = files[-1]
     print("파일:", path)
-    poses, img, world = load(path)
-    for src_name, pts in (("이미지 점", img), ("world 점", world)):
+    all_poses, img, world = load(path)
+    sources = [("이미지 점", img), ("world 점", world)]
+    d3 = load_d3(path)
+    if d3 is not None:
+        sources.append(("D405 입체 점", d3))
+    for src_name, pts in sources:
+        keep = np.all(np.isfinite(pts[:, NEEDED, :]), axis=(1, 2))
+        poses, pts = all_poses[keep], pts[keep]
+        if not keep.all():
+            print(f"\n({src_name}: 필요한 관절 깊이를 다 읽은 장면만 씀 — "
+                  f"{keep.sum()}/{keep.size}, 자세별: " + ", ".join(
+                      f"{q} {int(keep[all_poses == q].sum())}/{int((all_poses == q).sum())}"
+                      for q in dict.fromkeys(all_poses)) + ")")
+        if not len(pts):
+            continue
         rows = [features(p) for p in pts]
         names = list(rows[0])
         vals = {n: np.array([r[n] for r in rows]) for n in names}
@@ -77,7 +106,9 @@ def main():
         for a, b in [("flat", "oppose"), ("flat", "pinch"), ("flat", "thumb_front"),
                      ("spread", "flat"), ("spread", "oppose"),
                      ("fingers_together", "fingers_spread"),
-                     ("middle_to_index", "middle_to_ring")]:
+                     ("middle_to_index", "middle_to_ring"),
+                     ("flat_side", "pinch_side"), ("flat_side", "thumb_front_side"),
+                     ("spread_side", "thumb_front_side")]:
             if (a, names[0]) not in stats or (b, names[0]) not in stats:
                 continue
             line = f"  {a} vs {b}".ljust(34)
