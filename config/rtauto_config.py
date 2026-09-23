@@ -559,6 +559,19 @@ WORKSPACE_MIN_RADIUS_M = float(_env("RTAUTO_WORKSPACE_MIN_RADIUS_M", "0.25"))
 #: 멀면 거절한다. 비전이 한 번 크게 틀렸을 때 팔이 방을 가로지르는 것을 막는다.
 MAX_STEP_M = float(_env("RTAUTO_MAX_STEP_M", "0.40"))
 
+#: 아까 고른 물체가 아직 보일 때, 다른 물체가 **이만큼 [m] 더 가까워야** 대상을 바꾼다.
+#: 두 물체 거리가 비슷하면 장면마다 1등이 뒤바뀌어 팔이 둘 사이를 오가던 약점(A-9 ②,
+#: 2026-09-22 실측: 종이컵 0.24 m / 주스병 0.22 m)을 막는다. 거리 흔들림(수 mm)보다
+#: 넉넉히 크게 잡았다 — 잠정값, 실물 배치에서 재조정할 것.
+TARGET_SWITCH_MARGIN_M = float(_env("RTAUTO_TARGET_SWITCH_MARGIN_M", "0.03"))
+
+#: 아까 고른 물체가 안 보여도 **이 장면 수까지는 다른 물체로 갈아타지 않고 기다린다.**
+#: 2026-09-23 실물 D405 `--watch`: 확신 40 % 안팎의 컵이 한두 장면씩 인식에서 빠졌다가
+#: 돌아왔고, 빠지는 순간마다 대상이 바뀌었다 — 무인 반복(`--yes`)이면 인식 깜빡임 한 번에
+#: 팔이 다른 물체로 간다. `segment_objects.TRACK_KEEP_MISSING`(8)보다 크면 그 사이 번호가
+#: 끊겨 기다려도 소용없으므로 그보다 작게 둔다.
+TARGET_HOLD_MISSING_FRAMES = int(_env("RTAUTO_TARGET_HOLD_MISSING_FRAMES", "3"))
+
 #: 물체 인식 확신이 이보다 낮으면 움직이지 않는다 (0~1).
 MIN_DETECT_CONFIDENCE = float(_env("RTAUTO_MIN_DETECT_CONFIDENCE", "0.40"))
 

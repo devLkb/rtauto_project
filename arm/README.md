@@ -279,8 +279,17 @@ python arm/approach_object.py --look --show          # 한 장 보고 아무 키
 python arm/approach_object.py --look --show --watch  # 계속 갱신, Ctrl+C 로 끝
 ```
 
-왼쪽 색 사진(찾은 것은 주황 테두리, **가기로 고른 것은 굵은 초록 + "← 이걸로 간다"**),
-오른쪽 거리 사진. `--watch` 가 아니면 아무 키를 누를 때까지 창이 멈춰 있다.
+왼쪽 색 사진(찾은 것은 주황 테두리, **가기로 고른 것은 굵은 초록 + "← 이걸로 간다"**,
+안전 검사 등에서 **건너뛴 것은 빨간 테두리 + "건너뜀"**, 물체마다 `#번호`), 오른쪽 거리 사진.
+왼쪽 위에 **왜 그 물체를 골랐는지**와 건너뛴 이유가 나온다. `--watch` 가 아니면 아무 키를
+누를 때까지 창이 멈춰 있다.
+
+### 여러 물체가 보일 때 고르는 규칙
+
+정본: [`target_selection.py`](target_selection.py) 머리 설명. 가까운 것부터 시도하고,
+거절되면 다음 것으로 넘어간다. `--watch` 중에는 아까 고른 물체를 유지한다 — 다른 게
+3 cm 넘게 더 가까워야 바꾸고(`RTAUTO_TARGET_SWITCH_MARGIN_M`), 잠깐 안 보여도 3장면까지는
+기다린다(`RTAUTO_TARGET_HOLD_MISSING_FRAMES`). 팔이 움직이면 번호를 새로 매긴다.
 
 🛑 **`vision/d405/yolo_assist.py --live` 를 옆 터미널에 같이 띄우지 마라.** D405 는 한 번에
 한 프로그램만 열 수 있어서, 나중에 뜬 쪽이 카메라를 **하드웨어 재설정**해 버리고 먼저 뜬
@@ -290,7 +299,7 @@ python arm/approach_object.py --look --show --watch  # 계속 갱신, Ctrl+C 로
 
 | 선택지 | 무엇 |
 |---|---|
-| `--target cup` | 그 이름이 들어간 물체만 고른다. 기본은 **가장 가까운 것** |
+| `--target cup` | 그 이름이 들어간 물체만 후보로 본다(콤마로 여러 개: `cup,bottle`). 안 주면 YOLO 가 찾은 것 전부 — 키보드도 후보가 된다 |
 | `--watch` | 물체를 옮길 때마다 다시 찾아간다(시연 시나리오 7~9단계) |
 | `--yes` | 움직이기 전에 묻지 않는다. **무인 시연에서만** |
 | `--pose-json 파일` | 정한 자세를 파일로 남긴다(`prepose_to_joints.py --pose-json` 에 넘길 수 있다) |
