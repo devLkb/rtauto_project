@@ -462,6 +462,15 @@ THUMB_OPP_LIFT_DEG = (10.0, 35.0)      # ① 들림 각 → 0..1 (붙이기 p95 
 THUMB_OPP_CROSS = (0.2, -0.8)          # ② 가로지름 → 0..1 (붙이기 p5 0.22 아래에서 시작)
 THUMB_OPP_SPREAD_FADE = (0.4, 1.0)     # 엄지끝이 이만큼(손바닥 폭 단위) 엄지 쪽으로 나가면 ①을 0으로
 
+# ③ 집게 모으기 (2026-09-23 옆으로 돌린 녹화 handposes_20260923_152545.csv 로 추가).
+#   ①②만 쓰면 **같은 집게가 보는 방향마다 다르게** 나왔다 — 정면 0.65(장면마다 0.26~0.81),
+#   거의 옆 1.00. 엄지끝~검지끝 거리(손 길이 단위)는 집게일 때 정면·옆 모두 0.16 이라 방향에 덜
+#   흔들린다. 그래서 두 끝이 붙을수록 대향량을 THUMB_OPP_PINCH_AMOUNT 쪽으로 끌어 모은다.
+#   (편 손 0.68 / 주먹 0.37 / 새끼 뿌리 0.90 — 이 값들에서는 거의 안 걸린다.)
+#   0.75 는 두 녹화의 집게 대향량 사이값 — Unity 에서 로봇 엄지가 검지에 덜/더 닿으면 이 값만 조정.
+THUMB_OPP_PINCH_D = (0.35, 0.20)       # 엄지끝~검지끝 거리 → 모으는 정도 0..1
+THUMB_OPP_PINCH_AMOUNT = 0.75
+
 
 def _ramp(x, lo, hi):
     """x 가 lo → hi 로 갈 때 0 → 1 (방향은 lo, hi 순서가 정한다). 범위 밖은 0 또는 1."""
@@ -476,7 +485,9 @@ def thumb_opp_amount_lm(lm):
     lift = _ramp(-f["meta_out"], *THUMB_OPP_LIFT_DEG)
     lift *= 1.0 - _ramp(f["tip_radial"], *THUMB_OPP_SPREAD_FADE)
     cross = _ramp(f["tip_radial"], *THUMB_OPP_CROSS)
-    return max(lift, cross)
+    amount = max(lift, cross)
+    w = _ramp(f["pinch_d"], *THUMB_OPP_PINCH_D)
+    return (1.0 - w) * amount + w * THUMB_OPP_PINCH_AMOUNT
 
 
 def _opp_amount_from_raw(v):

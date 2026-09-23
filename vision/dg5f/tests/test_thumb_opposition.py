@@ -22,10 +22,12 @@ sys.path.insert(0, str(HERE.parent))
 import dg5f_angles as A  # noqa: E402
 
 FIXTURE = HERE / "fixtures" / "handposes_20260923.json"
+#: 손을 옆으로 돌린 녹화(`record_hand_poses.py --set side`, handposes_20260923_152545.csv)
+FIXTURE_SIDE = HERE / "fixtures" / "handposes_side_20260923.json"
 
 
-def _robot(pose, channel):
-    frames = json.loads(FIXTURE.read_text(encoding="utf-8"))["poses"][pose]
+def _robot(pose, channel, fixture=FIXTURE):
+    frames = json.loads(fixture.read_text(encoding="utf-8"))["poses"][pose]
     i = A.CHANNEL_NAMES.index(channel)
     return np.array([A.map_to_dg5f(A.compute_raw(np.array(f)), hand="right", mode="direct")[i]
                      for f in frames])
@@ -61,6 +63,32 @@ class ThumbOppositionTests(unittest.TestCase):
         for pose in ("flat", "oppose", "thumb_front", "fist"):
             v = _robot(pose, "thumb_opp")
             self.assertTrue(np.all(v <= 0.0) and np.all(v >= -A.THUMB_OPP_GAIN - 1e-9), pose)
+
+
+class SideViewTests(unittest.TestCase):
+    """손이 옆을 볼 때 (사용자: "집게는 정면으로 보여 줘야 잡힌다")."""
+
+    def setUp(self):
+        self._method = A.THUMB_OPP_METHOD
+        A.THUMB_OPP_METHOD = "lift_cross"
+
+    def tearDown(self):
+        A.THUMB_OPP_METHOD = self._method
+
+    def test_옆을_봐도_편_손은_앞으로_안_나온다(self):
+        for pose in ("flat_side", "spread_side"):
+            self.assertGreater(np.median(_robot(pose, "thumb_opp", FIXTURE_SIDE)), -10.0, pose)
+
+    def test_집게는_보는_방향과_상관없이_같은_깊이다(self):
+        """옛 결과: 정면 0.65 / 거의 옆 1.00 — 같은 집게가 방향마다 달랐다."""
+        target = -A.THUMB_OPP_PINCH_AMOUNT * A.THUMB_OPP_GAIN
+        for pose, fx in (("pinch", FIXTURE), ("pinch_side", FIXTURE_SIDE),
+                         ("pinch_turn", FIXTURE_SIDE)):
+            v = _robot(pose, "thumb_opp", fx)
+            self.assertLess(abs(np.median(v) - target), 8.0, pose)
+
+    def test_옆을_봐도_앞으로_내민_엄지는_앞으로_나온다(self):
+        self.assertLess(np.median(_robot("thumb_front_side", "thumb_opp", FIXTURE_SIDE)), -60.0)
 
 
 class MiddleAbductionTests(unittest.TestCase):
