@@ -234,6 +234,10 @@ class Dg5fGraspEnv(gym.Env):
         #                            1e1 -> 120 N / 3.0 -> 34.7 N (3지 접촉 파지는 모두 성립)
         self.stiffness = float(c.get("stiffness", 3.0))
         self.damping = float(c.get("damping", 0.3))
+        # 관절 추종의 상한(SuperDex PoseTrackingParams.saturation, -1 = 없음). 2026-09-23 B-8 실험용 —
+        # 실물 손의 관절 힘 한계(정격 0.4 N·m / 순간 최대 2 N·m, DG5F_JOINT_RANGES.md §7)를 시뮬레이터에
+        # 넣을 수 있는지 보려고 뺐다. 무엇을 자르는 값인지(각도 오차? 힘?)는 실험으로 확인한다.
+        self.joint_saturation = float(c.get("joint_saturation", -1.0))
         # 이 값을 넘는 지문 접촉력에 페널티를 준다. 실제 DG-5F-M의 지문 파지력 상한은
         # 벤더 확인이 필요하다 (docs/SUPERDEX_POC_PLAN.md U8).
         self.tip_force_limit = float(c.get("tip_force_limit", 20.0))
@@ -432,7 +436,8 @@ class Dg5fGraspEnv(gym.Env):
         # 굽힘은 max_limit 방향 (게이트 0 실측: _2/_3/_4의 min은 0)
         self.full_closed[self.flex_dofs] = self.joint_high[self.flex_dofs]
 
-        tracking = physics.PoseTrackingParams(stiffness=self.stiffness, damping=self.damping)
+        tracking = physics.PoseTrackingParams(stiffness=self.stiffness, damping=self.damping,
+                                              saturation=self.joint_saturation)
         self.pose_ctrl = self.bot.create_controller("MOCHI_ARTICULATED_POSE")
         self.pose_ctrl.set_params(
             robotics.ControllerMochiArticulatedPoseParams(
