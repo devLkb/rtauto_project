@@ -24,6 +24,14 @@ Git이 필요한 이유는 `requirements-mlagents.txt`가 ML-Agents를 고정된
 
 Linux는 OpenCV 미리보기 창(`cv2.imshow`)과 웹캠 접근에 시스템 패키지가 더 필요하다.
 
+⚠️ **Ubuntu 24.04 는 기본 저장소에 Python 3.10 이 없다**(기본은 3.12). 아래 `apt install python3.10`
+전에 deadsnakes 저장소를 먼저 추가한다 — 2026-09-23 이사 준비 중 적은 것이고 **24.04 에서 아직 직접 돌려
+보지 않았다**(첫 실행 때 결과를 여기 고쳐 적을 것). 22.04 는 이 줄 없이 된다.
+
+```bash
+sudo add-apt-repository -y ppa:deadsnakes/ppa   # Ubuntu 24.04 만
+```
+
 ```bash
 sudo apt update
 sudo apt install -y python3.10 python3.10-venv python3.10-dev \
