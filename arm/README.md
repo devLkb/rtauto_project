@@ -299,7 +299,7 @@ python arm/approach_object.py --look --show --watch  # 계속 갱신, Ctrl+C 로
 
 | 선택지 | 무엇 |
 |---|---|
-| `--target cup` | 그 이름이 들어간 물체만 후보로 본다(콤마로 여러 개: `cup,bottle`). 안 주면 YOLO 가 찾은 것 전부 — 키보드도 후보가 된다 |
+| `--target cup` | 그 이름이 들어간 물체만 후보로 본다(콤마로 여러 개: `cup,bottle`). 안 주면 `.env` 의 `RTAUTO_TARGET_NAMES`(기본 **`cup,bottle`** — 2026-09-23 사용자 결정, 키보드를 고르던 것을 막는 임시 제한). `--target all` 이면 YOLO 가 찾은 것 전부 |
 | `--watch` | 물체를 옮길 때마다 다시 찾아간다(시연 시나리오 7~9단계) |
 | `--yes` | 움직이기 전에 묻지 않는다. **무인 시연에서만** |
 | `--pose-json 파일` | 정한 자세를 파일로 남긴다(`prepose_to_joints.py --pose-json` 에 넘길 수 있다) |

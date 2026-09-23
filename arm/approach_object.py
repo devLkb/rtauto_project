@@ -574,6 +574,19 @@ def run_once(stream, detector, args, mover=None,
 # ---------------------------------------------------------------------------
 # 명령줄
 # ---------------------------------------------------------------------------
+def resolve_target_names(arg: Optional[str]) -> Optional[str]:
+    """`--target` 값 → 실제로 거를 이름들. None 이면 거르지 않는다.
+
+    안 줬으면 `RTAUTO_TARGET_NAMES`(기본 cup,bottle), `all` 이면 제한 없음.
+    """
+    if arg is None:
+        arg = cfg.TARGET_NAMES
+    arg = (arg or "").strip()
+    if not arg or arg.lower() == "all":
+        return None
+    return arg
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         description="손목 카메라로 물체를 찾아 팔이 그 앞까지 간다 (잡지는 않는다)")
@@ -588,7 +601,8 @@ def main(argv=None) -> int:
                     help="팔 IP. 값 없이 주면 .env 의 RTAUTO_UR_IP (기본 URSim)")
     ap.add_argument("--target", default=None,
                     help="이 이름이 들어간 물체만 고른다(예: cup, 또는 콤마로 여러 개 "
-                         "— cup,bottle). 기본은 후보 전부 중 가장 가까운 것")
+                         "— cup,bottle). 안 주면 .env 의 RTAUTO_TARGET_NAMES(기본 "
+                         "cup,bottle). all 을 주면 YOLO 가 찾은 것 전부")
     ap.add_argument("--watch", action="store_true",
                     help="계속 반복한다 — 물체를 옮기면 다시 찾아간다. Ctrl+C 로 끝낸다")
     ap.add_argument("--yes", action="store_true",
@@ -625,6 +639,7 @@ def main(argv=None) -> int:
     args.near = cfg.D405_NEAR_M if args.near is None else args.near
     args.far = cfg.D405_FAR_M if args.far is None else args.far
     args.frames = max(1, int(args.frames))
+    args.target = resolve_target_names(args.target)
     if args.fake_object is not None:
         try:
             args.fake_object = tuple(float(v) for v in args.fake_object.split(","))
@@ -642,6 +657,8 @@ def main(argv=None) -> int:
           "({:+.2f}, {:+.2f}, {:+.2f}) 도".format(*mount.xyz_m, *mount.rpy_deg))
     if mount.warning():
         print(mount.warning())
+    print("잡으러 갈 물체 이름: {}".format(
+        args.target if args.target else "제한 없음 — YOLO 가 찾은 것 전부"))
     print("떨어져 설 거리 {:.0f} cm / 마지막 직선 구간 {:.0f} cm / 한 번에 움직이는 "
           "거리 한계 {:.0f} cm".format(cfg.PREGRASP_DISTANCE_M * 100,
                                         cfg.APPROACH_CLEARANCE_M * 100,

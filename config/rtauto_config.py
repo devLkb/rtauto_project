@@ -560,6 +560,12 @@ TARGET_SWITCH_MARGIN_M = float(_env("RTAUTO_TARGET_SWITCH_MARGIN_M", "0.03"))
 #: 끊겨 기다려도 소용없으므로 그보다 작게 둔다.
 TARGET_HOLD_MISSING_FRAMES = int(_env("RTAUTO_TARGET_HOLD_MISSING_FRAMES", "3"))
 
+#: `arm/approach_object.py` 가 `--target` 없이 돌 때 **잡으러 갈 물체 이름**(콤마로 여러 개).
+#: YOLO 이름에 이 중 하나라도 들어가면 후보다. 2026-09-23 사용자 결정 — 이름을 안 거르니
+#: 키보드를 골랐다. ⚠️ 범용 파지(처음 보는 물체도 잡기) 목적과는 반대 방향인 **임시 제한**이다.
+#: 비우면(`RTAUTO_TARGET_NAMES=`) 거르지 않는다.
+TARGET_NAMES = _env("RTAUTO_TARGET_NAMES", "cup,bottle")
+
 #: 물체 인식 확신이 이보다 낮으면 움직이지 않는다 (0~1).
 MIN_DETECT_CONFIDENCE = float(_env("RTAUTO_MIN_DETECT_CONFIDENCE", "0.40"))
 

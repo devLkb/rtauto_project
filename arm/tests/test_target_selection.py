@@ -208,6 +208,32 @@ class TestHoldWhenMissing(unittest.TestCase):
         self.assertEqual(self._pick(picker, [b]).chosen.track_id, 2)
 
 
+class TestTargetNames(unittest.TestCase):
+    """`--target` 을 안 주면 설정의 기본 이름(cup,bottle)만 후보로 본다."""
+
+    def test_안_주면_설정값을_쓴다(self):
+        from arm import approach_object as ao
+        with mock.patch.object(ao.cfg, "TARGET_NAMES", "cup,bottle"):
+            self.assertEqual(ao.resolve_target_names(None), "cup,bottle")
+
+    def test_기본값은_컵과_병(self):
+        from config import rtauto_config as cfg
+        import os
+        if "RTAUTO_TARGET_NAMES" in os.environ:
+            self.skipTest("환경변수로 덮어쓴 상태")
+        self.assertEqual(cfg.TARGET_NAMES, "cup,bottle")
+
+    def test_직접_주면_그걸_쓴다(self):
+        from arm import approach_object as ao
+        self.assertEqual(ao.resolve_target_names("can"), "can")
+
+    def test_all_이나_빈값이면_거르지_않는다(self):
+        from arm import approach_object as ao
+        self.assertIsNone(ao.resolve_target_names("all"))
+        with mock.patch.object(ao.cfg, "TARGET_NAMES", ""):
+            self.assertIsNone(ao.resolve_target_names(None))
+
+
 class FakePlan:
     """`PreGraspPlan` 흉내 — 설 자리 계산이 받아들였는지와 이름만 있다."""
 
