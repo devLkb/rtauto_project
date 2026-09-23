@@ -22,6 +22,10 @@ Unity 화면에서 ① 손을 쫙 펴도 로봇 엄지가 손바닥 앞으로 �
     python vision/dg5f/record_hand_poses.py
 
 - **오른손**을 카메라에 손바닥이 보이게 든다(평소 텔레옵할 때와 같은 자세·거리).
+- `--set side` 를 붙이면 **손을 옆으로 돌린** 자세 6가지를 찍는다(정면 녹화로는 못 재는
+  "옆을 보면 집게가 안 잡힌다" 를 재려는 것)::
+
+      python vision/dg5f/record_hand_poses.py --set side
 - 터미널에 다음 자세가 한국어로 나오고, 카메라 창에는 영어 이름과 남은 초가 보인다.
   `GET READY` 동안 자세를 잡고, `REC` 동안 **자세를 유지한 채 손을 조금씩 돌리고
   기울인다**(손 방향이 바뀌어도 값이 버티는지 보려는 것).
@@ -64,6 +68,19 @@ POSES = [
     ("middle_to_index", "손을 편 채 중지만 검지 쪽으로 기울인다 (약지와 벌어지게)"),
     ("middle_to_ring", "손을 편 채 중지만 약지 쪽으로 기울인다 (검지와 벌어지게)"),
 ]
+#: `--set side` — 손을 **옆으로 돌린** 자세들(2026-09-23 추가). 사용자: "집게는 손을 정면으로
+#: 보여 줘야 잡힌다". 정면 녹화(위 POSES)에는 옆을 본 장면이 거의 없어 이 실패를 잴 수 없었다.
+#: 손날(새끼 쪽 옆면)이나 손등 쪽으로 반쯤 돌린 채 찍는다 — 이름 끝의 _side 로 정면 것과 구분한다.
+SIDE_POSES = [
+    ("flat_side", "손을 쫙 펴고 엄지를 검지 옆에 붙인 채, 손을 옆으로 돌린다 (손날이 카메라를 향할 만큼, 반쯤~거의 옆)"),
+    ("spread_side", "엄지만 옆으로 벌린 채(L자), 손을 옆으로 돌린다"),
+    ("pinch_side", "엄지 끝과 검지 끝을 맞댄 채(집게), 손을 옆으로 돌린다"),
+    ("thumb_front_side", "엄지만 손바닥 앞으로 내민 채, 손을 옆으로 돌린다"),
+    ("oppose_side", "엄지 끝을 새끼손가락 뿌리에 댄 채, 손을 옆으로 돌린다"),
+    ("pinch_turn", "집게를 한 채로 손을 정면 → 옆 → 정면으로 천천히 돌린다 (8초 동안 반복)"),
+]
+POSE_SETS = {"front": POSES, "side": SIDE_POSES}
+
 WINDOW_NAME = "record_hand_poses"
 READY_SEC = 3.0
 RECORD_SEC = 8.0
@@ -79,6 +96,11 @@ def _header():
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser(description="자세를 안내하며 손 관절 점을 기록")
+    ap.add_argument("--set", choices=sorted(POSE_SETS), default="front",
+                    help="front=정면 자세 10가지(기본) / side=손을 옆으로 돌린 자세 6가지")
+    poses = POSE_SETS[ap.parse_args().set]
     hands = mp.solutions.hands.Hands(      # vision_node_dg5f.py 와 같은 설정
         model_complexity=1, max_num_hands=1,
         min_detection_confidence=0.6, min_tracking_confidence=0.6)
@@ -106,8 +128,8 @@ def main():
     with open(log_path, "w", encoding="utf-8") as log_f:
         log_f.write(_header())
         quit_all = False
-        for n, (pose, text) in enumerate(POSES, 1):
-            print(f"\n[{n}/{len(POSES)}] {text}")
+        for n, (pose, text) in enumerate(poses, 1):
+            print(f"\n[{n}/{len(poses)}] {text}")
             print(f"        준비 {READY_SEC:.0f}초 → 기록 {RECORD_SEC:.0f}초 "
                   "(기록 중엔 자세를 유지한 채 손을 조금씩 돌리고 기울일 것)")
             t_start = time.time()
@@ -147,7 +169,7 @@ def main():
                     msg, color = f"REC {pose}  {READY_SEC + RECORD_SEC - el:4.1f}s", (0, 0, 255)
                 else:
                     msg, color = f"GET READY: {pose}  {READY_SEC - el:3.1f}s", (0, 200, 255)
-                cv2.putText(frame, f"[{n}/{len(POSES)}] {msg}", (10, 30),
+                cv2.putText(frame, f"[{n}/{len(poses)}] {msg}", (10, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
                 cv2.putText(frame, "s: skip   q / X: quit", (10, 60),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
