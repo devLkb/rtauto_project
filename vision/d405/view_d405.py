@@ -57,6 +57,8 @@ import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "config"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # vision/ — cv_window(X 로 창 닫기)
+import cv_window  # noqa: E402
 
 import rtauto_config as cfg  # noqa: E402
 
@@ -454,7 +456,7 @@ def main() -> int:
 
             cv2.imshow(win, both)
             key = cv2.waitKey(1) & 0xFF
-            if key == ord("q") or key == 27:
+            if key == ord("q") or key == 27 or cv_window.closed(win):
                 break
             if key == ord("s"):
                 stem = time.strftime("%Y%m%d_%H%M%S")

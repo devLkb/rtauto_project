@@ -50,6 +50,8 @@ import time
 from pathlib import Path
 
 import cv2
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # vision/ — cv_window(X 로 창 닫기)
+import cv_window  # noqa: E402
 import mediapipe as mp
 
 from dg5f_paths import unique_log_path
@@ -58,7 +60,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from config.rtauto_config import (
     VISION_CAMERA_INDEX, VISION_CAMERA_WIDTH, VISION_CAMERA_HEIGHT,
     VISION_CAMERA_FPS, VISION_CAMERA_BACKEND, VISION_CAMERA_FOURCC,
-    VISION_CAMERA_MIN_FPS,
+    VISION_CAMERA_MIN_FPS, VISION_PREVIEW_WIDTH,
 )
 
 import camera_caps
@@ -69,6 +71,17 @@ CAM_INDEX = VISION_CAMERA_INDEX
 # 화면 크기는 여기에 상수로 두지 않는다 — 설정(config/rtauto_config.py + .env)에서 읽어
 # camera_caps가 적용한다(기본 max = 이 웹캠의 최대치). 실제 크기는 frame.shape에서 읽어
 # CSV(frame_w/frame_h)에 그대로 기록한다 — 나중에 어떤 크기로 찍은 로그인지 알 수 있다.
+
+
+WINDOW_NAME = "lmprobe (q to quit)"
+
+
+def _fit_window(name, cap):
+    """창을 화면에 맞는 크기로 — 큰 웹캠(2560x1440 등)을 원본 크기로 띄우면 모니터를 넘는다."""
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+    cv2.namedWindow(name, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+    cv2.resizeWindow(name, *camera_caps.preview_size(w, h, VISION_PREVIEW_WIDTH))
 
 
 def main():
@@ -107,7 +120,8 @@ def main():
                          + [f"wl{i}_{a}" for i in range(21) for a in "xyz"]) + "\n")
     zeros63 = ["0"] * 63
 
-    print(f"[시작] 랜드마크 프로브 (label={label}) → {log_path} (종료: q)")
+    print(f"[시작] 랜드마크 프로브 (label={label}) → {log_path} (종료: q 또는 창 X)")
+    _fit_window(WINDOW_NAME, cap)
     t0 = time.time()
     n_frames = n_det = n_world = 0
     while True:
@@ -143,8 +157,8 @@ def main():
 
         cv2.putText(frame, f"{label}  {now - t0:5.1f}s  det {n_det}/{n_frames}",
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        cv2.imshow("lmprobe (q to quit)", frame)
-        if cv2.waitKey(1) & 0xFF == ord("q"):
+        cv2.imshow(WINDOW_NAME, frame)
+        if cv2.waitKey(1) & 0xFF == ord("q") or cv_window.closed(WINDOW_NAME):
             break
 
     cap.release()

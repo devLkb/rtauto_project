@@ -180,19 +180,17 @@ class AbductionTest(unittest.TestCase):
                         f"{swing(without):.1f}° 보정 후 {swing(fixed):.1f}°")
         self.assertLess(swing(plain), 12.0, "보정계수가 0인 손가락은 원래대로 조용해야 한다")
 
-    def test_middle_channel_stays_zero_on_the_robot(self):
-        """중지 벌림은 로봇으로 **0만 나간다** — 계산식이 아니라 채널 설정(gated)이 보장한다.
-
-        옛 계산식에서는 "중지 기준 상대 벌림"이라 중지가 정의상 0이었다. 새 계산식은
-        손가락마다 자기 축으로 재므로 중지에도 값이 생기는데, 아무도 요청하지 않은 움직임을
-        만들지 않으려고 채널을 gated로 두어 예전 결과(0)를 유지한다.
-        """
+    def test_middle_channel_moves_on_the_robot(self):
+        """중지 벌림이 로봇으로 **나간다** (2026-09-23 게이트 해제 — 사용자: "중지가 좌우로 안 움직인다")."""
         row = next(c for c in A.DG5F_CHANNELS if c[0] == "middle_abd")
-        self.assertTrue(row[5], "middle_abd는 gated여야 한다")
+        self.assertFalse(row[5], "middle_abd는 이제 gated가 아니다")
         raw = [0.0] * len(A.CHANNEL_NAMES)
-        raw[A.CHANNEL_NAMES.index("middle_abd")] = math.radians(20.0)
+        raw[A.CHANNEL_NAMES.index("middle_abd")] = math.radians(10.0)
         out = A.map_to_dg5f(raw, hand="right", mode="direct")
-        self.assertEqual(out[A.CHANNEL_NAMES.index("middle_abd")], A.GATED_NEUTRAL_DEG)
+        self.assertAlmostEqual(out[A.CHANNEL_NAMES.index("middle_abd")], 10.0, places=6)
+        raw[A.CHANNEL_NAMES.index("middle_abd")] = math.radians(-40.0)   # 로봇 한계 밖
+        out = A.map_to_dg5f(raw, hand="right", mode="direct")
+        self.assertAlmostEqual(out[A.CHANNEL_NAMES.index("middle_abd")], -20.0, places=6)
 
     def test_every_finger_uses_the_same_rule(self):
         """새끼만 특별 취급하지 않는다 — 같은 함수, 같은 축 정의, 손가락별 계수만 다르다."""

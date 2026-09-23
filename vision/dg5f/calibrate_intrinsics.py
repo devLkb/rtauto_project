@@ -21,6 +21,8 @@ import time
 from pathlib import Path
 
 import cv2
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # vision/ — cv_window(X 로 창 닫기)
+import cv_window  # noqa: E402
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
@@ -103,7 +105,7 @@ def main():
                 object_points.append(objp)
                 image_points.append(corners)
                 print(f"[capture] {len(object_points)}장 캡처됨")
-            elif key == ord("q"):
+            elif key == ord("q") or cv_window.closed(WINDOW_NAME):
                 break
     finally:
         cap.release()

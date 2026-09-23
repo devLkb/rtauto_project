@@ -40,6 +40,27 @@ class CameraPickerTest(unittest.TestCase):
             camera_picker._choose_with_window = real
         self.assertEqual(opened, [], "카메라가 한 대인데 창을 띄웠다")
 
+    def test_fast_list_asks_even_with_one_camera(self):
+        """빠른 목록(allow_rescan)에서는 한 대여도 묻는다 — 새로 꽂은 카메라를 찾을 길을 남긴다."""
+        opened = []
+        real = camera_picker._choose_with_window
+        camera_picker._choose_with_window = lambda *a, **k: opened.append(1) or 0
+        try:
+            camera_picker.choose([CAMS[0]], allow_rescan=True)
+        finally:
+            camera_picker._choose_with_window = real
+        self.assertEqual(opened, [1])
+
+    def test_terminal_r_means_rescan(self):
+        import builtins
+        real = builtins.input
+        builtins.input = lambda *_a: "r"
+        try:
+            got = camera_picker._choose_in_terminal(CAMS, 1, allow_rescan=True)
+        finally:
+            builtins.input = real
+        self.assertEqual(got, camera_picker.RESCAN)
+
     def test_no_camera_returns_none(self):
         self.assertIsNone(camera_picker.choose([]))
 

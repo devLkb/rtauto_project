@@ -16,45 +16,57 @@ import sys
 
 # 창 크기 — 사진 미리보기 폭에 목록 너비를 더한 값. 화면이 작은 노트북도 고려한 크기다.
 PREVIEW_W = 320
+
+#: `choose(..., allow_rescan=True)` 에서 사람이 "다시 찾기"를 눌렀을 때 돌려주는 값.
+RESCAN = "rescan"
 WINDOW_MIN_W, WINDOW_MIN_H = 620, 360
 
 
 def describe(cam, recommended_index=None):
     """목록 한 줄에 보여 줄 글. 사람이 읽고 바로 고를 수 있게 쓴다."""
     mark = "  ← 추천" if cam["index"] == recommended_index else ""
+    saved = "  (저장된 값)" if cam.get("cached") else ""
     return (f"{cam['index']}번  —  {cam['width']}x{cam['height']}, "
-            f"초당 {cam['measured_fps']:.0f}장{mark}")
+            f"초당 {cam['measured_fps']:.0f}장{saved}{mark}")
 
 
-def choose(cams, recommended_index=None, title="사용할 카메라를 고르세요"):
+def choose(cams, recommended_index=None, title="사용할 카메라를 고르세요", allow_rescan=False):
     """카메라 목록을 보여 주고 고른 번호를 돌려준다. 취소하면 None.
 
     cams: camera_caps.list_cameras()가 준 목록. 각 항목에 "preview"(사진, 없어도 됨)가
     있으면 함께 보여 준다.
+    allow_rescan=True 면 "다시 찾기" 버튼(터미널에선 r)이 생기고, 누르면 `RESCAN` 을 돌려준다
+    — 저장된 값으로 만든 빠른 목록에서 쓴다. 이때는 한 대뿐이어도 창을 띄운다(다른 카메라를
+    새로 꽂았을 수 있으므로).
     """
     if not cams:
         return None
-    if len(cams) == 1:
+    if len(cams) == 1 and not allow_rescan:
         return cams[0]["index"]          # 고를 게 하나뿐이면 묻지 않는다
     try:
-        return _choose_with_window(cams, recommended_index, title)
+        return _choose_with_window(cams, recommended_index, title, allow_rescan)
     except Exception as e:                # 화면이 없거나 tkinter가 없는 환경
         print(f"[카메라] 선택 창을 띄울 수 없어 터미널로 묻습니다 ({type(e).__name__})")
+        if allow_rescan:
+            return _choose_in_terminal(cams, recommended_index, allow_rescan)
         return _choose_in_terminal(cams, recommended_index)
 
 
-def _choose_in_terminal(cams, recommended_index):
+def _choose_in_terminal(cams, recommended_index, allow_rescan=False):
     """창을 못 띄울 때의 대비책 — 번호를 타이핑해 고른다."""
     print("\n사용할 카메라를 고르세요:")
     for cam in cams:
         print("   " + describe(cam, recommended_index))
     default = recommended_index if recommended_index is not None else cams[0]["index"]
+    hint = ", r = 다시 찾기" if allow_rescan else ""
     try:
-        answer = input(f"번호 입력 (그냥 Enter = {default}번): ").strip()
+        answer = input(f"번호 입력 (그냥 Enter = {default}번{hint}): ").strip()
     except EOFError:
         return default
     if not answer:
         return default
+    if allow_rescan and answer.lower() == "r":
+        return RESCAN
     valid = {str(c["index"]) for c in cams}
     return int(answer) if answer in valid else default
 
@@ -74,7 +86,7 @@ def _to_photo(preview):
     return ImageTk.PhotoImage(img)
 
 
-def _choose_with_window(cams, recommended_index, title):
+def _choose_with_window(cams, recommended_index, title, allow_rescan=False):
     import tkinter as tk
     from tkinter import ttk
 
@@ -112,7 +124,9 @@ def _choose_with_window(cams, recommended_index, title):
             photo = _to_photo(cam.get("preview"))
             photos[cam["index"]] = photo
         if photo is None:
-            preview_label.configure(image="", text="(사진 없음 — Pillow 미설치)")
+            why = ("빠른 목록이라 사진 없음" if cam.get("cached")
+                   else "사진 없음 — Pillow 미설치")
+            preview_label.configure(image="", text=f"({why})")
         else:
             preview_label.configure(image=photo, text="")
 
@@ -128,6 +142,12 @@ def _choose_with_window(cams, recommended_index, title):
     buttons = ttk.Frame(frame)
     buttons.grid(row=2, column=0, columnspan=2, sticky="e", pady=(10, 0))
     ttk.Button(buttons, text="이 카메라로 시작", command=accept).pack(side="left", padx=4)
+    if allow_rescan:
+        def rescan():
+            chosen["index"] = RESCAN
+            root.destroy()
+        ttk.Button(buttons, text="다시 찾기(사진 포함, 느림)",
+                   command=rescan).pack(side="left", padx=4)
     ttk.Button(buttons, text="취소", command=cancel).pack(side="left")
 
     listbox.bind("<<ListboxSelect>>", show_preview)

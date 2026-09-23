@@ -507,6 +507,74 @@ class CameraCapsTest(unittest.TestCase):
         self.assertEqual(fmt.index, 0)                 # 그래도 사람이 고른 0번으로 연다
         self.assertEqual((fmt.width, fmt.height), (640, 480))
 
+    # ---------------- 빠른 목록(저장된 값, 2026-09-23) ----------------
+    def _save_cached(self, index, width, height, fps=30.0):
+        cc._cache_write(self.cache, cc._cache_key(index, "auto", ""), (width, height), fps)
+
+    def test_fast_list_opens_no_camera(self):
+        """저장된 카메라가 있으면 **카메라를 하나도 열지 않고** 목록을 띄운다."""
+        import camera_picker
+        self._save_cached(0, 1920, 1080)
+        self._save_cached(1, 2560, 1440)
+        factory, made = self._multi_factory({0: [(1920, 1080)], 1: [(2560, 1440)]})
+        shown = {}
+
+        def fake_choose(cams, recommended_index=None, **kw):
+            shown["cams"], shown["kw"], shown["opened_before"] = cams, kw, dict(made)
+            return 1
+
+        real = camera_picker.choose
+        camera_picker.choose = fake_choose
+        try:
+            idx = cc.ask_user_to_choose(cache_path=self.cache, log=_quiet,
+                                        capture_factory=factory)
+        finally:
+            camera_picker.choose = real
+        self.assertEqual(idx, 1)
+        self.assertEqual(shown["opened_before"], {}, "목록을 띄우기 전에 카메라를 열었다")
+        self.assertEqual([c["index"] for c in shown["cams"]], [0, 1])
+        self.assertTrue(shown["kw"].get("allow_rescan"))
+        self.assertEqual(made, {}, "빠른 목록인데 카메라를 열었다")
+
+    def test_rescan_falls_back_to_the_full_search(self):
+        """'다시 찾기'를 누르면 예전처럼 카메라를 하나씩 열어 찾는다."""
+        import camera_picker
+        self._save_cached(0, 1920, 1080)
+        factory, made = self._multi_factory({0: [(640, 480)], 1: [(640, 480)]})
+        calls = []
+
+        def fake_choose(cams, recommended_index=None, **kw):
+            calls.append(kw.get("allow_rescan", False))
+            return camera_picker.RESCAN if kw.get("allow_rescan") else 1
+
+        real = camera_picker.choose
+        camera_picker.choose = fake_choose
+        try:
+            idx = cc.ask_user_to_choose(cache_path=self.cache, log=_quiet,
+                                        capture_factory=factory)
+        finally:
+            camera_picker.choose = real
+        self.assertEqual(calls, [True, False])
+        self.assertEqual(idx, 1)
+        self.assertIn(1, made, "다시 찾기인데 카메라를 열어 보지 않았다")
+
+    def test_unplugged_camera_from_fast_list_triggers_a_real_search(self):
+        """저장된 목록에서 고른 카메라가 빠져 있으면, 실제로 찾아 다시 묻는다."""
+        import camera_picker
+        self._save_cached(0, 1920, 1080)
+        self._save_cached(3, 1920, 1080)         # 지금은 안 꽂힌 카메라
+        factory, _ = self._multi_factory({0: [(640, 480)]})
+        answers = iter([3, 0])
+        real = camera_picker.choose
+        camera_picker.choose = lambda cams, recommended_index=None, **kw: next(answers)
+        try:
+            cap, fmt = cc.open_camera("ask", cache_path=self.cache, log=_quiet,
+                                      capture_factory=factory)
+        finally:
+            camera_picker.choose = real
+        self.assertIsNotNone(cap)
+        self.assertEqual(fmt.index, 0)
+
     def test_ask_can_be_cancelled(self):
         """선택 창을 닫으면(취소) 카메라를 열지 않는다 — 아무 카메라나 켜지 않는다."""
         import camera_picker

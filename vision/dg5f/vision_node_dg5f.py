@@ -29,6 +29,8 @@ import time
 from pathlib import Path
 
 import cv2
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # vision/ — cv_window(X 로 창 닫기)
+import cv_window  # noqa: E402
 import mediapipe as mp
 import numpy as np
 
@@ -296,7 +298,7 @@ def main():
                     (16, frame.shape[0] - 18), cv2.FONT_HERSHEY_SIMPLEX,
                     0.65, (255, 255, 255), 2, cv2.LINE_AA)
         cv2.imshow(WINDOW_NAME, frame)
-        if cv2.waitKey(1) & 0xFF == ord("q"):
+        if cv2.waitKey(1) & 0xFF == ord("q") or cv_window.closed(WINDOW_NAME):
             break
 
     cap.release()
