@@ -25,7 +25,7 @@ Unity 화면에서 ① 손을 쫙 펴도 로봇 엄지가 손바닥 앞으로 �
 - 터미널에 다음 자세가 한국어로 나오고, 카메라 창에는 영어 이름과 남은 초가 보인다.
   `GET READY` 동안 자세를 잡고, `REC` 동안 **자세를 유지한 채 손을 조금씩 돌리고
   기울인다**(손 방향이 바뀌어도 값이 버티는지 보려는 것).
-- 창에서 `s` = 지금 자세 건너뛰기, `q` = 그만두기(그때까지 찍은 것은 저장된다).
+- 창에서 `s` = 지금 자세 건너뛰기, `q` 또는 창의 X = 그만두기(그때까지 찍은 것은 저장된다).
 - 끝나면 `vision/dg5f/logs/handposes_<날짜_시각>.csv` 가 생긴다. 이 파일을 알려 주면 된다.
 
 기록 열은 `probe_landmarks.py` 와 같고(이미지 점 63 + 화면 크기 + world 점 63),
@@ -36,6 +36,8 @@ import time
 from pathlib import Path
 
 import cv2
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # vision/ — cv_window(X 로 창 닫기)
+import cv_window  # noqa: E402
 import mediapipe as mp
 
 from dg5f_paths import unique_log_path
@@ -44,7 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from config.rtauto_config import (  # noqa: E402
     VISION_CAMERA_INDEX, VISION_CAMERA_WIDTH, VISION_CAMERA_HEIGHT,
     VISION_CAMERA_FPS, VISION_CAMERA_BACKEND, VISION_CAMERA_FOURCC,
-    VISION_CAMERA_MIN_FPS,
+    VISION_CAMERA_MIN_FPS, VISION_PREVIEW_WIDTH,
 )
 
 import camera_caps  # noqa: E402
@@ -62,6 +64,7 @@ POSES = [
     ("middle_to_index", "손을 편 채 중지만 검지 쪽으로 기울인다 (약지와 벌어지게)"),
     ("middle_to_ring", "손을 편 채 중지만 약지 쪽으로 기울인다 (검지와 벌어지게)"),
 ]
+WINDOW_NAME = "record_hand_poses"
 READY_SEC = 3.0
 RECORD_SEC = 8.0
 PREP_LABEL = "-"
@@ -89,6 +92,13 @@ def main():
               "RTAUTO_VISION_CAMERA_INDEX 를 0, 1, 2 순으로 바꿔 볼 것.")
         return 1
     print(f"[카메라] {cam_fmt.text} (카메라 {cam_fmt.index}번)")
+
+    # 창은 화면에 맞는 크기로(RTAUTO_VISION_PREVIEW_WIDTH, 기본 1280) — 2560x1440 웹캠을
+    # 원본 크기로 띄우면 모니터를 넘는다(2026-09-23 사용자: "창이 너무 크다"). 모서리를 끌어
+    # 크기를 바꿀 수도 있다.
+    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+    cv2.resizeWindow(WINDOW_NAME, *camera_caps.preview_size(
+        cam_fmt.width, cam_fmt.height, VISION_PREVIEW_WIDTH))
 
     log_path = unique_log_path("handposes")
     zeros63 = ["0"] * 63
@@ -139,14 +149,14 @@ def main():
                     msg, color = f"GET READY: {pose}  {READY_SEC - el:3.1f}s", (0, 200, 255)
                 cv2.putText(frame, f"[{n}/{len(POSES)}] {msg}", (10, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
-                cv2.putText(frame, "s: skip   q: quit", (10, 60),
+                cv2.putText(frame, "s: skip   q / X: quit", (10, 60),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-                cv2.imshow("record_hand_poses", frame)
+                cv2.imshow(WINDOW_NAME, frame)
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord("s"):
                     print("        → 건너뜀")
                     break
-                if key == ord("q"):
+                if key == ord("q") or cv_window.closed(WINDOW_NAME):
                     quit_all = True
                     break
             counts[pose] = n_det

@@ -27,6 +27,8 @@ import time
 from pathlib import Path
 
 import cv2
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # vision/ — cv_window(X 로 창 닫기)
+import cv_window  # noqa: E402
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
@@ -124,7 +126,7 @@ def main():
                 else:
                     missing_now = [idx for idx in captures if corners_by_idx.get(idx) is None]
                     print(f"[스킵] 카메라 {missing_now}에서 보드를 못 봤습니다 — 다시 맞춰서 시도")
-            elif key == ord("q"):
+            elif key == ord("q") or cv_window.closed(*[f"cam{i}" for i in display_frames]):
                 break
     finally:
         mgr.stop_all()

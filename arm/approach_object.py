@@ -100,6 +100,7 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "vision" / "d405"))
+sys.path.insert(0, str(REPO_ROOT / "vision"))   # cv_window — 창 X 로 닫기
 
 from config import rtauto_config as cfg  # noqa: E402
 from arm import eye_in_hand  # noqa: E402
@@ -417,8 +418,18 @@ def show_view(obs: "Observation", plan: Optional[PreGraspPlan],
     if frame is None:
         return
     import cv2
+    import cv_window
     cv2.imshow(VIEW_WINDOW, frame)
-    cv2.waitKey(0 if hold else 1)
+    if hold:
+        cv_window.wait_any_key_or_close(VIEW_WINDOW)   # 아무 키 또는 창 X
+        return
+    cv2.waitKey(1)
+    if cv_window.closed(VIEW_WINDOW):
+        raise ViewClosed()
+
+
+class ViewClosed(Exception):
+    """`--show --watch` 중 사람이 창의 X 를 눌렀다 — 반복을 멈춘다."""
 
 
 # ---------------------------------------------------------------------------
@@ -715,6 +726,8 @@ def main(argv=None) -> int:
             time.sleep(max(0.0, args.interval))
     except KeyboardInterrupt:
         print("\n사람이 멈췄다(Ctrl+C).")
+    except ViewClosed:
+        print("\n사람이 창을 닫았다 — 멈춘다.")
     finally:
         if args.show:
             try:

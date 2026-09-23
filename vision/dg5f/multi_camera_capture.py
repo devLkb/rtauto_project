@@ -26,6 +26,8 @@ import time
 from pathlib import Path
 
 import cv2
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # vision/ — cv_window(X 로 창 닫기)
+import cv_window  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from config.rtauto_config import (
@@ -220,10 +222,12 @@ def main():
     mgr.start_all()
     try:
         while True:
+            shown = []
             for idx, frame in mgr.read_all().items():
                 if frame is not None:
                     cv2.imshow(f"cam{idx}", frame)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
+                    shown.append(f"cam{idx}")
+            if cv2.waitKey(1) & 0xFF == ord("q") or cv_window.closed(*shown):
                 break
     finally:
         mgr.stop_all()

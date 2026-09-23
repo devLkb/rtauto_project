@@ -26,6 +26,8 @@ import time
 from pathlib import Path
 
 import cv2
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # vision/ — cv_window(X 로 창 닫기)
+import cv_window  # noqa: E402
 import mediapipe as mp
 import numpy as np
 
@@ -160,7 +162,8 @@ def main():
                 y += 15
 
         cv2.imshow("dg5f calibration (q to quit)", frame)
-        if cv2.waitKey(1) & 0xFF == ord("q"):
+        if (cv2.waitKey(1) & 0xFF == ord("q")
+                or cv_window.closed("dg5f calibration (q to quit)")):
             break
 
     cap.release()

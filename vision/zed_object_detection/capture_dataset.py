@@ -16,6 +16,9 @@ import time
 from pathlib import Path
 
 import cv2
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # vision/ — cv_window(X 로 창 닫기)
+import cv_window  # noqa: E402
 import pyzed.sl as sl
 
 OUTPUT_DIR = Path(__file__).parent / "dataset" / "raw_images"
@@ -60,7 +63,7 @@ def main():
             cv2.imshow("Capture (s: 저장, q/ESC: 종료)", preview)
 
             key = cv2.waitKey(1) & 0xFF
-            if key == ord("q") or key == 27:
+            if key == ord("q") or key == 27 or cv_window.closed("Capture (s: 저장, q/ESC: 종료)"):
                 break
             if key == ord("s"):
                 filename = OUTPUT_DIR / f"img_{int(time.time() * 1000)}.jpg"

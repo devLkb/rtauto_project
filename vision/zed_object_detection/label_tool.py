@@ -21,6 +21,9 @@
 from pathlib import Path
 
 import cv2
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # vision/ — cv_window(X 로 창 닫기)
+import cv_window  # noqa: E402
 import numpy as np
 import torch
 import yaml
@@ -195,6 +198,9 @@ def main():
             cv2.imshow(WINDOW_NAME, preview)
 
             key = cv2.waitKey(20) & 0xFF
+            if cv_window.closed(WINDOW_NAME):   # 창 X — q 와 같게 끝낸다
+                stopped = True
+                break
             if key == 255:  # 키 입력 없음
                 continue
 

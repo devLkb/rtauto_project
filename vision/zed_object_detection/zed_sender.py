@@ -29,6 +29,8 @@ import time
 from pathlib import Path
 
 import cv2
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # vision/ — cv_window(X 로 창 닫기)
+import cv_window  # noqa: E402
 import numpy as np
 import pyzed.sl as sl
 from ultralytics import YOLO
@@ -203,7 +205,7 @@ def main():
             cv2.imshow(CAMERA_WINDOW, frame)
             cv2.imshow(COORDS_WINDOW, coord_img)
             key = cv2.waitKey(1) & 0xFF
-            if key == ord("q") or key == 27:
+            if key == ord("q") or key == 27 or cv_window.closed(CAMERA_WINDOW, COORDS_WINDOW):
                 break
 
             now = time.time()
