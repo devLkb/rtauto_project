@@ -670,6 +670,29 @@ def list_cameras(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS, fps=No
     return found
 
 
+def cached_cameras(backend_name="auto", fourcc="", fps=None, cache_path=CAMERA_CAPS_PATH,
+                   max_index=SCAN_MAX_INDEX):
+    """카메라를 **하나도 열지 않고** 저장해 둔 값만으로 목록을 만든다 — 바로 나온다.
+
+    2026-09-23 사용자 요청: "카메라 자동 말고 기존에 있던 리스트만 빠르게". 카메라를 열어
+    확인하면 한 대에 1.4초, 없는 번호 확인에 최대 3초가 걸린다. 예전에 한 번 찾아 파일
+    (`camera_caps_cache.json`)에 적어 둔 카메라는 다시 열 필요 없이 그 값으로 보여 준다.
+    그 사이 카메라를 뺐거나 새로 꽂았으면 선택 창의 "다시 찾기"로 예전처럼 찾는다.
+    """
+    out = []
+    for index in range(max_index + 1):
+        e = _cache_entry(cache_path, _cache_key(index, backend_name, fourcc, fps=fps))
+        if e is not None:
+            out.append({"index": index, "width": e["width"], "height": e["height"],
+                        "measured_fps": e["measured_fps"], "preview": None, "cached": True})
+    return out
+
+
+def _recommend(cams, min_fps):
+    return max(cams, key=lambda c: (c["measured_fps"] >= min_fps,
+                                    c["width"] * c["height"], -c["index"]))["index"]
+
+
 def pick_best_index(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS, fps=None,
                     cache_path=CAMERA_CAPS_PATH, use_cache=True, log=print,
                     capture_factory=None):
@@ -693,8 +716,12 @@ def pick_best_index(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS, fps
 
 def ask_user_to_choose(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS, fps=None,
                        cache_path=CAMERA_CAPS_PATH, use_cache=True, log=print,
-                       capture_factory=None):
+                       capture_factory=None, force_scan=False):
     """꽂혀 있는 카메라를 찾아 **사람에게 창으로 물어본다**. 고른 번호(취소하면 None).
+
+    **빠른 목록 먼저** (2026-09-23): 저장해 둔 카메라가 있으면 카메라를 열지 않고 그 목록을
+    바로 띄운다(`cached_cameras`). 창에서 "다시 찾기"를 누르거나 `force_scan=True` 면
+    아래 원래 방식(하나씩 열어 확인 + 사진)으로 찾는다.
 
     창을 그리는 일은 camera_picker.py가 한다 — 여기서는 카메라를 찾아 넘겨줄 뿐이다.
     카메라가 한 대뿐이면 묻지 않고 그 번호를 쓴다(쓸데없이 클릭하게 만들지 않는다).
@@ -704,6 +731,19 @@ def ask_user_to_choose(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS, 
     없는 번호 하나를 판정하는 데 0.1초 → 3초로 느려져, 전체가 2.7초에서 19초가 됐다.
     그래서 **찾을 때는 다 닫고**, 고른 뒤에 다시 연다.
     """
+    import camera_picker
+    if use_cache and not force_scan:
+        cams = cached_cameras(backend_name=backend_name, fourcc=fourcc, fps=fps,
+                              cache_path=cache_path)
+        if cams:
+            log(f"[카메라] 저장해 둔 목록 {len(cams)}대를 바로 보여 줍니다 "
+                "(새로 꽂았으면 창에서 '다시 찾기').")
+            chosen = camera_picker.choose(cams, recommended_index=_recommend(cams, min_fps),
+                                          allow_rescan=True)
+            if chosen != camera_picker.RESCAN:
+                if chosen is not None:
+                    log(f"[카메라] {chosen}번을 선택했습니다.")
+                return chosen
     log("[카메라] 꽂혀 있는 카메라를 찾는 중입니다 — 잠시 걸립니다…")
     cams = list_cameras(backend_name=backend_name, fourcc=fourcc, min_fps=min_fps, fps=fps,
                         cache_path=cache_path, use_cache=use_cache,
@@ -712,10 +752,7 @@ def ask_user_to_choose(backend_name="auto", fourcc="", min_fps=DEFAULT_MIN_FPS, 
     if not cams:
         log("[카메라] 쓸 수 있는 카메라를 찾지 못했습니다.")
         return None
-    best = max(cams, key=lambda c: (c["measured_fps"] >= min_fps,
-                                    c["width"] * c["height"], -c["index"]))
-    import camera_picker
-    chosen = camera_picker.choose(cams, recommended_index=best["index"])
+    chosen = camera_picker.choose(cams, recommended_index=_recommend(cams, min_fps))
     if chosen is not None:
         log(f"[카메라] {chosen}번을 선택했습니다.")
     return chosen
@@ -732,7 +769,8 @@ def open_camera(index, backend_name="auto", width=None, height=None, fps=None,
     factory = capture_factory or cv2.VideoCapture
     backend = backend_id(backend_name)
     index = parse_index_spec(index)
-    if index == ASK:                       # 설정이 "ask" — 창을 띄워 사람에게 물어본다
+    asked = index == ASK
+    if asked:                              # 설정이 "ask" — 창을 띄워 사람에게 물어본다
         index = ask_user_to_choose(
             backend_name=backend_name, fourcc=fourcc, min_fps=min_fps, fps=fps,
             cache_path=cache_path, use_cache=use_cache, log=log,
@@ -756,6 +794,17 @@ def open_camera(index, backend_name="auto", width=None, height=None, fps=None,
         return cap
 
     cap = _fresh()
+    if not cap.isOpened() and asked:
+        # 빠른 목록(저장된 값)에서 골랐는데 그 사이 빠진 카메라 — 이번엔 실제로 찾아서 다시 묻는다.
+        cap.release()
+        log(f"[카메라] {index}번이 안 열립니다 — 빠졌을 수 있어 꽂힌 카메라를 새로 찾습니다.")
+        index = ask_user_to_choose(
+            backend_name=backend_name, fourcc=fourcc, min_fps=min_fps, fps=fps,
+            cache_path=cache_path, use_cache=use_cache, log=log,
+            capture_factory=capture_factory, force_scan=True)
+        if index is None:
+            return None, None
+        cap = _fresh()
     if not cap.isOpened():
         cap.release()
         return None, None
