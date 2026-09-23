@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-**프로젝트 이름: 피지컬 트윈 AI**
+**프로젝트 이름: Cobo-Sight**
 
 이 파일은 이 리포에서 작업하는 모든 Claude 세션이 따라야 하는 프로젝트 최상위 지침이다.
 세부 아키텍처·진행상황·의사결정 근거는 [`docs/SIM2REAL_ROADMAP.md`](docs/SIM2REAL_ROADMAP.md)가

@@ -1,6 +1,6 @@
 # KDT_1_AX_rtauto — UR16e + DG-5F-M-R 디지털 트윈
 
-**프로젝트 이름: 피지컬 트윈 AI**
+**프로젝트 이름: Cobo-Sight**
 
 확정 하드웨어인 UR16e와 Tesollo DG-5F-M-R 오른손으로 파지·들어올리기를 검증하는
 디지털 트윈 프로젝트다. 현재 시연 씬에서는 MediaPipe가 오른손 손가락을 구동하고,
