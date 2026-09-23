@@ -441,6 +441,51 @@ def thumb_features(lm):
     }
 
 
+# ── 엄지 대향(1_2) 새 계산식 (2026-09-23) ────────────────────────────────────
+# 왜 바꿨나: 사용자 지적 — "손바닥을 쫙 폈는데 로봇 엄지가 앞으로 나온다. 앞으로 와야 할 때와
+#   옆에 있어야 할 때가 구분이 안 된다." 자세 녹화(vision/dg5f/logs/handposes_20260923_144628.csv,
+#   자세마다 약 210장면, 분석: analyze_hand_poses.py)로 확인한 원인:
+#     옛 "엄지끝~새끼뿌리 거리" 는  엄지 붙이기 0.87 / 집게 0.91 / 엄지 앞으로 0.78 로 **셋이 같았고**,
+#     기준값(D_OPEN 1.33)보다 짧아 붙이기만 해도 로봇 1_2 가 약 -43° 로 앞에 나와 있었다.
+# 새 방식 — 두 가지를 따로 재서 큰 쪽을 쓴다(0 = 손바닥 면, 1 = 최대 대향):
+#   ① 들림: 엄지 첫 뼈(1→2)가 손바닥 면에서 들린 각. 붙이기 8° / 집게 26° / 앞으로 31°.
+#      단 엄지를 옆으로 **멀리 벌리면** 이 각이 같이 커 보이므로(벌리기 23°) 엄지끝이 검지 뿌리에서
+#      엄지 쪽으로 멀리 나가 있을수록 ①을 줄인다.
+#   ② 가로지름: 엄지끝이 검지 뿌리보다 새끼 쪽으로 넘어간 정도(손바닥 폭 단위).
+#      붙이기 +0.33 / 새끼 뿌리에 대기 -0.77.
+# 녹화에서 자세별 대향량(중앙값): 붙이기 0.00 / 벌리기 0.00 / 집게 0.61 / 앞으로 0.87 / 새끼 뿌리 0.97 /
+#   주먹 0.62 → 로봇 1_2(direct) 붙이기 0° / 집게 -58° / 앞으로 -83° / 새끼 뿌리 -92°(옛 방식: 붙이기 -43°).
+#   시험 tests/test_thumb_opposition.py 가 이 녹화에서 뽑은 장면(fixtures/handposes_20260923.json)으로 확인한다.
+# "distance" 로 두면 옛 방식(아래 _thumb_opposition + D_OPEN/D_FULL)으로 되돌아간다.
+THUMB_OPP_METHOD = "lift_cross"
+THUMB_OPP_LIFT_DEG = (10.0, 35.0)      # ① 들림 각 → 0..1 (붙이기 p95 9.5° 위에서 시작)
+THUMB_OPP_CROSS = (0.2, -0.8)          # ② 가로지름 → 0..1 (붙이기 p5 0.22 아래에서 시작)
+THUMB_OPP_SPREAD_FADE = (0.4, 1.0)     # 엄지끝이 이만큼(손바닥 폭 단위) 엄지 쪽으로 나가면 ①을 0으로
+
+
+def _ramp(x, lo, hi):
+    """x 가 lo → hi 로 갈 때 0 → 1 (방향은 lo, hi 순서가 정한다). 범위 밖은 0 또는 1."""
+    if abs(hi - lo) < 1e-12:
+        return 0.0
+    return min(1.0, max(0.0, (x - lo) / (hi - lo)))
+
+
+def thumb_opp_amount_lm(lm):
+    """엄지 대향량 0(손바닥 면) ~ 1(최대 대향) — 새 방식(THUMB_OPP_METHOD="lift_cross")."""
+    f = thumb_features(lm)
+    lift = _ramp(-f["meta_out"], *THUMB_OPP_LIFT_DEG)
+    lift *= 1.0 - _ramp(f["tip_radial"], *THUMB_OPP_SPREAD_FADE)
+    cross = _ramp(f["tip_radial"], *THUMB_OPP_CROSS)
+    return max(lift, cross)
+
+
+def _opp_amount_from_raw(v):
+    """compute_raw 가 1_2 칸에 넣은 값 → 대향량 0..1. 방식에 따라 칸의 뜻이 다르다."""
+    if THUMB_OPP_METHOD == "lift_cross":
+        return min(1.0, max(0.0, float(v)))      # 이미 0..1 대향량
+    return _thumb_opp_amount(v)                   # 옛 방식: 거리
+
+
 def _thumb_opp_amount(d):
     """대향 프록시(거리) → 0(펴짐) ~ 1(완전대향) 비율. 거리는 대향할수록 '작아지므로' 반전한다."""
     span = THUMB_OPP_D_OPEN - THUMB_OPP_D_FULL
@@ -467,7 +512,11 @@ OPP_GATE_HI = 0.70   # (게이트 ON일 때) 이 대향량 이상: 벌림 완전
 
 def _opp_gate(opp_d):
     """대향이 깊을수록 0에 가까운 게이트값[0,1]. 인자는 _thumb_opposition의 **거리** 프록시."""
-    t = _thumb_opp_amount(opp_d)
+    return _opp_gate_amount(_thumb_opp_amount(opp_d))
+
+
+def _opp_gate_amount(t):
+    """_opp_gate 와 같은 게이트 — 인자가 이미 대향량(0..1)일 때."""
     if t <= OPP_GATE_LO:
         return 1.0
     if t >= OPP_GATE_HI:
@@ -524,10 +573,11 @@ DIP_PIP_COUPLING = 0.75
 def compute_raw(lm):
     # 엄지 벌림/접힘(1_1)과 대향(1_2)은 안장관절서 자연히 섞여 움직임 → 두 프록시를 독립적으로
     #   그대로 내보내 로봇 1_1·1_2가 함께(복합) 움직이게 한다(사용자 요구). 게이트는 기본 OFF.
-    _opp_thumb = _thumb_opposition(lm)
+    _opp_thumb = (thumb_opp_amount_lm(lm) if THUMB_OPP_METHOD == "lift_cross"
+                  else _thumb_opposition(lm))
     _abd_thumb = _thumb_abduction(lm)
     if THUMB_ABD_OPP_GATE:                             # (기본 False) 켜면 fold 중 벌림 감쇠 — 실험용
-        _abd_thumb *= _opp_gate(_opp_thumb)
+        _abd_thumb *= _opp_gate_amount(_opp_amount_from_raw(_opp_thumb))
     return [
         # 엄지
         _abd_thumb,                                    # thumb_cmc(1_1): 엄지 손바닥평면 안 운동 = 벌림(검지와 수직)↔접힘(손가락과 평행). 프록시=cmc→mcp 벡터와 0→5 벡터의 손바닥평면 성분 사이각. FK: 로봇 1_1 −77°=평행(접음)/+22°=수직(벌림)
@@ -540,7 +590,7 @@ def compute_raw(lm):
         _bend(lm, INDEX[0], INDEX[1], INDEX[2]),       # index_pip(6번) 관절의 각도
         DIP_PIP_COUPLING * _bend(lm, INDEX[0], INDEX[1], INDEX[2]),   # index_dip(7번): PIP에서 유도(측정 z 부실). =k×PIP
         # 중지
-        _abduction(lm, MIDDLE),                        # middle_abd — 값은 계산하되 채널이 gated라 0으로 나간다(표 주석 참고)
+        _abduction(lm, MIDDLE) - math.radians(MIDDLE_ABD_ZERO_DEG),   # middle_abd(3_1) — 2026-09-23 켬, 0점 보정(아래 상수)
         _bend_mcp(lm, MIDDLE),                         # middle_mcp(9번) 관절의 각도 (굽힘평면 투영)
         _bend(lm, MIDDLE[0], MIDDLE[1], MIDDLE[2]),    # middle_pip(10번) 관절의 각도
         DIP_PIP_COUPLING * _bend(lm, MIDDLE[0], MIDDLE[1], MIDDLE[2]),  # middle_dip(11번): PIP에서 유도. =k×PIP
@@ -620,6 +670,11 @@ ABD_FADE_SOURCE = {
     "pinky_lat": "pinky_mcp",
 }
 ABD_GAIN = 1.0  # 로봇도 = 사람 벌림각(deg) × 이 값. 1.0 = 1:1(증폭 없음).
+
+# 중지 벌림(3_1)의 0점[deg]. 손가락을 곧게 모으거나 편 손에서도 계산값이 +5° 쯤 나와(자세 녹화
+# 2026-09-23: 모으기 4.7° / 편 손 5.1°) 로봇 중지가 늘 조금 기운 채였다 — 그만큼 빼서 0으로 맞춘다.
+# 같은 녹화에서 검지 쪽으로 기울이기 -8.6° / 약지 쪽 +14.4° → 보정 후 약 -14° / +9°.
+MIDDLE_ABD_ZERO_DEG = 5.0
 
 # ── 엄지 대향(thumb_opp, 1_2) 거리 프록시 상수 ────────────────────────────────
 # 프록시 = ‖엄지끝(4) − 소지MCP(17)‖ / ‖중지MCP(9) − 손목(0)‖  (_thumb_opposition 참조)
@@ -840,7 +895,7 @@ def _map_ratio(raw, hand):
             #   _thumb_opp_amount가 [D_OPEN, D_FULL] 거리를 0~1 대향량으로 뒤집어 준다(대향할수록 거리↓).
             #   부호가 없는 양이므로 손별 부호 표(옛 THUMB_OPP_HAND_SIGN)가 필요 없다 —
             #   로봇 좌우 방향은 아래 left-mirror가 담당한다.
-            deg = _thumb_opp_amount(v) * THUMB_OPP_RATIO_MAX_DEG   # 0(펴짐) .. MAX(−95, 완전대향)
+            deg = _opp_amount_from_raw(v) * THUMB_OPP_RATIO_MAX_DEG   # 0(펴짐) .. MAX(−95, 완전대향)
         elif name in ABDUCTION_CHANNELS:
             # ★벌림은 0중심 양방향 신호(v=0=중립=손가락 평행). 균일 비율식은 중립을 0°로 안 보내
             #   (예 pinky_lat v=0→+41.6°) rest에서 손가락이 옆으로 휘어버림 → 0을 중심으로 각 방향을
@@ -900,7 +955,7 @@ def map_to_dg5f(raw, hand="right", mode="direct"):
         elif name == "thumb_opp":
             # 대향량(0~1, 거리 프록시) × 최대각 → 로봇 깊이각. dmin=0/dmax=-155 부호 맞춰 음수.
             #   direct라도 프록시가 각도가 아니라 거리라 '1:1'이 성립하지 않는다 → GAIN이 스케일 담당.
-            deg = -_thumb_opp_amount(v) * THUMB_OPP_GAIN
+            deg = -_opp_amount_from_raw(v) * THUMB_OPP_GAIN
             deg = max(dmax, min(dmin, deg))
         elif name == "thumb_cmc":
             # 벌림/접힘: |abd|(벌림 크기, 방향·거울 불변)를 [H_FOLD,H_SPREAD]→[FOLD_DEG,SPREAD_DEG] 선형.
