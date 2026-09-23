@@ -26,6 +26,13 @@ Unity 화면에서 ① 손을 쫙 펴도 로봇 엄지가 손바닥 앞으로 �
   "옆을 보면 집게가 안 잡힌다" 를 재려는 것)::
 
       python vision/dg5f/record_hand_poses.py --set side
+
+- `--camera d405` 를 붙이면 웹캠 대신 **D405** 로 찍는다(2026-09-23 시험). 관절마다 D405 가 잰
+  입체 위치(`d3_*` 열, 미터)가 함께 남는다. D405 는 약 7~50 cm 에서 잘 재므로 **손을 카메라에서
+  30~50 cm 안에** 든다::
+
+      python vision/dg5f/record_hand_poses.py --camera d405
+      python vision/dg5f/record_hand_poses.py --camera d405 --set side
 - 터미널에 다음 자세가 한국어로 나오고, 카메라 창에는 영어 이름과 남은 초가 보인다.
   `GET READY` 동안 자세를 잡고, `REC` 동안 **자세를 유지한 채 손을 조금씩 돌리고
   기울인다**(손 방향이 바뀌어도 값이 버티는지 보려는 것).
@@ -50,10 +57,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from config.rtauto_config import (  # noqa: E402
     VISION_CAMERA_INDEX, VISION_CAMERA_WIDTH, VISION_CAMERA_HEIGHT,
     VISION_CAMERA_FPS, VISION_CAMERA_BACKEND, VISION_CAMERA_FOURCC,
-    VISION_CAMERA_MIN_FPS, VISION_PREVIEW_WIDTH,
+    VISION_CAMERA_MIN_FPS, VISION_PREVIEW_WIDTH, D405_NEAR_M, D405_FAR_M,
 )
 
 import camera_caps  # noqa: E402
+import depth_landmarks  # noqa: E402
 
 #: (영어 이름 — 화면·파일용, 한국어 안내 — 터미널용). 순서대로 안내한다.
 POSES = [
@@ -87,12 +95,66 @@ RECORD_SEC = 8.0
 PREP_LABEL = "-"
 
 
-def _header():
+def _header(with_depth=False):
     return ",".join(["t_unix", "detected"]
                     + [f"lm{i}_{a}" for i in range(21) for a in "xyz"]
                     + ["frame_w", "frame_h"]
                     + [f"wl{i}_{a}" for i in range(21) for a in "xyz"]
+                    + ([f"d3{i}_{a}" for i in range(21) for a in "xyz"] if with_depth else [])
                     + ["pose"]) + "\n"
+
+
+class WebcamSource:
+    """평소 텔레옵과 같은 웹캠. 거울 모드로 뒤집은 사진을 준다."""
+
+    def __init__(self):
+        self.cap, fmt = camera_caps.open_camera(
+            VISION_CAMERA_INDEX, backend_name=VISION_CAMERA_BACKEND,
+            width=VISION_CAMERA_WIDTH, height=VISION_CAMERA_HEIGHT,
+            fps=VISION_CAMERA_FPS, fourcc=VISION_CAMERA_FOURCC,
+            min_fps=VISION_CAMERA_MIN_FPS)
+        if self.cap is None:
+            raise RuntimeError(f"카메라 {VISION_CAMERA_INDEX} 열기 실패 — 리포 루트 .env 의 "
+                               "RTAUTO_VISION_CAMERA_INDEX 를 0, 1, 2 순으로 바꿔 볼 것.")
+        self.size = (fmt.width, fmt.height)
+        self.text = f"웹캠 {fmt.text} (카메라 {fmt.index}번)"
+
+    def read(self):
+        """(뒤집은 컬러, 뒤집은 깊이 또는 None, 초점·중심 또는 None). 실패하면 None."""
+        ok, frame = self.cap.read()
+        return (cv2.flip(frame, 1), None, None) if ok else None
+
+    def close(self):
+        self.cap.release()
+
+
+class D405Source:
+    """D405 컬러 + 컬러에 맞춘 깊이. 깊이를 줄이지 않는다(관절 화소와 1:1 로 맞아야 한다)."""
+
+    def __init__(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "d405"))
+        import d405_stream
+        self.stream = d405_stream.open_depth(color=True, filters=False)
+        (depth, color), intr = self._first(d405_stream.WARMUP_FRAMES)
+        self.size = (color.shape[1], color.shape[0])
+        self.text = "D405 {}x{} (깊이 {}x{})".format(*self.size, depth.shape[1], depth.shape[0])
+
+    def _first(self, warmup):
+        got, intr = self.stream.frames(count=1, warmup=warmup)
+        self._intr = intr
+        return got[-1], intr
+
+    def read(self):
+        got, intr = self.stream.frames(count=1, warmup=0)
+        if not got or got[-1][1] is None:
+            return None
+        depth, color = got[-1]
+        intr = intr or self._intr
+        return (cv2.flip(color, 1), cv2.flip(depth, 1),
+                (intr.fx, intr.fy, intr.ppx, intr.ppy))
+
+    def close(self):
+        self.stream.close()
 
 
 def main():
@@ -100,33 +162,34 @@ def main():
     ap = argparse.ArgumentParser(description="자세를 안내하며 손 관절 점을 기록")
     ap.add_argument("--set", choices=sorted(POSE_SETS), default="front",
                     help="front=정면 자세 10가지(기본) / side=손을 옆으로 돌린 자세 6가지")
-    poses = POSE_SETS[ap.parse_args().set]
+    ap.add_argument("--camera", choices=("webcam", "d405"), default="webcam",
+                    help="webcam=평소 텔레옵 웹캠(기본) / d405=D405 컬러+깊이(관절 입체 위치도 기록)")
+    args = ap.parse_args()
+    poses = POSE_SETS[args.set]
     hands = mp.solutions.hands.Hands(      # vision_node_dg5f.py 와 같은 설정
         model_complexity=1, max_num_hands=1,
         min_detection_confidence=0.6, min_tracking_confidence=0.6)
-    cap, cam_fmt = camera_caps.open_camera(
-        VISION_CAMERA_INDEX, backend_name=VISION_CAMERA_BACKEND,
-        width=VISION_CAMERA_WIDTH, height=VISION_CAMERA_HEIGHT,
-        fps=VISION_CAMERA_FPS, fourcc=VISION_CAMERA_FOURCC,
-        min_fps=VISION_CAMERA_MIN_FPS)
-    if cap is None:
-        print(f"[오류] 카메라 {VISION_CAMERA_INDEX} 열기 실패 — 리포 루트 .env 의 "
-              "RTAUTO_VISION_CAMERA_INDEX 를 0, 1, 2 순으로 바꿔 볼 것.")
+    try:
+        src = D405Source() if args.camera == "d405" else WebcamSource()
+    except Exception as e:                    # 카메라가 없거나 다른 프로그램이 쥐고 있음
+        print(f"[오류] {e}")
         return 1
-    print(f"[카메라] {cam_fmt.text} (카메라 {cam_fmt.index}번)")
+    with_depth = args.camera == "d405"
+    print(f"[카메라] {src.text}")
 
     # 창은 화면에 맞는 크기로(RTAUTO_VISION_PREVIEW_WIDTH, 기본 1280) — 2560x1440 웹캠을
     # 원본 크기로 띄우면 모니터를 넘는다(2026-09-23 사용자: "창이 너무 크다"). 모서리를 끌어
     # 크기를 바꿀 수도 있다.
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
     cv2.resizeWindow(WINDOW_NAME, *camera_caps.preview_size(
-        cam_fmt.width, cam_fmt.height, VISION_PREVIEW_WIDTH))
+        src.size[0], src.size[1], VISION_PREVIEW_WIDTH))
 
-    log_path = unique_log_path("handposes")
+    log_path = unique_log_path("handposes_d405" if with_depth else "handposes")
+    nan63 = ["nan"] * 63
     zeros63 = ["0"] * 63
     counts = {}
     with open(log_path, "w", encoding="utf-8") as log_f:
-        log_f.write(_header())
+        log_f.write(_header(with_depth))
         quit_all = False
         for n, (pose, text) in enumerate(poses, 1):
             print(f"\n[{n}/{len(poses)}] {text}")
@@ -134,11 +197,12 @@ def main():
                   "(기록 중엔 자세를 유지한 채 손을 조금씩 돌리고 기울일 것)")
             t_start = time.time()
             n_det = 0
+            n_depth = 0
             while True:
-                ok, frame = cap.read()
-                if not ok:
+                got = src.read()
+                if got is None:
                     continue
-                frame = cv2.flip(frame, 1)   # vision_node 와 같은 거울 모드
+                frame, depth, intr = got      # 둘 다 이미 거울 모드로 뒤집혀 있다
                 res = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
                 now = time.time()
                 el = now - t_start
@@ -157,13 +221,25 @@ def main():
                         wcoords = [f"{v:.6f}" for lm in wl.landmark for v in (lm.x, lm.y, lm.z)]
                     else:
                         wcoords = zeros63
+                    dcoords = []
+                    if with_depth:
+                        pts3, ok3 = depth_landmarks.landmarks_3d(
+                            [(lm.x, lm.y) for lm in hl.landmark], depth, *intr, mirror=True,
+                            near=D405_NEAR_M, far=D405_FAR_M)
+                        dcoords = [",".join(f"{v:.5f}" for v in p) for p in pts3]
+                        if recording and ok3.all():
+                            n_depth += 1
                     log_f.write(f"{now:.3f},1," + ",".join(coords) + f",{w},{h},"
-                                + ",".join(wcoords) + f",{label}\n")
+                                + ",".join(wcoords)
+                                + ("," + ",".join(dcoords) if with_depth else "")
+                                + f",{label}\n")
                     if recording:
                         n_det += 1
                 else:
                     log_f.write(f"{now:.3f},0," + ",".join(zeros63) + f",{w},{h},"
-                                + ",".join(zeros63) + f",{label}\n")
+                                + ",".join(zeros63)
+                                + ("," + ",".join(nan63) if with_depth else "")
+                                + f",{label}\n")
 
                 if recording:
                     msg, color = f"REC {pose}  {READY_SEC + RECORD_SEC - el:4.1f}s", (0, 0, 255)
@@ -182,12 +258,13 @@ def main():
                     quit_all = True
                     break
             counts[pose] = n_det
-            print(f"        손이 잡힌 장면 {n_det}개")
+            print(f"        손이 잡힌 장면 {n_det}개"
+                  + (f", 그중 21개 관절 깊이를 다 읽은 장면 {n_depth}개" if with_depth else ""))
             if quit_all:
                 print("[중단] q — 여기까지 저장한다.")
                 break
 
-    cap.release()
+    src.close()
     cv2.destroyAllWindows()
     print(f"\n[끝] 저장: {log_path}")
     weak = [p for p, c in counts.items() if c < 60]
