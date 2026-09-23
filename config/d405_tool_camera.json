@@ -1,0 +1,20 @@
+{
+  "_readme": [
+    "손목 카메라(D405)가 UR16e 팔 끝(tool0)의 어디에 어떤 방향으로 붙었나 = T_tool_camera.",
+    "P_base = T_base_tool x T_tool_camera x P_camera. 읽는 쪽: arm/eye_in_hand.py CameraMount.from_config().",
+    "TODO(CALIBRATION_REQUIRED): 아래 값은 2026-09-23 현재 **자리 표시용**(회전 없음, 이동 없음)이다. 실측값이 아니다.",
+    "브라켓을 달고 손-눈 맞추기(BACKLOG D-7, docs/FESTA_PREGRASP_PLAN.md Q2)를 한 뒤 translation/rotation 을 바꾸고",
+    "status 를 MEASURED(자로 재거나 도면에서 읽음) 또는 VALIDATED(실물 손-눈 맞추기로 검증 끝남)로 바꾼다.",
+    "status 가 VALIDATED 가 아니면 실물 자동 이동은 막힌다(가짜 팔 URSim 은 --unvalidated-mount-ok 로만 예외).",
+    "🛑 남의 로봇·다른 카메라의 장착값을 실측값처럼 넣지 않는다. source 에 값의 출처를, measured_on 에 잰 날짜를 적는다.",
+    "rotation.type 은 rpy_deg(Z(yaw)->Y(pitch)->X(roll) 순서, 도) 또는 quaternion(x, y, z, w) 중 하나."
+  ],
+  "status": "CALIBRATION_REQUIRED",
+  "parent_frame": "tool0",
+  "child_frame": "d405_color_optical_frame",
+  "child_frame_note": "x 오른쪽, y 아래, z 앞(카메라가 보는 방향). vision/d405/d405_stream.py 가 깊이를 컬러에 맞춰 정렬하므로 점들은 컬러 렌즈 기준이다.",
+  "translation_m": {"x": 0.0, "y": 0.0, "z": 0.0},
+  "rotation": {"type": "rpy_deg", "roll": 0.0, "pitch": 0.0, "yaw": 0.0},
+  "source": "PLACEHOLDER — identity. 실측 안 함.",
+  "measured_on": null
+}

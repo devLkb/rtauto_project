@@ -401,51 +401,45 @@ D405_SYNTH_HEIGHT = int(_env("RTAUTO_D405_SYNTH_HEIGHT", "120"))
 # ---------------- 손목 카메라가 팔 끝에 어떻게 붙었나 (D-6) ----------------
 # 🛑 **이 값이 없으면 카메라가 와도 본 것을 로봇 좌표로 못 옮긴다.**
 # 카메라는 "내 앞 20 cm 에 물체가 있다" 까지만 안다. 그걸 "로봇 기준으로 어디" 로
-# 바꾸려면 **카메라가 팔 끝의 어디에 어떤 방향으로 붙었는지**를 알아야 한다.
-# docs/EXTERNAL_GRASP_POLICY_SURVEY.md §9 가 "이게 먼저다" 라고 지목한 항목이다.
+# 바꾸려면 **카메라가 팔 끝(tool0)의 어디에 어떤 방향으로 붙었는지**를 알아야 한다.
 #
-# ⚠️ **기본값 0 은 "아직 안 쟀다" 는 뜻이지 "붙은 자리가 원점" 이라는 뜻이 아니다.**
-#    0 인 채로도 배관은 돌지만(원칙 2 — 새 머신에서 바로 실행 가능), 결과를 믿으면 안 된다.
-#    `arm/eye_in_hand.py --check` 가 이 상태를 눈에 띄게 알려 준다.
+#     P_base = T_base_tool x T_tool_camera x P_camera
+#
+# T_tool_camera(이 장착값)는 **파일 하나**가 정본이다 — `config/d405_tool_camera.json`.
+# 2026-09-23 전에는 `.env` 의 RTAUTO_D405_MOUNT_XYZ_M / _RPY_DEG / _PARENT / _VALIDATED
+# 였는데, 장착값은 PC 가 아니라 **로봇에 딸린 값**이라 git 이 추적하는 파일로 옮겼다
+# (.env 는 다른 PC 로 안 따라온다). 파일에는 값과 함께 "잰 상태"(status)·출처·잰 날짜를
+# 적는다. 읽고 검사하는 쪽은 `arm/eye_in_hand.py` 의 `CameraMount.from_config()` 다.
+#
+# 🛑 CALIBRATION_REQUIRED — 2026-09-23 현재 **아직 안 쟀다.** 파일의 값은 회전 없음·
+#    이동 없음(= 카메라가 tool0 원점에 붙었다고 치는) **자리 표시용 값**이다. 배관은
+#    돌지만(원칙 2) 결과를 믿으면 안 되고, **실물 자동 이동은 막힌다.**
+#    남의 로봇·다른 카메라의 장착값을 실측값처럼 넣지 않는다.
 #
 # 재는 법: 체커보드 같은 표식을 고정해 두고 팔을 여러 자세로 옮기며 찍어, 팔 자세와
 #         카메라가 본 표식 위치를 맞춰 푼다(= 흔히 말하는 손-눈 맞추기).
 #         BACKLOG D-7 / FESTA_PREGRASP_PLAN Q2.
 
-#: 카메라가 어느 링크에 붙어 있는가. **`tool0` 이 기본이다** — `flange` 와 위치는 같지만
-#: 방향이 120도 다르다(2026-09-17 URSim 실측으로 확인한 실제 버그).
-D405_MOUNT_PARENT = _env("RTAUTO_D405_MOUNT_PARENT", "tool0")
+#: 장착값 파일 경로(리포 상대 또는 절대). 다른 로봇·다른 장착으로 바꿔 시험할 때만 덮어쓴다.
+D405_TOOL_CAMERA_FILE = _env("RTAUTO_D405_TOOL_CAMERA_FILE", "config/d405_tool_camera.json")
 
-#: 그 링크 기준 카메라 위치 (x, y, z) [m]. 0,0,0 = 아직 안 쟀다.
-D405_MOUNT_XYZ_M = tuple(
-    float(v) for v in _env("RTAUTO_D405_MOUNT_XYZ_M", "0,0,0").split(","))
+#: "쟀다"(MEASURED/VALIDATED) 고 적힌 장착값에서 카메라가 팔 끝(tool0)으로부터 떨어질 수
+#: 있는 최대 거리 [m]. 손목 브라켓 크기를 넘는 값은 단위(mm↔m) 착오로 보고 거절한다.
+#: 넉넉히 잡은 상한이지 실측값이 아니다 — 브라켓이 나오면 줄여도 된다.
+D405_MOUNT_MAX_OFFSET_M = float(_env("RTAUTO_D405_MOUNT_MAX_OFFSET_M", "0.30"))
 
-#: 그 링크 기준 카메라 방향 (roll, pitch, yaw) [도]. 0,0,0 = 아직 안 쟀다.
-D405_MOUNT_RPY_DEG = tuple(
-    float(v) for v in _env("RTAUTO_D405_MOUNT_RPY_DEG", "0,0,0").split(","))
-
-
-def d405_mount_measured():
-    """손목 카메라 장착값을 **실제로 쟀는가**. 전부 0이면 아직 안 잰 것으로 본다.
-
-    ⚠️ 정말로 0,0,0 인 장착은 현실에 없다(카메라가 팔 끝 축 위 한 점에 부피 없이
-    붙을 수는 없다). 그래서 0을 "안 쟀음" 신호로 써도 안전하다.
-
-    🛑 **이건 "값이 들어있다"일 뿐 "실물로 검증했다"가 아니다** (2026-09-21 코드
-    리뷰로 발견). 사람이 자를 잘못 읽고 아무 값이나 넣어도 이 함수는 True를 낸다 —
-    실물 자동 이동 여부를 가르는 데는 `d405_mount_validated()`를 대신 써야 한다.
-    """
-    return any(abs(v) > 1e-9 for v in D405_MOUNT_XYZ_M + D405_MOUNT_RPY_DEG)
+#: 2026-09-23 에 파일로 옮기며 **없앤** 옛 `.env` 키들. 이 중 하나라도 남아 있으면
+#: `CameraMount.from_config()` 가 멈춘다 — 파일과 `.env` 두 곳에 값이 있으면 어느 쪽이
+#: 쓰였는지 모르게 되기 때문이다(정본은 하나).
+D405_MOUNT_LEGACY_ENV_KEYS = (
+    "RTAUTO_D405_MOUNT_PARENT", "RTAUTO_D405_MOUNT_XYZ_M",
+    "RTAUTO_D405_MOUNT_RPY_DEG", "RTAUTO_D405_MOUNT_VALIDATED",
+)
 
 
-# 🛑 **손목 카메라 장착값을 실물로 검증했는가 — 실물 자동 이동을 여는 유일한 열쇠**
-# (P1-5, 2026-09-21 코드 리뷰로 추가). `d405_mount_measured()`(위)는 "0이 아닌 값이
-# 들어있다"만 보므로 실물 검증의 증거가 못 된다. 이 값은 **기본 false**이고, hand-eye
-# 검증(BACKLOG Q2/Q3, docs/FESTA_PREGRASP_PLAN.md §7-2 — 팔을 여러 자세로 움직여 가며
-# 표식을 찍어 장착값을 푸는 작업)을 사람이 실제로 끝낸 뒤에만 **사람이 직접**
-# `.env`에서 1로 바꾼다. 프로그램이 스스로 이 값을 true로 바꾸는 코드를 넣지 않는다 —
-# 그러면 "검증됨"이 다시 "값이 들어있음"과 같은 뜻이 되어 버린다.
-D405_MOUNT_VALIDATED = _env("RTAUTO_D405_MOUNT_VALIDATED", "0") == "1"
+def legacy_d405_mount_env_keys_set():
+    """옛 장착값 `.env` 키 중 **지금 설정돼 있는 것**들."""
+    return tuple(k for k in D405_MOUNT_LEGACY_ENV_KEYS if k in os.environ)
 
 
 #: **어느 주소가 가짜 팔(URSim)인가.** 실물 컨트롤박스는 이 목록에 절대 안 들어간다
@@ -463,12 +457,6 @@ UR_SIM_IPS = tuple(
 def is_sim_arm(ip):
     """이 주소가 **가짜 팔**인가. 모르면 False — 모를 때는 실물로 보고 막는 쪽이 안전하다."""
     return str(ip or "").strip().lower() in UR_SIM_IPS
-
-
-def d405_mount_validated():
-    """`arm/eye_in_hand.py`의 실물 자동 이동 관문(`require_validated_mount_for_physical_move`)이
-    보는 값. 좌표 계산·시각화는 이 값과 무관하게 그대로 동작한다 — 실물 이동 경로에서만 막는다."""
-    return D405_MOUNT_VALIDATED
 
 
 #: 카메라 내부 값(초점거리·중심). 0 이면 위 시야각에서 계산해 쓴다.

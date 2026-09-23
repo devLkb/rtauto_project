@@ -11,17 +11,22 @@
 
     python -m unittest arm.tests.test_eye_in_hand -v
 """
+import json
 import math
+import os
 import sys
+import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from arm.eye_in_hand import (  # noqa: E402
-    CameraMount, MountNotValidatedError, camera_to_base, depth_to_points_cam,
-    intrinsics, points_to_base, pose_to_matrix,
+    MOUNT_STATUS_REQUIRED, CameraMount, MountConfigError, MountNotValidatedError,
+    camera_to_base, depth_to_points_cam, intrinsics, matrix_to_rpy_deg,
+    points_camera_tcp_base, points_to_base, pose_to_matrix, quat_to_matrix,
     require_validated_mount_for_physical_move, rotvec_to_matrix, rpy_to_matrix,
     tool0_pose_from_joints,
 )
@@ -187,9 +192,12 @@ class PhysicalMoveValidationGateTests(unittest.TestCase):
         self.assertIsNone(w2)
 
     def test_config_default_is_not_validated(self):
-        """기본값은 반드시 미검증이다 — 새 머신에서 설치만 하고 실물 이동이 열리면 안 된다."""
-        import rtauto_config as cfg
-        self.assertFalse(cfg.d405_mount_validated())
+        """리포에 든 장착값 파일은 반드시 미검증이다 — 설치만 하고 실물 이동이 열리면 안 된다."""
+        m = CameraMount.from_config()
+        self.assertFalse(m.validated)
+        self.assertEqual(m.status, MOUNT_STATUS_REQUIRED)
+        with self.assertRaises(MountNotValidatedError):
+            require_validated_mount_for_physical_move(m, ip="192.168.0.10")
 
 
 class ActiveTcpVsTool0Tests(unittest.TestCase):
@@ -303,6 +311,161 @@ class DepthTests(unittest.TestCase):
     def test_사진이_2차원이_아니면_거부한다(self):
         with self.assertRaises(ValueError):
             depth_to_points_cam(np.zeros((4, 4, 3)))
+
+
+def _file_dict(status="MEASURED", xyz=(0.03, 0.0, 0.05), rotation=None,
+               source="시험용 가짜 값", measured_on="2026-09-23"):
+    """시험용 장착값 파일 내용. **실측값이 아니다** — 읽기·검사 규칙만 확인한다."""
+    return {
+        "status": status, "parent_frame": "tool0",
+        "translation_m": dict(zip("xyz", xyz)),
+        "rotation": rotation or {"type": "rpy_deg", "roll": 0.0, "pitch": 0.0, "yaw": 90.0},
+        "source": source, "measured_on": measured_on,
+    }
+
+
+class MountFileTests(unittest.TestCase):
+    """장착값 파일(`config/d405_tool_camera.json`) 읽기와 검사 (2026-09-23)."""
+
+    def test_리포의_파일은_자리표시용이다(self):
+        m = CameraMount.from_config()
+        self.assertEqual(m.status, MOUNT_STATUS_REQUIRED)
+        self.assertFalse(m.measured)
+        np.testing.assert_allclose(m.matrix(), np.eye(4))
+        self.assertIsNotNone(m.warning())
+        self.assertIn("CALIBRATION_REQUIRED", m.warning())
+
+    def test_파일에서_읽어도_경로가_돈다(self):
+        m = CameraMount.from_config()
+        _, _, in_base, warn = points_camera_tcp_base(
+            [[0.0, 0.0, 0.2]], [0.4, 0.1, 0.3, 0.0, 0.0, 0.0], m)
+        np.testing.assert_allclose(in_base[0], [0.4, 0.1, 0.5], atol=1e-12)
+        self.assertIsNotNone(warn)
+
+    def test_쿼터니언과_rpy가_같은_회전이면_같은_결과다(self):
+        """z축 90도 = 쿼터니언 (0, 0, sin45, cos45)."""
+        h = math.sqrt(0.5)
+        a = CameraMount.from_dict(_file_dict())
+        b = CameraMount.from_dict(_file_dict(rotation={
+            "type": "quaternion", "x": 0.0, "y": 0.0, "z": h, "w": h}))
+        np.testing.assert_allclose(a.matrix(), b.matrix(), atol=1e-12)
+        np.testing.assert_allclose(b.rpy_deg, (0.0, 0.0, 90.0), atol=1e-9)
+
+    def test_쿼터니언_rpy_왕복(self):
+        for rpy in [(10, 20, 30), (-90, 45, 170), (5, -60, -120), (30, 90, 10), (0, -90, 45)]:
+            r = rpy_to_matrix(*rpy)
+            np.testing.assert_allclose(rpy_to_matrix(*matrix_to_rpy_deg(r)), r, atol=1e-10)
+
+    def test_길이가_1이_아닌_쿼터니언은_거부한다(self):
+        with self.assertRaises(ValueError):
+            quat_to_matrix([0.0, 0.0, 0.5, 0.5])
+        with self.assertRaises(MountConfigError):
+            CameraMount.from_dict(_file_dict(rotation={
+                "type": "quaternion", "x": 0.0, "y": 0.0, "z": 0.5, "w": 0.5}))
+
+    def test_쟀다고_해놓고_자리표시용_값이면_거부한다(self):
+        for status in ("MEASURED", "VALIDATED"):
+            with self.assertRaises(MountConfigError):
+                CameraMount.from_dict(_file_dict(
+                    status=status, xyz=(0.0, 0.0, 0.0),
+                    rotation={"type": "rpy_deg", "roll": 0, "pitch": 0, "yaw": 0}))
+
+    def test_쟀다고_해놓고_출처나_날짜가_없으면_거부한다(self):
+        for bad in (dict(source=""), dict(source="PLACEHOLDER x"), dict(measured_on=None)):
+            with self.assertRaises(MountConfigError):
+                CameraMount.from_dict(_file_dict(**bad))
+
+    def test_모르는_status_나_회전_형식은_거부한다(self):
+        with self.assertRaises(MountConfigError):
+            CameraMount.from_dict(_file_dict(status="DONE"))
+        with self.assertRaises(MountConfigError):
+            CameraMount.from_dict(_file_dict(rotation={"type": "euler"}))
+        d = _file_dict()
+        del d["translation_m"]
+        with self.assertRaises(MountConfigError):
+            CameraMount.from_dict(d)
+
+    def test_NaN_무한대_참거짓_글자_숫자는_거부한다(self):
+        """JSON 은 NaN/Infinity 를 받아 준다 — 그대로 두면 NaN 장착값이 관문을 통과했다(2026-09-23 리뷰)."""
+        for v in (float("nan"), float("inf"), True, "0.03", None):
+            with self.assertRaises(MountConfigError, msg=repr(v)):
+                CameraMount.from_dict(_file_dict(status="VALIDATED", xyz=(v, 0.0, 0.05)))
+        with self.assertRaises(MountConfigError):
+            CameraMount.from_dict(_file_dict(rotation={
+                "type": "rpy_deg", "roll": 0, "pitch": 0, "yaw": float("inf")}))
+
+    def test_날짜_형식과_거리_상한을_본다(self):
+        for bad_date in (True, 20260923, "어제"):
+            with self.assertRaises(MountConfigError):
+                CameraMount.from_dict(_file_dict(measured_on=bad_date))
+        with self.assertRaises(MountConfigError):   # 30 mm 를 m 칸에 30 으로 적은 경우
+            CameraMount.from_dict(_file_dict(xyz=(30.0, 0.0, 50.0)))
+
+    def test_지원하지_않는_기준_링크는_읽을_때_거부한다(self):
+        for parent in ("flange", None):
+            d = _file_dict(status="VALIDATED")
+            d["parent_frame"] = parent
+            with self.assertRaises(MountConfigError):
+                CameraMount.from_dict(d)
+
+    def test_검증됐는데_안_쟀다는_조합은_만들_수_없다(self):
+        with self.assertRaises(MountConfigError):
+            CameraMount("tool0", (0, 0, 0), (0, 0, 0), False, True)
+
+    def test_깨진_파일은_분명히_멈춘다(self):
+        with tempfile.TemporaryDirectory() as d:
+            for text in ('{"status": "MEASURED",}', "[]"):
+                path = Path(d) / "mount.json"
+                path.write_text(text, encoding="utf-8")
+                with self.assertRaises(MountConfigError):
+                    CameraMount.from_config(path)
+
+    def test_MEASURED_는_좌표는_주지만_실물_이동은_막힌다(self):
+        m = CameraMount.from_dict(_file_dict(status="MEASURED"))
+        self.assertIsNone(m.warning())
+        with self.assertRaises(MountNotValidatedError):
+            require_validated_mount_for_physical_move(m, ip="192.168.0.10")
+
+    def test_VALIDATED_만_실물_이동_관문을_통과한다(self):
+        m = CameraMount.from_dict(_file_dict(status="VALIDATED"))
+        self.assertIs(require_validated_mount_for_physical_move(m, ip="192.168.0.10"), m)
+
+    def test_다른_파일_경로를_읽는다(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "mount.json"
+            path.write_text(json.dumps(_file_dict()), encoding="utf-8")
+            m = CameraMount.from_config(path)
+        self.assertEqual(m.status, "MEASURED")
+        self.assertEqual(m.xyz_m, (0.03, 0.0, 0.05))
+
+    def test_파일이_없으면_분명히_멈춘다(self):
+        with self.assertRaises(MountConfigError):
+            CameraMount.from_config(Path(tempfile.gettempdir()) / "없는_장착값_파일.json")
+
+    def test_옛_env_키가_남아_있으면_멈춘다(self):
+        """파일과 .env 두 곳에 값이 있으면 어느 쪽이 쓰였는지 모르게 된다."""
+        with mock.patch.dict(os.environ, {"RTAUTO_D405_MOUNT_XYZ_M": "0.1,0,0"}):
+            with self.assertRaises(MountConfigError):
+                CameraMount.from_config()
+
+
+class FrameChainTests(unittest.TestCase):
+    """P_base = T_base_tool x T_tool_camera x P_camera 를 손으로 계산한 값과 맞춘다."""
+
+    def test_세_단계가_손계산과_같다(self):
+        # 카메라: tool0 에서 z 로 5 cm, z축 90도 돌아 붙었다고 **가정**(가짜 값)
+        m = CameraMount.from_dict(_file_dict(xyz=(0.0, 0.0, 0.05)))
+        # 팔 끝: 로봇 기준 (0.5, 0, 0.4), 회전 없음
+        tool0 = [0.5, 0.0, 0.4, 0.0, 0.0, 0.0]
+        p_cam = [[0.10, 0.0, 0.20]]   # 카메라 x 로 10 cm, 앞으로 20 cm
+        _, in_tool, in_base, _ = points_camera_tcp_base(p_cam, tool0, m)
+        # z축 90도: 카메라 x → tool0 y
+        np.testing.assert_allclose(in_tool[0], [0.0, 0.10, 0.25], atol=1e-12)
+        np.testing.assert_allclose(in_base[0], [0.5, 0.10, 0.65], atol=1e-12)
+        # 4x4 곱으로 해도 같다
+        t = pose_to_matrix(tool0) @ m.matrix()
+        np.testing.assert_allclose(t @ np.array([0.10, 0.0, 0.20, 1.0]),
+                                   [0.5, 0.10, 0.65, 1.0], atol=1e-12)
 
 
 if __name__ == "__main__":

@@ -237,16 +237,10 @@ def read_tool0_pose(ip: str):
 
     🛑 `getActualTCPPose()` 를 쓰지 않는 이유는 `arm/eye_in_hand.camera_to_base()`
     설명 참고 — 그 값은 컨트롤러에 설정된 활성 TCP 기준이라 카메라 장착값과 섞이면
-    조용히 어긋난다.
+    조용히 어긋난다. 읽는 일 자체는 `eye_in_hand.read_tool0_pose()` 가 정본이다.
     """
-    import rtde_receive
-
-    recv = rtde_receive.RTDEReceiveInterface(ip)
-    try:
-        q6 = list(recv.getActualQ())
-    finally:
-        recv.disconnect()
-    return eye_in_hand.tool0_pose_from_joints(q6), q6
+    tool0_pose, q6, _active_tcp_pose = eye_in_hand.read_tool0_pose(ip)
+    return tool0_pose, q6
 
 
 # ---------------------------------------------------------------------------

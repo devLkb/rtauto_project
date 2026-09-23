@@ -59,7 +59,7 @@ UrArmReceiver.cs ◀─UDP 5010──  송신(deg) ← rad_to_deg ←───�
 |---|---|---|
 | `ur_rtde_bridge.py` | 351 | **본체.** UDP 수신 → 속도 제한 → `servoJ` 송신, 선택적 실제각 echo, 제어 링크 자동 재접속. `--echo-only` 는 **읽기 전용** — 제어 연결을 안 잡아, 다른 프로그램이 팔을 움직이는 동안 Unity 로 구경만 보낼 때 쓴다 |
 | `prepose_to_joints.py` | — | **파지 직전 자세 → 관절 각도 → 이동 후 정지.** 카메라로 정한 손바닥 자세를 받아 팔을 그 자세로 옮긴다(잡지 않는다). 좌표 관계는 전부 URDF 에서 읽는다 |
-| `eye_in_hand.py` | — | **카메라가 본 것 → 로봇 좌표.** 손목 카메라 장착값(`RTAUTO_D405_MOUNT_*`)을 읽어 카메라 → 팔 끝(tool0) → 로봇 밑동 순서로 옮긴다. 아직 안 잰 장착값이면 경고를 같이 돌려주고, **실물 자동 이동은 `RTAUTO_D405_MOUNT_VALIDATED=1` 전까지 막는다** |
+| `eye_in_hand.py` | — | **카메라가 본 것 → 로봇 좌표.** 손목 카메라 장착값 파일(`config/d405_tool_camera.json`)을 읽어 카메라 → 팔 끝(tool0) → 로봇 밑동 순서로 옮긴다(`P_base = T_base_tool x T_tool_camera x P_camera`). 파일의 `status` 가 `CALIBRATION_REQUIRED`(아직 안 쟀다 — 2026-09-23 현재)면 경고를 같이 돌려주고, **실물 자동 이동은 `status` 가 `VALIDATED` 가 되기 전까지 막는다** |
 | `pregrasp_planner.py` | — | **물체 위치·방향 → 물체 앞에 설 자리** + 안전 검사. 물체에서 `RTAUTO_PREGRASP_DISTANCE_M`(기본 12 cm)만큼 떨어진 자리를 낸다 — **잡지 않는다.** 이상한 값이면 자세를 안 만들고 거절을 돌려준다 |
 | `approach_object.py` | — | **위 전부를 순서대로 부르는 도구.** `--look`(카메라만) / `--plan`(팔 연결, 계산만) / `--move`(실제 이동) / `--watch`(물체를 옮길 때마다 다시 찾기) |
 | `run_ursim.sh` | 18 | URSim 도커 컨테이너 실행 (Linux/macOS, bash) |
@@ -220,7 +220,7 @@ python arm/ur_rtde_bridge.py --ip --echo-to-unity
 
 🛑 **먼저 알아 둘 것.** 이 경로는 **잡지 않는다.** 물체 앞 12 cm 지점에 손을 벌린 채
 서서 멈추는 데까지다. 그리고 손목 카메라 장착값을 실물로 재기 전까지는 **실제 이동이
-열리지 않는다**(`RTAUTO_D405_MOUNT_VALIDATED=0` 이면 `--move` 가 거부된다).
+열리지 않는다**(`config/d405_tool_camera.json` 의 `status` 가 `VALIDATED` 가 아니면 `--move` 가 거부된다).
 
 **터미널 1 (bash, 리포 루트, 가짜 팔 URSim)** — 띄운 채로 둔다:
 

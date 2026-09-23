@@ -333,12 +333,14 @@ arm/approach_object.py         위 전부를 순서대로 부르는 도구 (--lo
 
 ### 아직 아닌 것 — **이 절에서 가장 중요한 줄**
 
-🛑 **손목 카메라 장착값(hand-eye)을 아직 안 쟀다**(`RTAUTO_D405_MOUNT_*` 가 전부 0).
+🛑 **손목 카메라 장착값(hand-eye)을 아직 안 쟀다**(`config/d405_tool_camera.json` 의
+`status` 가 `CALIBRATION_REQUIRED`, 값은 자리 표시용 — 2026-09-23 에 `.env` 의
+`RTAUTO_D405_MOUNT_*` 에서 이 파일로 옮겼다).
 그래서 **로봇 밑동 기준 좌표는 아직 믿으면 안 된다.** 위 "확인된 것" 은 배관이
 이어진다는 뜻이지 좌표가 맞다는 뜻이 **아니다.** §7-2 / BACKLOG D-7 이 남은 임계경로다.
 
 코드가 이 상태를 스스로 강제한다 — `arm/eye_in_hand.require_validated_mount_for_physical_move()`
-가 `RTAUTO_D405_MOUNT_VALIDATED=1` 전까지 **실물 자동 이동을 막는다.** 가짜 팔(URSim)
+가 그 파일의 `status` 가 `VALIDATED` 가 되기 전까지 **실물 자동 이동을 막는다.** 가짜 팔(URSim)
 에서만 `--unvalidated-mount-ok` 로 열 수 있고, 실물 주소면 그 선택지를 줘도 막힌다.
 
 ### 여러 물체 중 무엇으로 갈 것인가 (2026-09-23 구현 — BACKLOG A-9)
