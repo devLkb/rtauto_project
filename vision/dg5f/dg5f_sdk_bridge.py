@@ -123,7 +123,7 @@ JOINT_CLAMP_RIGHT = [
     # 밀어붙일 수 있다(같은 이유로 위 thumb_opp 도 설명서보다 좁게 잡았다).
     # 이 값을 ±25 로 맞추면 JOINT_CLAMP_RIGHT 20채널이 오른손 URDF 와 전부 일치한다.
     # 실물로 ±30 이 나오는 것을 재서 확인하면 여기와 urdf/dg5f/*.urdf 를 함께 넓힐 것.
-    # (2026-09-16 ±30 → ±25. 현재 middle_abd 는 dg5f_angles 에서 gated(항상 0)라 동작 변화 없음)
+    # (2026-09-16 ±30 → ±25. 2026-09-23 부터 middle_abd 가 실제로 움직인다 — dg5f_angles 게이트 해제)
     (-25.0,  25.0),   #  8 middle_abd  Motor 9   (설명서 ±30 / URDF ±25 → 좁은 쪽)
     (  0.0, 115.0),   #  9 middle_mcp  Motor 10
     (-90.0,  90.0),   # 10 middle_pip  Motor 11

@@ -388,6 +388,59 @@ def _thumb_opposition(lm):
     return float(np.linalg.norm(lm[THUMB[3]] - lm[PINKY[0]])) / hand_len
 
 
+def _hand_frame(lm):
+    """손 기준 좌표축 (앞 ez, 엄지쪽 ey, 손바닥 법선 ex, 손 길이 L, 손바닥 폭 W). 못 구하면 None.
+
+    ez = 손목→중지 뿌리, ey = 새끼 뿌리→검지 뿌리(ez 에 직교화), ex = ey × ez.
+    """
+    lm = np.asarray(lm, dtype=float)
+    fwd = lm[MIDDLE[0]] - lm[WRIST]
+    L = float(np.linalg.norm(fwd))
+    across = lm[INDEX[0]] - lm[PINKY[0]]
+    W = float(np.linalg.norm(across))
+    if L < 1e-9 or W < 1e-9:
+        return None
+    ez = fwd / L
+    ey = across - ez * np.dot(across, ez)
+    ny = np.linalg.norm(ey)
+    if ny < 1e-9:
+        return None
+    ey /= ny
+    ex = np.cross(ey, ez)
+    return ez, ey, ex, L, W
+
+
+def thumb_features(lm):
+    """엄지 위치를 손 기준으로 잰 후보 값들(2026-09-23, 자세 녹화로 비교하려고 만든 것).
+
+    - tip_radial : 엄지끝이 검지 뿌리보다 엄지쪽으로 얼마나 나가 있나(손바닥 폭 단위).
+                   손바닥을 가로질러 새끼 쪽으로 오면 음수, 새끼 뿌리에 닿으면 약 -1.
+    - tip_fwd    : 엄지끝이 손목에서 손가락 방향으로 얼마나 나가 있나(손 길이 단위).
+    - tip_normal : 엄지끝이 손바닥 평면에서 얼마나 떠 있나(손 길이 단위, 부호는 ex 방향).
+    - meta_out   : 엄지 첫 뼈(1→2)가 손바닥 평면에서 들린 각(도).
+    - meta_in    : 엄지 첫 뼈를 손바닥 평면에 눌렀을 때 손가락 방향(ez)과 이루는 각(도).
+    - pinch_d    : 엄지끝~검지끝 거리(손 길이 단위).
+    """
+    fr = _hand_frame(lm)
+    if fr is None:
+        return {k: 0.0 for k in ("tip_radial", "tip_fwd", "tip_normal",
+                                 "meta_out", "meta_in", "pinch_d")}
+    ez, ey, ex, L, W = fr
+    lm = np.asarray(lm, dtype=float)
+    tip = lm[THUMB[3]]
+    meta = lm[THUMB[1]] - lm[THUMB[0]]
+    nm = np.linalg.norm(meta)
+    mu = meta / nm if nm > 1e-9 else ez
+    return {
+        "tip_radial": float(np.dot(tip - lm[INDEX[0]], ey)) / W,
+        "tip_fwd": float(np.dot(tip - lm[WRIST], ez)) / L,
+        "tip_normal": float(np.dot(tip - lm[WRIST], ex)) / L,
+        "meta_out": math.degrees(math.asin(float(np.clip(np.dot(mu, ex), -1, 1)))),
+        "meta_in": math.degrees(math.atan2(float(np.dot(mu, ey)), float(np.dot(mu, ez)))),
+        "pinch_d": float(np.linalg.norm(tip - lm[INDEX[3]])) / L,
+    }
+
+
 def _thumb_opp_amount(d):
     """대향 프록시(거리) → 0(펴짐) ~ 1(완전대향) 비율. 거리는 대향할수록 '작아지므로' 반전한다."""
     span = THUMB_OPP_D_OPEN - THUMB_OPP_D_FULL
@@ -633,12 +686,11 @@ DG5F_CHANNELS = [
     ("index_mcp",   0.05,  1.20,    0.0,  110.0,  False),
     ("index_pip",   0.10,  1.80,    0.0,   85.0,  False),
     ("index_dip",   0.05,  1.20,    0.0,   80.0,  False),
-    # middle_abd(3_1): 2026-09-16부터 gated(항상 0). 옛 계산식에서는 "중지 기준 상대 벌림"이라
-    #   중지 자신은 정의상 0이었다. 새 계산식은 손가락마다 자기 축으로 재므로 중지도 값이
-    #   생기는데(실측: 손 편 상태 폭 3.9°, 손 오므릴 때 14.4°), 아무도 요청하지 않은 움직임을
-    #   새로 만들 이유가 없어 예전 결과(0)를 유지한다. 중지 벌림을 살리고 싶으면 True→False만
-    #   바꾸면 된다 — 계산은 이미 나와 있다.
-    ("middle_abd", -0.30,  0.30,  -20.0,   20.0,  True),
+    # middle_abd(3_1): 2026-09-23 **켰다**(gated True→False). 사용자가 Unity 에서 "중지가
+    #   좌우로 안 움직인다" 고 지적했다 — 원인이 이 게이트였다(Unity 로그 2026-09-22: 사람 쪽
+    #   -35°~+10° 로 움직이는데 로봇 3_1 은 항상 0°). 계산은 다른 손가락과 같은 lateral 방식
+    #   이고, 굽힐수록 줄이는 처리(ABD_BEND_FADE_DEG)도 똑같이 걸린다.
+    ("middle_abd", -0.30,  0.30,  -20.0,   20.0,  False),
     ("middle_mcp",  0.05,  1.20,    0.0,  110.0,  False),
     ("middle_pip",  0.10,  1.80,    0.0,   85.0,  False),
     ("middle_dip",  0.05,  1.20,    0.0,   80.0,  False),
